@@ -1,0 +1,11 @@
+{
+  "name": "push-overlay",
+  "private": true,
+  "type": "module",
+  "description": "Pipeline de génération d'overlay (transcription locale via whisper.cpp, extraction d'accroches, génération HTML)",
+  "scripts": {
+    "transcribe": "node scripts/transcribe.mjs",
+    "highlights": "node scripts/extract-highlights.mjs",
+    "overlay": "node scripts/generate-overlay.mjs"
+  }
+}
