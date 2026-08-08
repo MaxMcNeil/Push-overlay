@@ -61,9 +61,11 @@ tu poses l'overlay par-dessus.
 
 **Option A — avec vidéo (transcription auto + orientation auto détectée) :**
 
-1. Va dans **Releases → Draft a new release** sur GitHub.
-2. Attache ta vidéo en tant que fichier joint, nommée exactement
-   `video.mp4` (ou `.mov`/`.mkv`/`.webm`).
+1. Va dans **Releases → Draft a new release**.
+2. Attache ta vidéo — **n'importe quel nom de fichier**, le workflow détecte
+   tout seul l'attachment vidéo en repérant son extension (`.mp4`, `.mov`,
+   `.mkv`, `.webm`, `.avi`, `.m4v`). S'il y a plusieurs fichiers joints, le
+   premier trouvé avec une extension vidéo est utilisé.
 3. Publie la release. Ça déclenche automatiquement le workflow : téléchargement
    de la vidéo, transcription locale, extraction des accroches, génération de
    `docs/index.html`, publication sur GitHub Pages.
