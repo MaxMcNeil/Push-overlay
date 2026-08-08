@@ -6,21 +6,22 @@
 // pour un bandeau), et garde les meilleures comme accroches.
 // Aucune dépendance externe, aucun appel réseau, aucune IA — tout est déterministe.
 //
-// Limite assumée : c'est un nettoyage/sélection de ce qui a été dit, pas une
-// réécriture créative. Pour de vrais titres reformulés par IA, il faudrait
-// brancher un appel API (Claude, etc.) ici — non fait volontairement pour
-// rester à coût zéro.
+// C'est un nettoyage/sélection de ce qui a été dit, pas une réécriture
+// créative. Sert de FILET DE SÉCURITÉ à generate-headlines.mjs (moteur LLM
+// local) : si le modèle échoue à générer, ce module est importé et utilisé
+// comme repli automatique. Peut aussi être lancé seul : `node
+// scripts/extract-highlights.mjs`.
 
 import { readFileSync, writeFileSync, existsSync } from "fs";
 
-const SRC = "content/script.txt";
-const OUT = "content/highlights.json";
-const CHANNEL = "LE JOURNAL DU NON";
-const MAX_ITEMS = 26;
+export const SRC = "content/script.txt";
+export const OUT = "content/highlights.json";
+export const CHANNEL = "LE JOURNAL DU NON";
+export const MAX_ITEMS = 26;
 const MIN_LEN = 35;
 const MAX_LEN = 100;
 
-const CATEGORY_RULES = [
+export const CATEGORY_RULES = [
   { cat: "ALERTE", words: ["alerte", "danger", "risque", "urgence", "menace", "grave"] },
   { cat: "CHIFFRES", words: ["million", "milliard", "%", "pourcent", "hausse", "baisse", "record"] },
   { cat: "EXCLUSIF", words: ["exclusif", "révèle", "révélation", "annonce", "annoncé"] },
@@ -61,7 +62,7 @@ function stripFillers(s) {
   return t;
 }
 
-function guessCategory(sentence) {
+export function guessCategory(sentence) {
   const low = sentence.toLowerCase();
   for (const rule of CATEGORY_RULES) {
     if (rule.words.some((w) => low.includes(w))) return rule.cat;
@@ -153,7 +154,7 @@ function toHeadline(s) {
 
 // Dédoublonne les phrases quasi identiques (redites fréquentes à l'oral :
 // "je considère que les gens sont majeurs" répété deux fois de suite, etc.)
-function normalizedKey(s) {
+export function normalizedKey(s) {
   return s
     .toLowerCase()
     .normalize("NFD")
@@ -165,7 +166,7 @@ function normalizedKey(s) {
     .join(" ");
 }
 
-function dedupe(sentences) {
+export function dedupe(sentences) {
   const seen = new Set();
   const out = [];
   for (const s of sentences) {
@@ -177,22 +178,16 @@ function dedupe(sentences) {
   return out;
 }
 
-function todayTag() {
+export function todayTag() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
   return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
 }
 
-function main() {
-  if (!existsSync(SRC)) {
-    throw new Error(`${SRC} introuvable. Fournis content/script.txt ou laisse transcribe.mjs le générer.`);
-  }
-  const text = readFileSync(SRC, "utf8");
-  if (text.trim().length === 0) {
-    throw new Error(
-      `${SRC} est vide. Soit tu colles ton texte dedans, soit la vidéo n'a produit aucune transcription exploitable (vérifie qu'elle contient bien de la parole audible).`
-    );
-  }
+// Génère les accroches par la méthode heuristique (nettoyage/sélection, sans
+// IA) et retourne le tableau d'items — utilisé en repli par
+// generate-headlines.mjs si le LLM local échoue.
+export function heuristicFallback(text) {
   const rawSentences = splitSentences(text);
   const sentences = dedupe(rawSentences);
 
@@ -225,9 +220,27 @@ function main() {
   if (items.length === 0) {
     throw new Error("Aucune accroche retenue après notation.");
   }
+  return items;
+}
 
+function main() {
+  if (!existsSync(SRC)) {
+    throw new Error(`${SRC} introuvable. Fournis content/script.txt ou laisse transcribe.mjs le générer.`);
+  }
+  const text = readFileSync(SRC, "utf8");
+  if (text.trim().length === 0) {
+    throw new Error(
+      `${SRC} est vide. Soit tu colles ton texte dedans, soit la vidéo n'a produit aucune transcription exploitable (vérifie qu'elle contient bien de la parole audible).`
+    );
+  }
+  const items = heuristicFallback(text);
   writeFileSync(OUT, JSON.stringify(items, null, 2), "utf8");
   console.log(`${items.length} accroches écrites dans ${OUT}`);
 }
 
-main();
+// Ne s'exécute que si le fichier est lancé directement (node
+// scripts/extract-highlights.mjs), pas quand il est importé comme module par
+// generate-headlines.mjs.
+if (process.argv[1] && process.argv[1].endsWith("extract-highlights.mjs")) {
+  main();
+}
