@@ -41,13 +41,25 @@ jobs:
       # La vidéo n'est PAS commitée dans le dépôt (limite de 100 Mo par fichier
       # sur git). Elle vit dans la dernière Release GitHub (jusqu'à 2 Go/fichier)
       # et est simplement téléchargée ici, dans un dossier ignoré par git.
+      # Le nom du fichier joint n'a AUCUNE importance : on repère tout seul
+      # l'attachment qui a une extension vidéo, quel que soit son nom.
       - name: Télécharger la vidéo depuis la dernière Release (si présente)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p input
-          gh release download --pattern "video.*" --dir input --clobber --repo "${{ github.repository }}" \
-            || echo "Aucune Release avec une vidéo trouvée — le pipeline continuera sans vidéo (texte seul)."
+          ASSET_NAME=$(gh release view --repo "${{ github.repository }}" --json assets \
+            -q '.assets[].name' 2>/dev/null | grep -Ei '\.(mp4|mov|mkv|webm|avi|m4v)$' | head -n1 || true)
+
+          if [ -n "$ASSET_NAME" ]; then
+            echo "Vidéo détectée dans la dernière release: $ASSET_NAME"
+            gh release download --repo "${{ github.repository }}" --pattern "$ASSET_NAME" --dir input --clobber
+            EXT="${ASSET_NAME##*.}"
+            mv "input/$ASSET_NAME" "input/video.$EXT"
+            echo "Renommée en input/video.$EXT pour le pipeline."
+          else
+            echo "Aucun fichier vidéo trouvé dans la dernière release — le pipeline continuera sans vidéo (texte seul)."
+          fi
 
       # Cache le binaire whisper.cpp compilé + le modèle GGML téléchargé,
       # pour ne pas tout retélécharger/recompiler à chaque run.
