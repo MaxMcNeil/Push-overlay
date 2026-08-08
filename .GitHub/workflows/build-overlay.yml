@@ -1,0 +1,77 @@
+name: Build Overlay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "content/**"
+      - "templates/**"
+      - "scripts/**"
+      - "input/logo.png"
+  release:
+    types: [published, edited]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-overlay
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: npm install
+
+      # La vidéo n'est PAS commitée dans le dépôt (limite de 100 Mo par fichier
+      # sur git). Elle vit dans la dernière Release GitHub (jusqu'à 2 Go/fichier)
+      # et est simplement téléchargée ici, dans un dossier ignoré par git.
+      - name: Télécharger la vidéo depuis la dernière Release (si présente)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p input
+          gh release download --pattern "video.*" --dir input --clobber --repo "${{ github.repository }}" \
+            || echo "Aucune Release avec une vidéo trouvée — le pipeline continuera sans vidéo (texte seul)."
+
+      # Cache le binaire whisper.cpp compilé + le modèle GGML téléchargé,
+      # pour ne pas tout retélécharger/recompiler à chaque run.
+      - name: Cache whisper model & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules/nodejs-whisper/cpp/whisper.cpp
+          key: whisper-cpp-base-${{ runner.os }}
+
+      - name: Transcription locale (si pas de content/script.txt)
+        run: node scripts/transcribe.mjs
+        timeout-minutes: 25
+
+      - name: Extraction des accroches
+        run: node scripts/extract-highlights.mjs
+
+      - name: Génération de l'overlay (orientation auto)
+        run: node scripts/generate-overlay.mjs
+
+      - name: Commit docs/index.html
+        run: |
+          git config user.name "overlay-bot"
+          git config user.email "overlay-bot@users.noreply.github.com"
+          git add docs/index.html content/highlights.json content/script.txt 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "chore: overlay auto-généré [skip ci]"
+          git push
