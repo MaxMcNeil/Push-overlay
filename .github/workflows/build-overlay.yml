@@ -32,8 +32,8 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install ffmpeg, cmake, build tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg cmake build-essential
 
       - name: Install dependencies
         run: npm install
@@ -61,14 +61,30 @@ jobs:
             echo "Aucun fichier vidéo trouvé dans la dernière release — le pipeline continuera sans vidéo (texte seul)."
           fi
 
-      # Cache le binaire whisper.cpp compilé + le modèle GGML téléchargé,
-      # pour ne pas tout retélécharger/recompiler à chaque run.
-      - name: Cache whisper model & build
+      # whisper.cpp est compilé nous-mêmes (CMake) et mis en cache, plutôt que de
+      # passer par le wrapper npm "nodejs-whisper" qui est cassé avec les versions
+      # récentes de whisper.cpp (binaire "main" renommé "whisper-cli", son propre
+      # appel à `make` échoue même quand la vraie compilation CMake a réussi).
+      - name: Cache whisper.cpp (build + modèle)
+        id: whisper-cache
         uses: actions/cache@v4
         with:
-          path: |
-            node_modules/nodejs-whisper/cpp/whisper.cpp
-          key: whisper-cpp-base-${{ runner.os }}
+          path: whisper.cpp
+          key: whispercpp-build-v1-${{ runner.os }}
+
+      - name: Compiler whisper.cpp (si pas en cache)
+        if: steps.whisper-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
+          cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build whisper.cpp/build -j"$(nproc)" --config Release
+          cd whisper.cpp && bash models/download-ggml-model.sh base
+
+      - name: Vérifier que le modèle whisper est présent (même si le cache a été touché)
+        run: |
+          if [ ! -f whisper.cpp/models/ggml-base.bin ]; then
+            cd whisper.cpp && bash models/download-ggml-model.sh base
+          fi
 
       - name: Transcription locale (si pas de content/script.txt)
         run: node scripts/transcribe.mjs
