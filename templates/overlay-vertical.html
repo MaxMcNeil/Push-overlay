@@ -60,7 +60,7 @@
 
   .scanline{position:absolute;top:0;left:0;height:100%;width:180px;pointer-events:none;
     background:linear-gradient(90deg, transparent, rgba(53,229,255,.14), transparent);
-    animation:scan 6s linear infinite;mix-blend-mode:screen;}
+    animation:scan 6s linear infinite;opacity:.7;}
   @keyframes scan{from{transform:translateX(-220px);}to{transform:translateX(1200px);}}
 
   /* bandeau accroche — empilé verticalement (catégorie/source en haut, titre en dessous) */
@@ -89,7 +89,7 @@
     clip-path:polygon(0 0,0 0,0 100%,0 100%);
     display:flex; align-items:center;
   }
-  .accroche.run{animation:wipe 8s cubic-bezier(.65,0,.2,1) infinite;}
+  .accroche.run{animation:wipe var(--wipe-dur,8s) cubic-bezier(.65,0,.2,1) 1 both;}
   @keyframes wipe{
     0%{clip-path:polygon(0 0,0 0,0 100%,0 100%);opacity:0;}
     6%{clip-path:polygon(0 0,100% 0,100% 100%,0 100%);opacity:1;}
@@ -195,6 +195,11 @@
   const catEl = document.getElementById('cat'), srcEl = document.getElementById('src'),
         txtEl = document.getElementById('txt'), accEl = document.getElementById('accroche');
 
+  // Durée de l'animation calée sur l'intervalle de rotation (source unique de vérité,
+  // au lieu d'un setInterval séparé qui pouvait dériver par rapport à l'animation CSS
+  // et provoquer un clignotement rapide au bout de quelques cycles).
+  accEl.style.setProperty('--wipe-dur', (__INTERVAL_MS__/1000) + 's');
+
   function nextAccroche(){
     if (items.length === 0) return;
     i = (i+1) % items.length;
@@ -207,7 +212,11 @@
   if (items.length > 0) {
     catEl.textContent = items[0].c; srcEl.textContent = items[0].s; txtEl.textContent = items[0].t;
   }
-  setInterval(nextAccroche, __INTERVAL_MS__);
+  // Le changement de texte suit la fin réelle de l'animation CSS (événement natif),
+  // plutôt qu'un minuteur indépendant qui peut se désynchroniser.
+  accEl.addEventListener('animationend', (e) => {
+    if (e.animationName === 'wipe') nextAccroche();
+  });
 </script>
 </body>
 </html>
