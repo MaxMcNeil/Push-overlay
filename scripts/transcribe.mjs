@@ -55,8 +55,10 @@ async function main() {
   console.log("Transcription locale (whisper.cpp, modèle 'base', FR)...");
   // nodejs-whisper télécharge le binaire whisper.cpp + le modèle GGML au premier lancement
   // et les met en cache ensuite (voir workflow: cache de node_modules/nodejs-whisper).
+  // IMPORTANT: nodejs-whisper a besoin d'un chemin ABSOLU, un chemin relatif ("content/audio.wav")
+  // échoue avec "No such file" même si le fichier existe bien.
   const { nodewhisper } = await import("nodejs-whisper");
-  const result = await nodewhisper(wavPath, {
+  const result = await nodewhisper(path.resolve(wavPath), {
     modelName: "base",
     autoDownloadModelName: "base",
     whisperOptions: {
