@@ -1,16 +1,21 @@
 // scripts/transcribe.mjs
-// Transcrit input/video.* en texte, 100% local (whisper.cpp via le package "nodejs-whisper").
-// Aucune clé API, aucun service payant : le modèle est téléchargé une seule fois et tourne en local
-// sur le runner GitHub Actions (CPU). Si content/script.txt existe déjà, ce script est sauté
-// (voir .github/workflows/build-overlay.yml).
+// Transcrit input/video.* en texte, 100% local. Appelle directement le binaire
+// whisper-cli (compilé par le workflow via CMake, voir .github/workflows/build-overlay.yml)
+// plutôt que le wrapper npm "nodejs-whisper", qui est cassé avec les versions récentes
+// de whisper.cpp (celui-ci ne produit plus de binaire "main", et le wrapper échoue avec
+// "'make' command failed" même quand la compilation a réellement réussi).
+// Aucune clé API, aucun service payant : tout tourne en local sur le runner.
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import path from "path";
 
 const INPUT_DIR = "input";
 const CONTENT_DIR = "content";
 const OUT_TXT = path.join(CONTENT_DIR, "script.txt");
+
+const WHISPER_BIN = "whisper.cpp/build/bin/whisper-cli";
+const WHISPER_MODEL = "whisper.cpp/models/ggml-base.bin";
 
 function hasUsableScript() {
   if (!existsSync(OUT_TXT)) return false;
@@ -31,7 +36,7 @@ function findVideo() {
   );
 }
 
-async function main() {
+function main() {
   if (hasUsableScript()) {
     console.log(`content/script.txt existe déjà et contient du texte — transcription sautée.`);
     return;
@@ -47,32 +52,45 @@ async function main() {
   mkdirSync(CONTENT_DIR, { recursive: true });
 
   console.log("Extraction audio (ffmpeg, mono 16kHz)...");
-  execSync(
-    `ffmpeg -y -i "${videoPath}" -ar 16000 -ac 1 -c:a pcm_s16le "${wavPath}"`,
+  execFileSync(
+    "ffmpeg",
+    ["-y", "-i", videoPath, "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wavPath],
     { stdio: "inherit" }
   );
 
-  console.log("Transcription locale (whisper.cpp, modèle 'base', FR)...");
-  // nodejs-whisper télécharge le binaire whisper.cpp + le modèle GGML au premier lancement
-  // et les met en cache ensuite (voir workflow: cache de node_modules/nodejs-whisper).
-  // IMPORTANT: nodejs-whisper a besoin d'un chemin ABSOLU, un chemin relatif ("content/audio.wav")
-  // échoue avec "No such file" même si le fichier existe bien.
-  const { nodewhisper } = await import("nodejs-whisper");
-  const result = await nodewhisper(path.resolve(wavPath), {
-    modelName: "base",
-    autoDownloadModelName: "base",
-    whisperOptions: {
-      outputInText: true,
-      language: "fr",
-    },
-  });
+  if (!existsSync(WHISPER_BIN)) {
+    throw new Error(
+      `${WHISPER_BIN} introuvable. whisper.cpp doit être compilé avant cette étape (voir le workflow).`
+    );
+  }
+  if (!existsSync(WHISPER_MODEL)) {
+    throw new Error(
+      `${WHISPER_MODEL} introuvable. Le modèle doit être téléchargé avant cette étape (voir le workflow).`
+    );
+  }
 
-  const text = typeof result === "string" ? result : JSON.stringify(result);
+  console.log("Transcription locale (whisper.cpp, modèle 'base', FR)...");
+  const outBase = path.resolve(CONTENT_DIR, "whisper-output");
+  execFileSync(
+    WHISPER_BIN,
+    [
+      "-m", WHISPER_MODEL,
+      "-f", path.resolve(wavPath),
+      "-l", "fr",
+      "-otxt",
+      "-of", outBase,
+    ],
+    { stdio: "inherit" }
+  );
+
+  const txtPath = outBase + ".txt";
+  if (!existsSync(txtPath)) {
+    throw new Error(`whisper-cli n'a produit aucun fichier de sortie (${txtPath} attendu).`);
+  }
+
+  const text = readFileSync(txtPath, "utf8");
   writeFileSync(OUT_TXT, text.trim() + "\n", "utf8");
   console.log(`Transcript écrit dans ${OUT_TXT} (${text.length} caractères).`);
 }
 
-main().catch((err) => {
-  console.error("Erreur de transcription:", err);
-  process.exit(1);
-});
+main();
