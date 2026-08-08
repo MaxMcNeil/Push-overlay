@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Le Journal du NON — Overlay OBS (Vertical)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Barlow+Semi+Condensed:wght@600;700;800&family=Space+Mono:wght@400;700&display=swap');
+
+  :root{
+    --void:#05070c; --panel2:#111a2c; --blood:#c81324; --blood-dark:#5e0b13;
+    --amber:#f2a900; --cyan:#35e5ff; --bone:#f3efe4;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{width:100%;height:100%;background:transparent;overflow:hidden;font-family:'Barlow Semi Condensed',sans-serif;}
+
+  /* canevas virtuel 1080x1920, mis à l'échelle automatiquement — pas de zoom/débordement */
+  #stage{position:absolute;top:0;left:0;width:1080px;height:1920px;transform-origin:top left;overflow:hidden;}
+
+  /* ============ ZONE HAUTE ============ */
+  /* 0 -> 230px volontairement VIDE : réservé au badge chaîne / "EN DIRECT" YouTube qui
+     s'affiche en haut de l'écran pendant un live. Rien n'est posé dans cette bande. */
+  .locbadge{
+    position:absolute; top:250px; left:36px;
+    display:flex; flex-direction:column;
+    filter:drop-shadow(0 6px 14px rgba(0,0,0,.55));
+    animation:badgeIn .7s cubic-bezier(.2,.9,.2,1) both;
+  }
+  @keyframes badgeIn{from{opacity:0;transform:translateY(-24px) skewX(-6deg);}to{opacity:1;transform:translateY(0) skewX(0);}}
+  .locbadge .tag{background:var(--panel2);color:var(--cyan);font-family:'Space Mono',monospace;font-weight:700;
+    font-size:24px;letter-spacing:.14em;padding:6px 20px;border-left:7px solid var(--cyan);}
+  .locbadge .place{background:var(--bone);color:var(--void);font-family:'Oswald',sans-serif;font-weight:700;
+    font-size:27px;letter-spacing:.03em;padding:6px 20px 6px 28px;display:flex;align-items:center;gap:10px;max-width:820px;}
+  .locbadge .place::before{content:"";width:0;height:0;border-top:7px solid transparent;
+    border-bottom:7px solid transparent;border-left:11px solid var(--blood);}
+
+  /* ============ ZONE BASSE ============ */
+  .cluster{
+    position:absolute; left:0; bottom:0; width:1080px;
+    animation:riseIn .8s cubic-bezier(.16,.9,.24,1) both; animation-delay:.15s;
+  }
+  @keyframes riseIn{from{opacity:0;transform:translateY(30px);}to{opacity:1;transform:translateY(0);}}
+
+  .masthead{
+    position:relative; display:flex; align-items:center; justify-content:space-between;
+    background:linear-gradient(90deg,var(--blood-dark) 0%, #3a0710 100%);
+    padding:16px 34px; border-top:2px solid rgba(255,255,255,.08); overflow:hidden;
+  }
+  .masthead .brand h1{font-family:'Oswald',sans-serif;font-weight:700;font-size:38px;letter-spacing:.02em;
+    color:var(--bone);text-transform:uppercase;line-height:1;}
+  .masthead .brand h1 span{color:var(--cyan);}
+  .masthead .brand .sub{font-family:'Space Mono',monospace;font-size:15px;color:rgba(243,239,228,.65);
+    letter-spacing:.1em;text-transform:uppercase;margin-top:4px;}
+  .masthead .rightinfo{display:flex;flex-direction:column;align-items:flex-end;gap:8px;
+    font-family:'Space Mono',monospace;color:var(--bone);font-size:17px;}
+  .livepill{display:flex;align-items:center;gap:9px;background:var(--blood);padding:4px 15px;
+    border-radius:100px;font-weight:700;letter-spacing:.1em;}
+  .livepill .dot{width:12px;height:12px;border-radius:50%;background:var(--bone);animation:pulse 1.4s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.35;transform:scale(.7);}}
+  .clock{opacity:.9;}
+
+  .scanline{position:absolute;top:0;left:0;height:100%;width:180px;pointer-events:none;
+    background:linear-gradient(90deg, transparent, rgba(53,229,255,.14), transparent);
+    animation:scan 6s linear infinite;mix-blend-mode:screen;}
+  @keyframes scan{from{transform:translateX(-220px);}to{transform:translateX(1200px);}}
+
+  /* bandeau accroche — empilé verticalement (catégorie/source en haut, titre en dessous) */
+  .tickerbar{
+    position:relative;
+    background:linear-gradient(180deg,#e21c2b 0%, var(--blood) 55%, #92101c 100%);
+    padding:22px 34px 26px;
+    box-shadow:0 -2px 0 rgba(255,255,255,.15) inset, 0 -10px 22px rgba(0,0,0,.5);
+    overflow:hidden;
+    min-height:300px;
+    display:flex; flex-direction:column; justify-content:center;
+  }
+  .toprow{display:flex; align-items:center; gap:14px; margin-bottom:16px;}
+  .cat{
+    background:var(--void); color:var(--amber); font-family:'Oswald',sans-serif; font-weight:700;
+    font-size:20px; letter-spacing:.05em; text-transform:uppercase; padding:7px 18px; white-space:nowrap;
+  }
+  .src{
+    font-family:'Space Mono',monospace; font-weight:700; color:var(--void); background:var(--amber);
+    font-size:16px; letter-spacing:.06em; padding:6px 14px; white-space:nowrap;
+  }
+
+  .stage-inner{position:relative; min-height:150px;}
+  .accroche{
+    position:absolute; inset:0;
+    clip-path:polygon(0 0,0 0,0 100%,0 100%);
+    display:flex; align-items:center;
+  }
+  .accroche.run{animation:wipe 8s cubic-bezier(.65,0,.2,1) infinite;}
+  @keyframes wipe{
+    0%{clip-path:polygon(0 0,0 0,0 100%,0 100%);opacity:0;}
+    6%{clip-path:polygon(0 0,100% 0,100% 100%,0 100%);opacity:1;}
+    88%{clip-path:polygon(0 0,100% 0,100% 100%,0 100%);opacity:1;}
+    96%{clip-path:polygon(100% 0,100% 0,100% 100%,100% 100%);opacity:1;}
+    100%{clip-path:polygon(100% 0,100% 0,100% 100%,100% 100%);opacity:0;}
+  }
+  .accroche .txt{
+    font-family:'Oswald',sans-serif; font-weight:700; font-size:40px; line-height:1.18;
+    letter-spacing:.005em; color:var(--bone); text-transform:uppercase;
+    text-shadow:0 0 12px rgba(53,229,255,.3);
+    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .accroche.glitch .txt{animation:glitchtxt .3s steps(2) 1 .35s;}
+  @keyframes glitchtxt{
+    0%{transform:translate(0,0);text-shadow:2px 0 var(--cyan), -2px 0 var(--blood);}
+    50%{transform:translate(-2px,1px);text-shadow:-2px 0 var(--cyan), 2px 0 var(--blood);}
+    100%{transform:translate(0,0);text-shadow:0 0 12px rgba(53,229,255,.3);}
+  }
+
+  .badgejdn{
+    position:absolute; top:16px; right:34px;
+    display:flex; align-items:center; gap:10px; z-index:3;
+  }
+  .logowrap{width:64px;height:64px;border-radius:50%;border:3.5px solid var(--cyan);display:flex;
+    align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;background:var(--void);
+    animation:ringpulse 2.4s ease-in-out infinite, spin30 30s cubic-bezier(.34,1.56,.64,1) infinite;}
+  .logowrap img{width:100%;height:100%;object-fit:cover;display:block;}
+  @keyframes ringpulse{0%,100%{box-shadow:0 0 0 0 rgba(53,229,255,.35);}50%{box-shadow:0 0 0 11px rgba(53,229,255,0);}}
+  @keyframes spin30{
+    0%{transform:rotate(0deg) scale(1);}
+    4%{transform:rotate(200deg) scale(1.18);}
+    8%{transform:rotate(360deg) scale(1);}
+    100%{transform:rotate(360deg) scale(1);}
+  }
+
+  .grain{position:absolute;inset:0;pointer-events:none;opacity:.05;z-index:6;
+    background-image:repeating-linear-gradient(0deg, rgba(255,255,255,.4) 0 1px, transparent 1px 3px);}
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <div class="locbadge">
+    <div class="tag">EN DIRECT</div>
+    <div class="place">__LOCATION__</div>
+  </div>
+
+  <div class="cluster">
+    <div class="masthead">
+      <div class="scanline"></div>
+      <div class="brand">
+        <h1>__CHANNEL_LINE1__ <span>__CHANNEL_LINE2__</span></h1>
+        <div class="sub">__SUBTITLE__</div>
+      </div>
+      <div class="rightinfo">
+        <div class="livepill"><span class="dot"></span>LIVE</div>
+        <div class="clock" id="clock">00:00:00</div>
+      </div>
+    </div>
+
+    <div class="tickerbar">
+      <div class="badgejdn">
+        <div class="logowrap"><img src="data:image/png;base64,__LOGO_B64__" alt="logo"></div>
+      </div>
+      <div class="toprow">
+        <div class="cat" id="cat">INFO</div>
+        <div class="src" id="src"></div>
+      </div>
+      <div class="stage-inner">
+        <div class="accroche run glitch" id="accroche">
+          <div class="txt" id="txt"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="grain"></div>
+</div>
+
+<script>
+  function fitStage(){
+    const stage = document.getElementById('stage');
+    const scale = Math.min(window.innerWidth/1080, window.innerHeight/1920);
+    const offX = (window.innerWidth - 1080*scale)/2;
+    const offY = (window.innerHeight - 1920*scale)/2;
+    stage.style.transform = `translate(${offX}px, ${offY}px) scale(${scale})`;
+  }
+  window.addEventListener('resize', fitStage);
+  fitStage();
+
+  const liveStart = Date.now();
+  function tick(){
+    const totalSec = Math.floor((Date.now() - liveStart) / 1000);
+    const h = Math.floor(totalSec/3600), m = Math.floor((totalSec%3600)/60), s = totalSec%60;
+    const p = n => String(n).padStart(2,'0');
+    document.getElementById('clock').textContent = `${p(h)}:${p(m)}:${p(s)}`;
+  }
+  setInterval(tick,1000); tick();
+
+  const items = __ITEMS_JSON__;
+
+  let i = 0;
+  const catEl = document.getElementById('cat'), srcEl = document.getElementById('src'),
+        txtEl = document.getElementById('txt'), accEl = document.getElementById('accroche');
+
+  function nextAccroche(){
+    if (items.length === 0) return;
+    i = (i+1) % items.length;
+    const it = items[i];
+    accEl.classList.remove('run','glitch');
+    void accEl.offsetWidth;
+    catEl.textContent = it.c; srcEl.textContent = it.s; txtEl.textContent = it.t;
+    accEl.classList.add('run','glitch');
+  }
+  if (items.length > 0) {
+    catEl.textContent = items[0].c; srcEl.textContent = items[0].s; txtEl.textContent = items[0].t;
+  }
+  setInterval(nextAccroche, __INTERVAL_MS__);
+</script>
+</body>
+</html>
