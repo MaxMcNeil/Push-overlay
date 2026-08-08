@@ -1,5 +1,6 @@
 node_modules/
 whisper.cpp/
+llama.cpp/
 content/audio.wav
 content/whisper-output.txt
 input/video.*
