@@ -1,0 +1,6 @@
+node_modules/
+whisper.cpp/
+content/audio.wav
+content/whisper-output.txt
+input/video.*
+*.log
