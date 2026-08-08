@@ -60,7 +60,7 @@
 
   .scanline{position:absolute;top:0;left:0;height:100%;width:180px;pointer-events:none;
     background:linear-gradient(90deg, transparent, rgba(53,229,255,.14), transparent);
-    animation:scan 6s linear infinite;mix-blend-mode:screen;}
+    animation:scan 6s linear infinite;opacity:.7;}
   @keyframes scan{from{transform:translateX(-220px);}to{transform:translateX(1200px);}}
 
   /* bandeau accroche — empilé verticalement (catégorie/source en haut, titre en dessous) */
@@ -89,7 +89,7 @@
     clip-path:polygon(0 0,0 0,0 100%,0 100%);
     display:flex; align-items:center;
   }
-  .accroche.run{animation:wipe 8s cubic-bezier(.65,0,.2,1) infinite;}
+  .accroche.run{animation:wipe var(--wipe-dur,8s) cubic-bezier(.65,0,.2,1) 1 both;}
   @keyframes wipe{
     0%{clip-path:polygon(0 0,0 0,0 100%,0 100%);opacity:0;}
     6%{clip-path:polygon(0 0,100% 0,100% 100%,0 100%);opacity:1;}
@@ -189,11 +189,16 @@
   }
   setInterval(tick,1000); tick();
 
-  const items = [{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"ABONNE EN TENDEUR SI ÇA EXISTE ENCORE"},{"c":"SCIENCE","s":"LE JOURNAL DU NON — 08/08/2026","t":"JE VOUS SUPLIS FOURNISSEZ LES ÉTUDES, LES PREUVES QUE L'INJECTION RÉDUIT LA GRAVITÉ PRÉVIENT LES DÉCÈS"},{"c":"SCIENCE","s":"LE JOURNAL DU NON — 08/08/2026","t":"DONNEZ-NOUS CES ÉTUDES POUR LES INCLURES DANS LE DOSSIER DE L'AUDIENCE"},{"c":"SCIENCE","s":"LE JOURNAL DU NON — 08/08/2026","t":"ENCORE UNE FOIS, VOUS FINANCEZ LA SCIENCE, VOUS OBTENEZ LE RÉSULTAT VOULU, FAUSSIS FINANCEZ LA SCIENCE DEPUIS 40 ANS, IL OBTIENT…"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"\"JE PRÉCISE QUE C'EST UN SÉNATEUR DANS UNE AUDITION, D'UN DES OLIGARCHES DU VACCINODROME"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"BIEN ENTENDU, SA RÉPONSE ÉTAIT BATEAU AVEC LES FORMULES TEL QUE CONSEILLÉ PAR SON ARMÉE D'AVOCAT ET IL Y A UN SAC DE POGNON"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"CONTAIN DES LUS, COMMENCE À ŒUVRER POUR LA POPULATION QU'IL A ÉLU, ÇA DONNE ÇA COMME DÉBUT"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"CE QUI ME FASCINE DANS TOUTE CETTE HISTOIRE-LÀ ET DANS TOUT CE QUI SE PASSE AUX ETATS-UNIS"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"GRÂCE À KENNEDY GIGNOR ET À TRUMP, MALGRÉ LA PRESSION ÉNORME ET LE CHANTAGE QUI EST CELUI DU FAIT DE CES MAINS, BIEN SÛR"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"CE QUI ME FASCINE, FIGUREZ-VOUS, C'EST LE DEGRÉ DES VEILS QUI COMMENCENT À SE DÉVELOPPER AUPRÈS DE LA POPULATION AMÉRICAINE"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"C'EST FASCINANT"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"LE MAL A COMMENCÉ DE LÀ ET J'ESPÈRE QUE LA RÉPARATION AUSSI COMMENCE DE LÀ"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"PARCE QUE DANS D'AUTRES CONTINENTS, C'EST JUSTE INESPÉRÉ"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"BIEN ENTENDU, JE N'ENDOSE AUCUNE IDÉE LÀ-DESSUS"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"JE DIFFUSE POUR UN FORMATION, C'EST À VOUS DE JUGER, C'EST À VOUS DE VOIR, C'EST À VOUS D'ENTIRER VOS CONCLUSIONS"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"ET PAR LA MÊME OCCASION, J'IMAGINE LA QUANTITÉ DE PRESSION QUI S'ABIND SUR CE SÉNATEUR-LÀ"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"MAIS BON, APPAREMMENT, IL PRÉFÈRE ŒUVRER POUR L'INTÉRÊT DE LA POPULATION ENCORE UNE FOIS QU'IL A ÉLU"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"AU FINAL, C'EST ÇA, UN ÉLU, NON?"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"CHACUN EST SON LIBARBITRE, PARCE QUE JE CONSIDÈRE QUE LES GENS SONT MAJEURS ET QUE LES GENS NE SONT PAS UN TROUPEAU QU'IL FAUT PR…"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"JE CONSIDÈRE QUE LES GENS SONT MAJEURS ET MATURS, ENCORE UNE FOIS, À BON ENTENDRE SI L'ON EXISTE ENCORE"}];
+  const items = [{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"ABONNE EN TENDEUR SI ÇA EXISTE ENCORE"},{"c":"SCIENCE","s":"LE JOURNAL DU NON — 08/08/2026","t":"JE VOUS SUPLIS FOURNISSEZ LES ÉTUDES"},{"c":"SCIENCE","s":"LE JOURNAL DU NON — 08/08/2026","t":"DONNEZ-NOUS CES ÉTUDES POUR LES INCLURES DANS LE DOSSIER DE L'AUDIENCE"},{"c":"SCIENCE","s":"LE JOURNAL DU NON — 08/08/2026","t":"ENCORE UNE FOIS, VOUS FINANCEZ LA SCIENCE, VOUS OBTENEZ LE RÉSULTAT VOULU"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"\"JE PRÉCISE QUE C'EST UN SÉNATEUR DANS UNE AUDITION, D'UN DES OLIGARCHES DU VACCINODROME"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"BIEN ENTENDU, SA RÉPONSE ÉTAIT BATEAU AVEC LES FORMULES TEL QUE CONSEILLÉ PAR SON ARMÉE D'AVOCAT…"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"CONTAIN DES LUS, COMMENCE À ŒUVRER POUR LA POPULATION QU'IL A ÉLU, ÇA DONNE ÇA COMME DÉBUT"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"CE QUI ME FASCINE DANS TOUTE CETTE HISTOIRE-LÀ ET DANS TOUT CE QUI SE PASSE AUX ETATS-UNIS"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"GRÂCE À KENNEDY GIGNOR ET À TRUMP"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"FIGUREZ-VOUS, C'EST LE DEGRÉ DES VEILS QUI COMMENCENT À SE DÉVELOPPER AUPRÈS DE LA POPULATION…"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"C'EST FASCINANT"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"LE MAL A COMMENCÉ DE LÀ ET J'ESPÈRE QUE LA RÉPARATION AUSSI COMMENCE DE LÀ"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"PARCE QUE DANS D'AUTRES CONTINENTS, C'EST JUSTE INESPÉRÉ"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"BIEN ENTENDU, JE N'ENDOSE AUCUNE IDÉE LÀ-DESSUS"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"JE DIFFUSE POUR UN FORMATION, C'EST À VOUS DE JUGER, C'EST À VOUS DE VOIR"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"PAR LA MÊME OCCASION, J'IMAGINE LA QUANTITÉ DE PRESSION QUI S'ABIND SUR CE SÉNATEUR-LÀ"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"APPAREMMENT, IL PRÉFÈRE ŒUVRER POUR L'INTÉRÊT DE LA POPULATION ENCORE UNE FOIS QU'IL A ÉLU"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"AU FINAL, C'EST ÇA, UN ÉLU, NON?"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"CHACUN EST SON LIBARBITRE"},{"c":"INFO","s":"LE JOURNAL DU NON — 08/08/2026","t":"LES GENS SONT MAJEURS ET MATURS, ENCORE UNE FOIS, À BON ENTENDRE SI L'ON EXISTE ENCORE"}];
 
   let i = 0;
   const catEl = document.getElementById('cat'), srcEl = document.getElementById('src'),
         txtEl = document.getElementById('txt'), accEl = document.getElementById('accroche');
+
+  // Durée de l'animation calée sur l'intervalle de rotation (source unique de vérité,
+  // au lieu d'un setInterval séparé qui pouvait dériver par rapport à l'animation CSS
+  // et provoquer un clignotement rapide au bout de quelques cycles).
+  accEl.style.setProperty('--wipe-dur', (8000/1000) + 's');
 
   function nextAccroche(){
     if (items.length === 0) return;
@@ -207,7 +212,11 @@
   if (items.length > 0) {
     catEl.textContent = items[0].c; srcEl.textContent = items[0].s; txtEl.textContent = items[0].t;
   }
-  setInterval(nextAccroche, 8000);
+  // Le changement de texte suit la fin réelle de l'animation CSS (événement natif),
+  // plutôt qu'un minuteur indépendant qui peut se désynchroniser.
+  accEl.addEventListener('animationend', (e) => {
+    if (e.animationName === 'wipe') nextAccroche();
+  });
 </script>
 </body>
 </html>
