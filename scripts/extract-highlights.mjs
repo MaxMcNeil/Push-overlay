@@ -72,6 +72,11 @@ function main() {
     throw new Error(`${SRC} introuvable. Fournis content/script.txt ou laisse transcribe.mjs le générer.`);
   }
   const text = readFileSync(SRC, "utf8");
+  if (text.trim().length === 0) {
+    throw new Error(
+      `${SRC} est vide. Soit tu colles ton texte dedans, soit la vidéo n'a produit aucune transcription exploitable (vérifie qu'elle contient bien de la parole audible).`
+    );
+  }
   const sentences = splitSentences(text);
 
   if (sentences.length === 0) {

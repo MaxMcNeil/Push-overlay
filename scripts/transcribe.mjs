@@ -4,13 +4,21 @@
 // sur le runner GitHub Actions (CPU). Si content/script.txt existe déjà, ce script est sauté
 // (voir .github/workflows/build-overlay.yml).
 
-import { existsSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { execSync } from "child_process";
 import path from "path";
 
 const INPUT_DIR = "input";
 const CONTENT_DIR = "content";
 const OUT_TXT = path.join(CONTENT_DIR, "script.txt");
+
+function hasUsableScript() {
+  if (!existsSync(OUT_TXT)) return false;
+  // Un fichier vide (ou juste des espaces/retours à la ligne) ne compte pas
+  // comme "texte fourni" — sinon la transcription serait sautée à tort.
+  const content = readFileSync(OUT_TXT, "utf8").trim();
+  return content.length > 0;
+}
 
 function findVideo() {
   const candidates = ["video.mp4", "video.mov", "video.mkv", "video.webm"];
@@ -24,9 +32,12 @@ function findVideo() {
 }
 
 async function main() {
-  if (existsSync(OUT_TXT)) {
-    console.log(`content/script.txt existe déjà — transcription sautée.`);
+  if (hasUsableScript()) {
+    console.log(`content/script.txt existe déjà et contient du texte — transcription sautée.`);
     return;
+  }
+  if (existsSync(OUT_TXT)) {
+    console.log(`content/script.txt existe mais est vide — transcription automatique lancée.`);
   }
 
   const videoPath = findVideo();
