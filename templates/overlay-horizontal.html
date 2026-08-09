@@ -18,8 +18,6 @@
   .locbadge{position:absolute;top:24px;left:38px;display:flex;flex-direction:column;
     filter:drop-shadow(0 6px 14px rgba(0,0,0,.55)); animation:badgeIn .7s cubic-bezier(.2,.9,.2,1) both;}
   @keyframes badgeIn{from{opacity:0;transform:translateX(-30px) skewX(-6deg);}to{opacity:1;transform:translateX(0) skewX(0);}}
-  .locbadge .tag{background:var(--panel2);color:var(--cyan);font-family:'Space Mono',monospace;font-weight:700;
-    font-size:22px;letter-spacing:.14em;padding:5px 19px;border-left:7px solid var(--cyan);}
   .locbadge .place{background:var(--bone);color:var(--void);font-family:'Oswald',sans-serif;font-weight:700;
     font-size:26px;letter-spacing:.03em;padding:5px 19px 5px 27px;display:flex;align-items:center;gap:10px;}
   .locbadge .place::before{content:"";width:0;height:0;border-top:6px solid transparent;
@@ -104,8 +102,7 @@
 <body>
 <div id="stage">
   <div class="locbadge">
-    <div class="tag">SANS FILTRE</div>
-    <div class="place">__LOCATION__</div>
+    <div class="place">SANS FILTRE</div>
   </div>
 
   <div class="cluster">
