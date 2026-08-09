@@ -15,7 +15,7 @@
 // automatiquement sur le nettoyage heuristique de extract-highlights.mjs —
 // le pipeline ne casse jamais pour ce step.
 
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, openSync, closeSync, unlinkSync } from "fs";
 import { execFileSync } from "child_process";
 import {
   SRC,
@@ -71,6 +71,8 @@ function buildPrompt(sourceText) {
   return `<|im_start|>system\n${system}<|im_end|>\n<|im_start|>user\n${user}<|im_end|>\n<|im_start|>assistant\n`;
 }
 
+const LLAMA_OUT_TMP = "llama_headlines_output.tmp.txt";
+
 function runLlama(prompt) {
   const args = [
     "-m", LLAMA_MODEL,
@@ -83,11 +85,28 @@ function runLlama(prompt) {
     "-no-cnv",
     "--simple-io",
   ];
-  return execFileSync(LLAMA_BIN, args, {
-    encoding: "utf8",
-    timeout: 8 * 60 * 1000, // 8 min de garde-fou (CPU seul sur le runner)
-    maxBuffer: 20 * 1024 * 1024,
-  });
+  // On redirige stdout vers un fichier plutôt que de le capturer via un pipe
+  // Node classique : avec execFileSync/spawnSync, un enfant qui écrit
+  // beaucoup et vite (logs de chargement du modèle + génération) peut
+  // saturer le pipe synchrone et faire planter Node avec ENOBUFS, même quand
+  // llama-cli tourne parfaitement. Écrire directement sur disque contourne
+  // ce bug connu de Node.
+  const fd = openSync(LLAMA_OUT_TMP, "w");
+  try {
+    execFileSync(LLAMA_BIN, args, {
+      stdio: ["ignore", fd, "ignore"], // stdout -> fichier, stderr ignoré (logs de chargement bruyants)
+      timeout: 8 * 60 * 1000, // 8 min de garde-fou (CPU seul sur le runner)
+    });
+  } finally {
+    closeSync(fd);
+  }
+  const out = readFileSync(LLAMA_OUT_TMP, "utf8");
+  try {
+    unlinkSync(LLAMA_OUT_TMP);
+  } catch {
+    /* pas grave si le nettoyage échoue */
+  }
+  return out;
 }
 
 // Extrait les lignes "N. texte" du brut renvoyé par llama-cli. On ne suppose
