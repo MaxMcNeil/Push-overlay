@@ -15,8 +15,8 @@
 // automatiquement sur le nettoyage heuristique de extract-highlights.mjs —
 // le pipeline ne casse jamais pour ce step.
 
-import { readFileSync, writeFileSync, existsSync, openSync, closeSync, unlinkSync } from "fs";
-import { execFileSync } from "child_process";
+import { readFileSync, writeFileSync, existsSync } from "fs";
+import { spawn } from "child_process";
 import { cpus } from "os";
 import {
   SRC,
@@ -30,12 +30,21 @@ import {
   heuristicFallback,
 } from "./extract-highlights.mjs";
 
-const LLAMA_BIN = "llama.cpp/build/bin/llama-cli";
+// On pilote llama.cpp via son serveur HTTP (llama-server) plutôt que le CLI
+// (llama-cli). Le CLI a été refondu récemment dans llama.cpp (architecture
+// client/serveur unifiée) et nos flags de contrôle (-no-cnv, --simple-io)
+// s'y comportent de façon imprévisible — génération qui ne se termine
+// jamais (ETIMEDOUT) au lieu de planter proprement. L'API HTTP /completion,
+// elle, est stable et documentée depuis longtemps.
+const LLAMA_SERVER_BIN = "llama.cpp/build/bin/llama-server";
 const LLAMA_MODEL = "llama.cpp/models/qwen2.5-1.5b-instruct-q4_k_m.gguf";
+const SERVER_HOST = "127.0.0.1";
+const SERVER_PORT = 8811;
 const MAX_SOURCE_CHARS = 6000; // largement dans le contexte du modèle, garde la génération rapide
-const N_PREDICT = 900; // budget de tokens pour ~24 headlines courtes (réduit pour rester dans le temps imparti)
+const N_PREDICT = 900; // budget de tokens pour ~24 headlines courtes
 const MIN_VALID_HEADLINES = 6; // en dessous, on considère que le LLM a échoué
-const TIMEOUT_MS = 12 * 60 * 1000; // 12 min de garde-fou (CPU seul sur le runner)
+const SERVER_STARTUP_TIMEOUT_MS = 90 * 1000; // chargement du modèle (1.1 Go, CPU)
+const GENERATION_TIMEOUT_MS = 10 * 60 * 1000; // 10 min de garde-fou pour la génération elle-même
 const NUM_THREADS = Math.max(1, cpus().length);
 
 const CHOC_WORDS = [
@@ -53,7 +62,7 @@ const STOPWORDS = new Set([
   "pas","ne","se","ça","comme","alors","aussi","entre","vers",
 ]);
 
-function buildPrompt(sourceText) {
+function buildMessages(sourceText) {
   const system = [
     "Tu es un rédacteur en chef spécialisé dans les titres d'actualité viraux, pour un bandeau d'infos défilant façon chaîne d'info continue, en français.",
     "On te donne un extrait de transcription orale. À partir de ce texte UNIQUEMENT :",
@@ -68,49 +77,81 @@ function buildPrompt(sourceText) {
 
   const user = `Texte source :\n"""\n${sourceText}\n"""\n\nGénère la liste de 24 titres maintenant.`;
 
-  // Format ChatML utilisé par Qwen2.5 — construit à la main pour rester
-  // compatible avec toutes les versions récentes de llama-cli (mode
-  // complétion pure, pas de dépendance à un flag --chat-template précis).
-  return `<|im_start|>system\n${system}<|im_end|>\n<|im_start|>user\n${user}<|im_end|>\n<|im_start|>assistant\n`;
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
 }
 
-const LLAMA_OUT_TMP = "llama_headlines_output.tmp.txt";
+function waitForServerReady(timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const tick = async () => {
+      try {
+        const res = await fetch(`http://${SERVER_HOST}:${SERVER_PORT}/health`);
+        if (res.ok) return resolve(true);
+      } catch {
+        /* pas encore prêt */
+      }
+      if (Date.now() > deadline) return resolve(false);
+      setTimeout(tick, 1000);
+    };
+    tick();
+  });
+}
 
-function runLlama(prompt) {
-  const args = [
-    "-m", LLAMA_MODEL,
-    "-p", prompt,
-    "-n", String(N_PREDICT),
-    "-c", "8192",
-    "-t", String(NUM_THREADS),
-    "--temp", "0.85",
-    "--top-p", "0.9",
-    "--repeat-penalty", "1.15",
-    "-no-cnv",
-    "--simple-io",
-  ];
-  // On redirige stdout vers un fichier plutôt que de le capturer via un pipe
-  // Node classique : avec execFileSync/spawnSync, un enfant qui écrit
-  // beaucoup et vite (logs de chargement du modèle + génération) peut
-  // saturer le pipe synchrone et faire planter Node avec ENOBUFS, même quand
-  // llama-cli tourne parfaitement. Écrire directement sur disque contourne
-  // ce bug connu de Node.
-  const fd = openSync(LLAMA_OUT_TMP, "w");
+async function runLlamaServer(sourceText) {
+  const proc = spawn(
+    LLAMA_SERVER_BIN,
+    [
+      "-m", LLAMA_MODEL,
+      "-c", "8192",
+      "-t", String(NUM_THREADS),
+      "--host", SERVER_HOST,
+      "--port", String(SERVER_PORT),
+    ],
+    { stdio: "ignore" }
+  );
+
+  let serverErrored = false;
+  proc.on("error", () => {
+    serverErrored = true;
+  });
+
   try {
-    execFileSync(LLAMA_BIN, args, {
-      stdio: ["ignore", fd, "ignore"], // stdout -> fichier, stderr ignoré (logs de chargement bruyants)
-      timeout: TIMEOUT_MS,
-    });
+    const ready = await waitForServerReady(SERVER_STARTUP_TIMEOUT_MS);
+    if (!ready || serverErrored) {
+      throw new Error("le serveur llama.cpp n'a pas démarré à temps (modèle trop long à charger, ou binaire absent)");
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), GENERATION_TIMEOUT_MS);
+    let res;
+    try {
+      res = await fetch(`http://${SERVER_HOST}:${SERVER_PORT}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: buildMessages(sourceText),
+          max_tokens: N_PREDICT,
+          temperature: 0.85,
+          top_p: 0.9,
+          repeat_penalty: 1.15,
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!res.ok) {
+      throw new Error(`llama-server a répondu ${res.status}`);
+    }
+    const data = await res.json();
+    return data?.choices?.[0]?.message?.content || "";
   } finally {
-    closeSync(fd);
+    proc.kill("SIGTERM");
   }
-  const out = readFileSync(LLAMA_OUT_TMP, "utf8");
-  try {
-    unlinkSync(LLAMA_OUT_TMP);
-  } catch {
-    /* pas grave si le nettoyage échoue */
-  }
-  return out;
 }
 
 // Extrait les lignes "N. texte" du brut renvoyé par llama-cli. On ne suppose
@@ -174,9 +215,9 @@ function scoreHeadline(t) {
   return score;
 }
 
-function generateViaLLM(sourceText) {
-  if (!existsSync(LLAMA_BIN) || !existsSync(LLAMA_MODEL)) {
-    console.log("llama-cli ou le modèle sont introuvables — repli sur le nettoyage heuristique.");
+async function generateViaLLM(sourceText) {
+  if (!existsSync(LLAMA_SERVER_BIN) || !existsSync(LLAMA_MODEL)) {
+    console.log("llama-server ou le modèle sont introuvables — repli sur le nettoyage heuristique.");
     return null;
   }
 
@@ -185,9 +226,9 @@ function generateViaLLM(sourceText) {
 
   let raw;
   try {
-    raw = runLlama(buildPrompt(truncated));
+    raw = await runLlamaServer(truncated);
   } catch (err) {
-    console.log(`Échec de l'appel llama-cli (${err.message}) — repli sur le nettoyage heuristique.`);
+    console.log(`Échec de l'appel llama-server (${err.message}) — repli sur le nettoyage heuristique.`);
     return null;
   }
 
@@ -219,7 +260,7 @@ function generateViaLLM(sourceText) {
   return items;
 }
 
-function main() {
+async function main() {
   if (!existsSync(SRC)) {
     throw new Error(`${SRC} introuvable. Fournis content/script.txt ou laisse transcribe.mjs le générer.`);
   }
@@ -230,7 +271,7 @@ function main() {
     );
   }
 
-  let items = generateViaLLM(text);
+  let items = await generateViaLLM(text);
   let mode = "llm";
   if (!items) {
     items = heuristicFallback(text);
