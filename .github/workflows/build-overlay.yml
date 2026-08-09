@@ -65,18 +65,26 @@ jobs:
       # passer par le wrapper npm "nodejs-whisper" qui est cassé avec les versions
       # récentes de whisper.cpp (binaire "main" renommé "whisper-cli", son propre
       # appel à `make` échoue même quand la vraie compilation CMake a réussi).
+      #
+      # -DGGML_NATIVE=OFF est important : sans ça, CMake compile avec
+      # -march=native, donc optimisé pour le CPU exact du runner qui a fait la
+      # compilation (ex: AVX512). Le binaire est mis en cache, mais un run
+      # suivant peut atterrir sur un runner GitHub avec un CPU différent qui
+      # ne supporte pas ces instructions -> crash "SIGILL" à l'exécution.
+      # OFF donne un binaire portable (AVX2/SSE, dispo sur tous les runners
+      # GitHub x86), un peu moins rapide mais qui ne casse jamais.
       - name: Cache whisper.cpp (build + modèle)
         id: whisper-cache
         uses: actions/cache@v4
         with:
           path: whisper.cpp
-          key: whispercpp-build-v1-${{ runner.os }}
+          key: whispercpp-build-v2-${{ runner.os }}
 
       - name: Compiler whisper.cpp (si pas en cache)
         if: steps.whisper-cache.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
-          cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release
+          cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF
           cmake --build whisper.cpp/build -j"$(nproc)" --config Release
           cd whisper.cpp && bash models/download-ggml-model.sh base
 
