@@ -64,18 +64,31 @@ const STOPWORDS = new Set([
 
 function buildMessages(sourceText) {
   const system = [
-    "Tu es un rédacteur en chef spécialisé dans les titres d'actualité viraux, pour un bandeau d'infos défilant façon chaîne d'info continue, en français.",
-    "On te donne un extrait de transcription orale. À partir de ce texte UNIQUEMENT :",
-    "1. Identifie le fait principal et l'élément le plus surprenant ou marquant.",
+    "Tu es rédacteur pour un bandeau d'infos défilant façon chaîne d'info continue, en français. Tu écris des titres COURTS et PUNCHY — jamais des phrases d'analyse.",
+    "",
+    "RÈGLE ABSOLUE DE LONGUEUR : 6 à 12 mots par titre, pas un de plus. Un titre plus long est un échec, même s'il est pertinent.",
+    "",
+    "VOCABULAIRE : simple, concret, oral — celui d'un présentateur de JT, jamais celui d'un universitaire. Mots INTERDITS : \"objectivation\", \"élitisme\", \"incidence\", \"audience audiovisuelle\", et tout mot abstrait de ce genre.",
+    "",
+    "ANGLES : sur 24 titres, maximum 4 peuvent finir par un point d'interrogation. Les 20 autres sont des affirmations — choc, ironie, indignation, révélation. N'utilise pas la question comme solution de facilité.",
+    "",
+    "Exemples de style à IMITER (uniquement le style, pas le sujet ni les faits) :",
+    "MAUVAIS (trop long, abstrait) : \"LA POPULATION A-T-ELLE ÉTÉ TROMPÉE PAR L'OBJECTIVATION DE LA GRAVITÉ DES MALADIES ET DE LEUR INCIDENCE PRÉVENTIVE ?\"",
+    "BON : \"DES ÉTUDES CACHÉES DEPUIS 40 ANS\"",
+    "BON : \"UN SEUL AVOCAT NE SUFFISAIT PAS, IL LUI FALLAIT UNE ARMÉE\"",
+    "BON : \"LE SÉNATEUR ET LES MILLIONS DE L'INDUSTRIE PHARMA\"",
+    "BON : \"CE QU'IL N'A PAS OSÉ DIRE EN AUDIENCE\"",
+    "",
+    "MÉTHODE :",
+    "1. Identifie le fait principal et l'élément le plus surprenant du texte.",
     "2. Ignore les détails secondaires et les hésitations orales.",
-    "3. Génère des titres très courts (8 à 14 mots), en français naturel, à la 3e personne (jamais \"je\").",
-    "4. Varie les angles : choc, indignation, curiosité, ironie, révélation, question.",
-    "5. N'invente AUCUN fait absent du texte source — reformule, n'ajoute rien.",
-    "6. Évite les formulations génériques et les répétitions entre titres.",
-    "7. Réponds UNIQUEMENT par une liste numérotée (1. 2. 3. ...) de 24 titres, un par ligne, sans aucun autre texte avant ou après.",
+    "3. N'invente AUCUN fait absent du texte source — reformule, n'ajoute rien.",
+    "4. Écris à la 3e personne, jamais \"je\".",
+    "5. Évite les répétitions entre titres — chaque titre doit apporter un angle différent.",
+    "6. Réponds UNIQUEMENT par une liste numérotée (1. 2. 3. ...) de 24 titres, un par ligne, sans aucun autre texte avant ou après.",
   ].join("\n");
 
-  const user = `Texte source :\n"""\n${sourceText}\n"""\n\nGénère la liste de 24 titres maintenant.`;
+  const user = `Texte source :\n"""\n${sourceText}\n"""\n\nGénère la liste de 24 titres maintenant. Rappel : 6 à 12 mots chacun, pas plus.`;
 
   return [
     { role: "system", content: system },
@@ -157,6 +170,9 @@ async function runLlamaServer(sourceText) {
 // Extrait les lignes "N. texte" du brut renvoyé par llama-cli. On ne suppose
 // rien d'autre sur le format de sortie (le prompt lui-même ne contient
 // aucune ligne numérotée, donc pas de faux positifs si le prompt est réécho).
+const MAX_WORDS = 13; // cible 6-12 mots +1 de marge — au-delà ça sonne "analyse", pas "bandeau"
+const MAX_QUESTION_SHARE = 4; // sur MAX_ITEMS, au-delà on rejette les "?" en trop (déjà vu: le modèle sur-utilise la question)
+
 function parseHeadlines(raw) {
   const lines = raw.split("\n");
   const out = [];
@@ -166,7 +182,10 @@ function parseHeadlines(raw) {
     let t = m[1].trim();
     t = t.replace(/^["«]+|["»]+$/g, "").trim(); // guillemets superflus
     t = t.replace(/<\|im_end\|>.*$/, "").trim();
-    if (t.length >= 8) out.push(t);
+    if (t.length < 8) continue;
+    const wordCount = t.split(/\s+/).filter(Boolean).length;
+    if (wordCount > MAX_WORDS) continue; // trop long malgré la consigne — on jette plutôt que de tronquer moche
+    out.push(t);
   }
   return out;
 }
@@ -202,7 +221,7 @@ function scoreHeadline(t) {
   const len = t.length;
   if (len >= 25 && len <= 75) score += 3; // clarté / punchy pour un bandeau
   else if (len > 100) score -= 3;
-  if (t.includes("?")) score += 2; // curiosité
+  if (t.includes("?")) score += 1; // légère prime à la curiosité, mais plafonnée plus haut
   const low = t.toLowerCase();
   if (CHOC_WORDS.some((w) => low.includes(w))) score += 2; // impact
   if (/\d/.test(t)) score += 1;
@@ -244,11 +263,23 @@ async function generateViaLLM(sourceText) {
     return null;
   }
 
-  const ranked = deduped
+  const sorted = deduped
     .map((t) => ({ t, score: scoreHeadline(t) }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, MAX_ITEMS)
-    .map((r) => r.t);
+    .sort((a, b) => b.score - a.score);
+
+  // Plafonne la part de questions dans la sélection finale : le modèle a
+  // tendance à sur-utiliser le "?" comme facilité, au détriment des
+  // affirmations chocs/ironiques demandées dans le prompt. On garde l'ordre
+  // par score mais on saute les questions excédentaires.
+  const ranked = [];
+  let questionCount = 0;
+  for (const { t } of sorted) {
+    if (ranked.length >= MAX_ITEMS) break;
+    const isQuestion = t.trim().endsWith("?");
+    if (isQuestion && questionCount >= MAX_QUESTION_SHARE) continue;
+    if (isQuestion) questionCount++;
+    ranked.push(t);
+  }
 
   const date = todayTag();
   const items = ranked.map((t) => ({
