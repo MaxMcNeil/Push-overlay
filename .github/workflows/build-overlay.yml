@@ -66,25 +66,27 @@ jobs:
       # récentes de whisper.cpp (binaire "main" renommé "whisper-cli", son propre
       # appel à `make` échoue même quand la vraie compilation CMake a réussi).
       #
-      # -DGGML_NATIVE=OFF est important : sans ça, CMake compile avec
-      # -march=native, donc optimisé pour le CPU exact du runner qui a fait la
-      # compilation (ex: AVX512). Le binaire est mis en cache, mais un run
-      # suivant peut atterrir sur un runner GitHub avec un CPU différent qui
-      # ne supporte pas ces instructions -> crash "SIGILL" à l'exécution.
-      # OFF donne un binaire portable (AVX2/SSE, dispo sur tous les runners
-      # GitHub x86), un peu moins rapide mais qui ne casse jamais.
+      # -DGGML_NATIVE=OFF évite -march=native (portable entre runners), mais
+      # tout seul ça désactive AUSSI AVX2/FMA — dispo sur 100% de la flotte
+      # GitHub Actions — et pas seulement AVX512, la vraie cause du SIGILL
+      # précédent (pas dispo sur tous les runners). Résultat : un binaire
+      # portable mais quasi scalaire, beaucoup trop lent (ETIMEDOUT côté
+      # llama.cpp). On cible donc précisément : AVX2/FMA/F16C activés (sûrs
+      # partout), AVX512 désactivé (le seul vrai risque de SIGILL).
       - name: Cache whisper.cpp (build + modèle)
         id: whisper-cache
         uses: actions/cache@v4
         with:
           path: whisper.cpp
-          key: whispercpp-build-v2-${{ runner.os }}
+          key: whispercpp-build-v3-${{ runner.os }}
 
       - name: Compiler whisper.cpp (si pas en cache)
         if: steps.whisper-cache.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
-          cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF
+          cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+            -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
           cmake --build whisper.cpp/build -j"$(nproc)" --config Release
           cd whisper.cpp && bash models/download-ggml-model.sh base
 
@@ -100,18 +102,21 @@ jobs:
       # newsroom. Aucune clé API, aucun service payant — tout tourne sur ce
       # runner. Si ce step échoue ou que le modèle est absent, le script de
       # génération retombe automatiquement sur le nettoyage heuristique.
+      # Même logique AVX2-oui/AVX512-non que whisper.cpp ci-dessus.
       - name: Cache llama.cpp (build + modèle)
         id: llama-cache
         uses: actions/cache@v4
         with:
           path: llama.cpp
-          key: llamacpp-qwen25-1_5b-v1-${{ runner.os }}
+          key: llamacpp-qwen25-1_5b-v2-${{ runner.os }}
 
       - name: Compiler llama.cpp et télécharger le modèle Qwen (si pas en cache)
         if: steps.llama-cache.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
-          cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF
+          cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+            -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
           cmake --build llama.cpp/build -j"$(nproc)" --config Release --target llama-cli
           mkdir -p llama.cpp/models
           curl -L --fail -o llama.cpp/models/qwen2.5-1.5b-instruct-q4_k_m.gguf \
@@ -135,7 +140,7 @@ jobs:
 
       - name: Génération des headlines (LLM local, repli heuristique si indispo)
         run: node scripts/generate-headlines.mjs
-        timeout-minutes: 10
+        timeout-minutes: 14
 
       - name: Génération de l'overlay (orientation auto)
         run: node scripts/generate-overlay.mjs
