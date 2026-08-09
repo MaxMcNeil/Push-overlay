@@ -17,6 +17,7 @@
 
 import { readFileSync, writeFileSync, existsSync, openSync, closeSync, unlinkSync } from "fs";
 import { execFileSync } from "child_process";
+import { cpus } from "os";
 import {
   SRC,
   OUT,
@@ -32,8 +33,10 @@ import {
 const LLAMA_BIN = "llama.cpp/build/bin/llama-cli";
 const LLAMA_MODEL = "llama.cpp/models/qwen2.5-1.5b-instruct-q4_k_m.gguf";
 const MAX_SOURCE_CHARS = 6000; // largement dans le contexte du modèle, garde la génération rapide
-const N_PREDICT = 1100; // budget de tokens pour ~30 headlines courtes
+const N_PREDICT = 900; // budget de tokens pour ~24 headlines courtes (réduit pour rester dans le temps imparti)
 const MIN_VALID_HEADLINES = 6; // en dessous, on considère que le LLM a échoué
+const TIMEOUT_MS = 12 * 60 * 1000; // 12 min de garde-fou (CPU seul sur le runner)
+const NUM_THREADS = Math.max(1, cpus().length);
 
 const CHOC_WORDS = [
   "scandale", "choc", "choquant", "révélation", "inadmissible", "honte",
@@ -79,6 +82,7 @@ function runLlama(prompt) {
     "-p", prompt,
     "-n", String(N_PREDICT),
     "-c", "8192",
+    "-t", String(NUM_THREADS),
     "--temp", "0.85",
     "--top-p", "0.9",
     "--repeat-penalty", "1.15",
@@ -95,7 +99,7 @@ function runLlama(prompt) {
   try {
     execFileSync(LLAMA_BIN, args, {
       stdio: ["ignore", fd, "ignore"], // stdout -> fichier, stderr ignoré (logs de chargement bruyants)
-      timeout: 8 * 60 * 1000, // 8 min de garde-fou (CPU seul sur le runner)
+      timeout: TIMEOUT_MS,
     });
   } finally {
     closeSync(fd);
