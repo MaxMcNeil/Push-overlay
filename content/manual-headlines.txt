@@ -1,15 +1,39 @@
-# Colle ici tes propres titres, UN PAR LIGNE.
-# - Tant qu'il y a au moins une ligne de titre dans ce fichier, le pipeline
-#   les utilise TELS QUELS pour l'overlay — pas de LLM, pas de nettoyage
-#   automatique, rien d'autre.
-# - Les lignes qui commencent par # (comme celle-ci) sont ignorées.
-# - Les lignes vides sont ignorées.
-# - Majuscules ou minuscules, peu importe : c'est mis en majuscules
-#   automatiquement à l'affichage.
-#
-# Pour repasser en mode automatique (LLM ou nettoyage), vide simplement ce
-# fichier (ou ne laisse que des lignes de commentaire comme celles-ci).
-#
-# Exemple (à remplacer par tes vrais titres) :
-# DES ÉTUDES CACHÉES DEPUIS 40 ANS
-# LE SÉNATEUR ET LES MILLIONS DE L'INDUSTRIE PHARMA
+WASHINGTON — LES VACCINS SOUS INTERROGATOIRE
+
+UN SÉNATEUR EXIGE DES PREUVES SUR LES VACCINS
+
+« FOURNISSEZ LES ÉTUDES » — LE FACE-À-FACE QUI FAIT RÉAGIR
+
+VACCINS — LES PREUVES AU CENTRE DE L’AUDITION
+
+LE SÉNAT AMÉRICAIN MET LES DONNÉES SOUS LA LOUPE
+
+UN ÉLU DEMANDE DES ÉTUDES SUR LA RÉDUCTION DES DÉCÈS
+
+AUDITION SOUS TENSION — LES DONNÉES VACCINALES CONTESTÉES
+
+SCIENCE SOUS PRESSION ? LA QUESTION QUI MONTE À WASHINGTON
+
+« DONNEZ-NOUS LES PREUVES » — MOMENT FORT DE L’AUDITION
+
+VACCINS — LA BATAILLE DES ÉTUDES S’INVITE AU SÉNAT
+
+WASHINGTON — QUESTIONS DIRECTES SUR LES DONNÉES SCIENTIFIQUES
+
+LE SÉNAT DEMANDE DES COMPTES SUR LES PREUVES AVANCÉES
+
+AUDITION US — LA PREUVE SCIENTIFIQUE AU CŒUR DU DÉBAT
+
+VACCINS — UN SÉNATEUR MET LES ÉTUDES AU DÉFI
+
+LE FACE-À-FACE QUI RELANCE LA CONTROVERSE SUR LES VACCINS
+
+DONNÉES, ÉTUDES, PREUVES — LE DOSSIER SOUS PRESSION
+
+UN ÉLU FACE AUX RESPONSABLES DU SECTEUR VACCINAL
+
+LE DÉBAT SUR LES VACCINS CHANGE DE TON À WASHINGTON
+
+AUDITION — LES QUESTIONS QUI DÉRANGENT
+
+WASHINGTON — LA PRESSION MONTE AUTOUR DES DONNÉES VACCINALES
