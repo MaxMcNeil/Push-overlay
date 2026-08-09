@@ -1,14 +1,20 @@
 // scripts/generate-headlines.mjs
-// Génère des headlines "choc" façon newsroom à partir de content/script.txt,
-// via un petit LLM local (Qwen2.5-1.5B-Instruct, quantisé, exécuté par
-// llama.cpp — binaire compilé et modèle téléchargé par le workflow, tous
-// deux mis en cache). Aucune clé API, aucun service payant, tout tourne sur
-// le runner GitHub Actions.
+// PRIORITÉ 1 : si content/manual-headlines.txt contient des lignes, elles
+// sont utilisées telles quelles (un titre par ligne), sans passer ni par le
+// LLM ni par le nettoyage heuristique. C'est le mode "je choisis mes propres
+// titres" — voir readManualHeadlines() plus bas.
 //
-// Principe (repris de la suggestion) :
-//   script complet -> LLM (plusieurs angles : choc / indignation / curiosité
-//   / ironie / révélation / question) -> ~30 candidats -> dédoublonnage ->
-//   score (impact / curiosité / clarté / fidélité au texte) -> top N.
+// PRIORITÉ 2 (si le fichier manuel est vide/absent) : génère des headlines
+// "choc" façon newsroom à partir de content/script.txt, via un petit LLM
+// local (Qwen2.5-1.5B-Instruct, quantisé, exécuté par llama.cpp — binaire
+// compilé et modèle téléchargé par le workflow, tous deux mis en cache).
+// Aucune clé API, aucun service payant, tout tourne sur le runner GitHub
+// Actions.
+//
+// Principe : script complet -> LLM (plusieurs angles : choc / indignation /
+// curiosité / ironie / révélation / question) -> ~24 candidats ->
+// dédoublonnage -> score (impact / curiosité / clarté / fidélité au texte)
+// -> top N.
 //
 // Filet de sécurité : si le binaire/modèle est absent, si l'appel échoue, ou
 // si trop peu de headlines exploitables sont produites, on retombe
@@ -29,6 +35,29 @@ import {
   todayTag,
   heuristicFallback,
 } from "./extract-highlights.mjs";
+
+const MANUAL_HEADLINES_PATH = "content/manual-headlines.txt";
+
+// Lit content/manual-headlines.txt : une headline par ligne, lignes vides ou
+// commençant par # ignorées. Retourne null si le fichier est absent ou vide
+// (auquel cas on continue vers LLM/heuristique), sinon la liste d'items prête
+// pour highlights.json.
+function readManualHeadlines() {
+  if (!existsSync(MANUAL_HEADLINES_PATH)) return null;
+  const raw = readFileSync(MANUAL_HEADLINES_PATH, "utf8");
+  const lines = raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith("#"));
+  if (lines.length === 0) return null;
+
+  const date = todayTag();
+  return lines.map((t) => ({
+    c: guessCategory(t),
+    s: `${CHANNEL} — ${date}`,
+    t: t.toUpperCase(),
+  }));
+}
 
 // On pilote llama.cpp via son serveur HTTP (llama-server) plutôt que le CLI
 // (llama-cli). Le CLI a été refondu récemment dans llama.cpp (architecture
@@ -292,6 +321,13 @@ async function generateViaLLM(sourceText) {
 }
 
 async function main() {
+  const manualItems = readManualHeadlines();
+  if (manualItems) {
+    writeFileSync(OUT, JSON.stringify(manualItems, null, 2), "utf8");
+    console.log(`${manualItems.length} accroches écrites dans ${OUT} (mode: manuel — ${MANUAL_HEADLINES_PATH})`);
+    return;
+  }
+
   if (!existsSync(SRC)) {
     throw new Error(`${SRC} introuvable. Fournis content/script.txt ou laisse transcribe.mjs le générer.`);
   }
