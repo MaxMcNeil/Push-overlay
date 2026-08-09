@@ -82,7 +82,6 @@ function runLlama(prompt) {
     "--repeat-penalty", "1.15",
     "-no-cnv",
     "--simple-io",
-    "-no-perf",
   ];
   return execFileSync(LLAMA_BIN, args, {
     encoding: "utf8",
