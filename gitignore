@@ -3,5 +3,7 @@ whisper.cpp/
 llama.cpp/
 content/audio.wav
 content/whisper-output.txt
+content/script.txt
+content/highlights.json
 input/video.*
 *.log
