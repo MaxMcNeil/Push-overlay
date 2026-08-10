@@ -8,6 +8,7 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { execSync } from "child_process";
 import path from "path";
+import { detectLanguage } from "./extract-highlights.mjs";
 
 const CONFIG = {
   channelLine1: "LE JOURNAL",
@@ -61,13 +62,22 @@ function detectOrientation() {
   }
 }
 
-function loadLogoBase64() {
-  const p = "input/logo.png";
-  if (!existsSync(p)) {
-    console.warn("input/logo.png introuvable — le badge logo sera vide.");
-    return "";
+// Logo par langue : dépose input/logo-fr.png ET input/logo-ar.png une bonne
+// fois pour toutes, et ce script choisit automatiquement le bon selon la
+// langue détectée dans les accroches générées — jamais besoin d'écraser un
+// fichier au risque de casser l'autre chaîne. input/logo.png reste un
+// repli si aucun fichier spécifique à la langue n'existe (rétrocompatible
+// avec un dépôt qui n'a encore qu'un seul logo).
+function loadLogoBase64(lang) {
+  const candidates = [`input/logo-${lang}.png`, "input/logo.png"];
+  for (const p of candidates) {
+    if (existsSync(p)) {
+      console.log(`Logo utilisé: ${p}`);
+      return readFileSync(p).toString("base64");
+    }
   }
-  return readFileSync(p).toString("base64");
+  console.warn(`Aucun logo trouvé (${candidates.join(", ")}) — le badge logo sera vide.`);
+  return "";
 }
 
 function loadItems() {
@@ -85,8 +95,12 @@ function main() {
   console.log(`Orientation retenue: ${orientation} -> ${templatePath}`);
 
   let html = readFileSync(templatePath, "utf8");
-  const logoB64 = loadLogoBase64();
   const items = loadItems();
+  // Langue détectée depuis les accroches déjà générées (pas depuis
+  // content/script.txt directement) : ça marche quel que soit le chemin
+  // emprunté en amont — LLM, repli heuristique, ou manual-headlines.txt.
+  const lang = detectLanguage(items.map((it) => it.t).join(" "));
+  const logoB64 = loadLogoBase64(lang);
 
   html = html
     .replaceAll("__LOGO_B64__", logoB64)
