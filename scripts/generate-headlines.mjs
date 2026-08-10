@@ -34,6 +34,7 @@ import {
   dedupe,
   todayTag,
   heuristicFallback,
+  detectLanguage,
 } from "./extract-highlights.mjs";
 
 const MANUAL_HEADLINES_PATH = "content/manual-headlines.txt";
@@ -52,8 +53,9 @@ function readManualHeadlines() {
   if (lines.length === 0) return null;
 
   const date = todayTag();
+  const lang = detectLanguage(lines.join(" "));
   return lines.map((t) => ({
-    c: guessCategory(t),
+    c: guessCategory(t, lang),
     s: `${CHANNEL} — ${date}`,
     t: t.toUpperCase(),
   }));
@@ -76,13 +78,18 @@ const SERVER_STARTUP_TIMEOUT_MS = 90 * 1000; // chargement du modèle (1.1 Go, C
 const GENERATION_TIMEOUT_MS = 10 * 60 * 1000; // 10 min de garde-fou pour la génération elle-même
 const NUM_THREADS = Math.max(1, cpus().length);
 
-const CHOC_WORDS = [
+const CHOC_WORDS_FR = [
   "scandale", "choc", "choquant", "révélation", "inadmissible", "honte",
   "stupéfiant", "dingue", "hallucinant", "glaçant", "incroyable", "polémique",
   "colère", "alerte", "danger", "explosif", "secret", "caché", "vérité",
 ];
 
-const STOPWORDS = new Set([
+const CHOC_WORDS_AR = [
+  "فضيحة", "صادم", "صادمة", "خطير", "خطيرة", "كارثة", "سر", "مفاجأة",
+  "حقيقة", "مخفي", "مخفية", "تحذير", "غضب", "احتجاج", "انفجار",
+];
+
+const STOPWORDS_FR = new Set([
   "le","la","les","un","une","des","de","du","au","aux","et","ou","mais","donc",
   "car","or","ni","que","qui","quoi","dont","où","à","dans","sur","sous","par",
   "pour","avec","sans","ce","cette","ces","cet","son","sa","ses","leur","leurs",
@@ -91,7 +98,53 @@ const STOPWORDS = new Set([
   "pas","ne","se","ça","comme","alors","aussi","entre","vers",
 ]);
 
-function buildMessages(sourceText) {
+// Mots-outils arabes les plus fréquents (prépositions, conjonctions,
+// pronoms) — liste courte, non exhaustive, mais suffisante pour ne pas les
+// compter comme "mots-clés significatifs" dans le garde-fou anti-hallucination.
+const STOPWORDS_AR = new Set([
+  "في", "من", "إلى", "على", "عن", "مع", "أن", "إن", "هذا", "هذه", "ذلك",
+  "التي", "الذي", "كان", "كانت", "لا", "لم", "لن", "قد", "كل", "بين",
+  "هو", "هي", "هم", "أنا", "أنت", "نحن", "و", "أو", "ثم", "كما", "أيضا",
+  "فى", "لكن", "بل", "حتى", "إذا", "بعد", "قبل", "عند", "عندما",
+]);
+
+// Détecte l'arabe par la proportion de caractères dans le bloc Unicode
+// arabe — importé de extract-highlights.mjs (voir ci-dessus), pour éviter
+// deux implémentations qui pourraient diverger.
+
+function buildMessages(sourceText, lang) {
+  if (lang === "ar") {
+    const system = [
+      "أنت محرر عناوين لشريط أخبار متحرك على طريقة قناة إخبارية مستمرة. تكتب عناوين قصيرة وقوية فقط — أبداً جملاً تحليلية طويلة.",
+      "",
+      "قاعدة الطول الصارمة: من 6 إلى 12 كلمة لكل عنوان، لا أكثر. أي عنوان أطول يُعتبر فاشلاً حتى لو كان مضمونه جيداً.",
+      "",
+      "المفردات: بسيطة، مباشرة، ملموسة — كأنك مذيع نشرة أخبار، وليس أكاديمياً. تجنب الكلمات المجردة والفلسفية.",
+      "",
+      "الزوايا: من أصل 24 عنواناً، بحد أقصى 4 عناوين يمكن أن تنتهي بعلامة استفهام. الـ20 المتبقية يجب أن تكون جملاً تقريرية — صادمة، ساخرة، أو كاشفة. لا تستخدم السؤال كحل سهل.",
+      "",
+      "أمثلة على الأسلوب المطلوب (الأسلوب فقط، وليس الموضوع):",
+      "سيئ (طويل جداً ومجرد): \"هل تم خداع الجمهور من خلال تصوير خطورة الأمراض ومدى فعالية الوقاية منها؟\"",
+      "جيد: \"دراسات مخفية منذ 40 عاماً\"",
+      "جيد: \"عضو مجلس الشيوخ وملايين شركات الأدوية\"",
+      "جيد: \"ما لم يجرؤ على قوله في الجلسة\"",
+      "",
+      "المنهج:",
+      "1. حدد الحقيقة الرئيسية والعنصر الأكثر إثارة للدهشة في النص.",
+      "2. تجاهل التفاصيل الثانوية والتردد في الكلام المنطوق.",
+      "3. لا تختلق أي معلومة غير موجودة في النص المصدر — أعد الصياغة فقط، لا تُضف شيئاً.",
+      "4. اكتب بصيغة الغائب، أبداً بصيغة المتكلم \"أنا\".",
+      "5. تجنب التكرار بين العناوين — كل عنوان يجب أن يقدم زاوية مختلفة.",
+      "6. أجب فقط بقائمة مرقمة (1. 2. 3. ...) من 24 عنواناً، سطر واحد لكل عنوان، دون أي نص آخر قبل أو بعد.",
+    ].join("\n");
+
+    const user = `النص المصدر:\n"""\n${sourceText}\n"""\n\nولّد الآن قائمة من 24 عنواناً. تذكير: من 6 إلى 12 كلمة لكل عنوان، لا أكثر.`;
+
+    return [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ];
+  }
   const system = [
     "Tu es rédacteur pour un bandeau d'infos défilant façon chaîne d'info continue, en français. Tu écris des titres COURTS et PUNCHY — jamais des phrases d'analyse.",
     "",
@@ -142,7 +195,7 @@ function waitForServerReady(timeoutMs) {
   });
 }
 
-async function runLlamaServer(sourceText) {
+async function runLlamaServer(sourceText, lang) {
   const proc = spawn(
     LLAMA_SERVER_BIN,
     [
@@ -174,7 +227,7 @@ async function runLlamaServer(sourceText) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: buildMessages(sourceText),
+          messages: buildMessages(sourceText, lang),
           max_tokens: N_PREDICT,
           temperature: 0.85,
           top_p: 0.9,
@@ -219,40 +272,48 @@ function parseHeadlines(raw) {
   return out;
 }
 
-function sourceKeywords(sourceText) {
+function sourceKeywords(sourceText, lang) {
+  const stopwords = lang === "ar" ? STOPWORDS_AR : STOPWORDS_FR;
   return new Set(
     sourceText
       .toLowerCase()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9 ]/g, " ")
+      .replace(/[^\p{L}\p{N} ]/gu, " ")
       .split(" ")
-      .filter((w) => w.length >= 4 && !STOPWORDS.has(w))
+      .filter((w) => w.length >= 4 && !stopwords.has(w))
   );
 }
 
 // Garde-fou anti-hallucination très simple : au moins un mot significatif du
 // titre doit apparaître dans le texte source. Imparfait (n'empêche pas une
 // reformulation abusive) mais élimine les titres complètement hors-sujet.
-function isGroundedInSource(headline, keywords) {
+// \p{L}\p{N} (Unicode) et non a-z0-9 (latin) : sans ça, un texte source en
+// arabe (ou tout script non-latin) perd toutes ses lettres au nettoyage, le
+// set de mots-clés reste vide, et AUCUNE headline ne passe jamais le
+// garde-fou -> repli heuristique -> qui plantait aussi pour la même raison
+// dans extract-highlights.mjs (corrigé également).
+function isGroundedInSource(headline, keywords, lang) {
+  const stopwords = lang === "ar" ? STOPWORDS_AR : STOPWORDS_FR;
   const words = headline
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/[^\p{L}\p{N} ]/gu, " ")
     .split(" ")
-    .filter((w) => w.length >= 4 && !STOPWORDS.has(w));
+    .filter((w) => w.length >= 4 && !stopwords.has(w));
   return words.some((w) => keywords.has(w));
 }
 
-function scoreHeadline(t) {
+function scoreHeadline(t, lang) {
+  const chocWords = lang === "ar" ? CHOC_WORDS_AR : CHOC_WORDS_FR;
   let score = 0;
   const len = t.length;
   if (len >= 25 && len <= 75) score += 3; // clarté / punchy pour un bandeau
   else if (len > 100) score -= 3;
-  if (t.includes("?")) score += 1; // légère prime à la curiosité, mais plafonnée plus haut
+  if (t.includes("?") || t.includes("؟")) score += 1; // légère prime à la curiosité, mais plafonnée plus haut
   const low = t.toLowerCase();
-  if (CHOC_WORDS.some((w) => low.includes(w))) score += 2; // impact
+  if (chocWords.some((w) => low.includes(w))) score += 2; // impact
   if (/\d/.test(t)) score += 1;
   for (const rule of CATEGORY_RULES) {
     if (rule.words.some((w) => low.includes(w))) {
@@ -269,20 +330,21 @@ async function generateViaLLM(sourceText) {
     return null;
   }
 
+  const lang = detectLanguage(sourceText);
   const truncated =
     sourceText.length > MAX_SOURCE_CHARS ? sourceText.slice(0, MAX_SOURCE_CHARS) : sourceText;
 
   let raw;
   try {
-    raw = await runLlamaServer(truncated);
+    raw = await runLlamaServer(truncated, lang);
   } catch (err) {
     console.log(`Échec de l'appel llama-server (${err.message}) — repli sur le nettoyage heuristique.`);
     return null;
   }
 
   const candidates = parseHeadlines(raw);
-  const keywords = sourceKeywords(truncated);
-  const grounded = candidates.filter((t) => isGroundedInSource(t, keywords));
+  const keywords = sourceKeywords(truncated, lang);
+  const grounded = candidates.filter((t) => isGroundedInSource(t, keywords, lang));
   const deduped = dedupe(grounded);
 
   if (deduped.length < MIN_VALID_HEADLINES) {
@@ -293,7 +355,7 @@ async function generateViaLLM(sourceText) {
   }
 
   const sorted = deduped
-    .map((t) => ({ t, score: scoreHeadline(t) }))
+    .map((t) => ({ t, score: scoreHeadline(t, lang) }))
     .sort((a, b) => b.score - a.score);
 
   // Plafonne la part de questions dans la sélection finale : le modèle a
@@ -312,7 +374,7 @@ async function generateViaLLM(sourceText) {
 
   const date = todayTag();
   const items = ranked.map((t) => ({
-    c: guessCategory(t),
+    c: guessCategory(t, lang),
     s: `${CHANNEL} — ${date}`,
     t: t.toUpperCase(),
   }));

@@ -21,7 +21,7 @@ export const MAX_ITEMS = 26;
 const MIN_LEN = 35;
 const MAX_LEN = 100;
 
-export const CATEGORY_RULES = [
+export const CATEGORY_RULES_FR = [
   { cat: "ALERTE", words: ["alerte", "danger", "risque", "urgence", "menace", "grave"] },
   { cat: "CHIFFRES", words: ["million", "milliard", "%", "pourcent", "hausse", "baisse", "record"] },
   { cat: "EXCLUSIF", words: ["exclusif", "révèle", "révélation", "annonce", "annoncé"] },
@@ -29,6 +29,34 @@ export const CATEGORY_RULES = [
   { cat: "ANALYSE", words: ["selon", "estime", "analyse", "explique", "souligne"] },
   { cat: "RÉGULATION", words: ["loi", "gouvernement", "régulation", "interdit", "légal", "obligatoire"] },
 ];
+
+// Mêmes catégories, libellés ET mots-clés traduits en arabe — le libellé
+// (cat) est affiché tel quel dans le badge à l'écran, donc il doit lui aussi
+// être en arabe pour une chaîne arabe, pas seulement les mots détectés.
+export const CATEGORY_RULES_AR = [
+  { cat: "تحذير", words: ["تحذير", "خطر", "خطير", "طارئ", "عاجل", "خطورة"] },
+  { cat: "أرقام", words: ["مليون", "مليار", "%", "ارتفاع", "انخفاض", "رقم قياسي"] },
+  { cat: "حصري", words: ["حصري", "يكشف", "كشف", "إعلان", "أعلن"] },
+  { cat: "علوم", words: ["دراسة", "بحث", "علمي", "علم", "مختبر"] },
+  { cat: "تحليل", words: ["وفقا", "يقدر", "تحليل", "يشرح", "يؤكد"] },
+  { cat: "تنظيم", words: ["قانون", "حكومة", "تنظيم", "محظور", "قانوني", "إلزامي"] },
+];
+
+// Rétrocompatibilité : CATEGORY_RULES pointe vers le jeu français par défaut
+// (code existant qui l'importe sans se soucier de la langue).
+export const CATEGORY_RULES = CATEGORY_RULES_FR;
+
+// Détecte l'arabe par la proportion de caractères dans le bloc Unicode arabe
+// — largement suffisant pour distinguer un transcript arabe d'un transcript
+// français/latin, sans dépendance externe. Exporté pour être réutilisé par
+// generate-headlines.mjs (au lieu d'une détection dupliquée qui pourrait diverger).
+export function detectLanguage(text) {
+  const sample = text.slice(0, 2000);
+  const arabicChars = (sample.match(/[\u0600-\u06FF]/g) || []).length;
+  const letterChars = (sample.match(/[\p{L}]/gu) || []).length;
+  if (letterChars > 0 && arabicChars / letterChars > 0.3) return "ar";
+  return "fr";
+}
 
 // Amorces orales à retirer en tête de phrase (répété jusqu'à stabilisation,
 // car elles s'enchaînent souvent : "Bon, alors du coup, moi je pense que...").
@@ -62,12 +90,14 @@ function stripFillers(s) {
   return t;
 }
 
-export function guessCategory(sentence) {
+export function guessCategory(sentence, lang = "fr") {
+  const rules = lang === "ar" ? CATEGORY_RULES_AR : CATEGORY_RULES_FR;
+  const fallback = lang === "ar" ? "معلومات" : "INFO";
   const low = sentence.toLowerCase();
-  for (const rule of CATEGORY_RULES) {
+  for (const rule of rules) {
     if (rule.words.some((w) => low.includes(w))) return rule.cat;
   }
-  return "INFO";
+  return fallback;
 }
 
 function scoreSentence(s) {
@@ -154,12 +184,16 @@ function toHeadline(s) {
 
 // Dédoublonne les phrases quasi identiques (redites fréquentes à l'oral :
 // "je considère que les gens sont majeurs" répété deux fois de suite, etc.)
+// \p{L}\p{N} (Unicode) plutôt que a-z0-9 (latin uniquement) : indispensable
+// pour l'arabe et tout script non-latin — sinon toutes les lettres sont
+// effacées, chaque phrase devient une clé vide, et dedupe() les rejette
+// comme "trop courtes" -> zéro phrase exploitable -> crash.
 export function normalizedKey(s) {
   return s
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9 ]/g, "")
+    .replace(/[^\p{L}\p{N} ]/gu, "")
     .split(" ")
     .filter(Boolean)
     .slice(0, 8)
@@ -188,6 +222,7 @@ export function todayTag() {
 // IA) et retourne le tableau d'items — utilisé en repli par
 // generate-headlines.mjs si le LLM local échoue.
 export function heuristicFallback(text) {
+  const lang = detectLanguage(text);
   const rawSentences = splitSentences(text);
   const sentences = dedupe(rawSentences);
 
@@ -210,7 +245,7 @@ export function heuristicFallback(text) {
   const date = todayTag();
   const items = originalOrder
     .map((s) => ({
-      c: guessCategory(s),
+      c: guessCategory(s, lang),
       s: `${CHANNEL} — ${date}`,
       t: toHeadline(s),
     }))
