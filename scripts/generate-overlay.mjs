@@ -10,11 +10,19 @@ import { execSync } from "child_process";
 import path from "path";
 import { detectLanguage } from "./extract-highlights.mjs";
 
-const CONFIG = {
+const CONFIG_FR = {
   channelLine1: "LE JOURNAL",
   channelLine2: "DU NON",
   subtitle: "Enquête · Actualité en direct",
   location: "EN DIRECT",
+  intervalMs: 8000,
+};
+
+const CONFIG_AR = {
+  channelLine1: "مركز",
+  channelLine2: "الدراسات",
+  subtitle: "تحليل · تغطية مباشرة",
+  location: "مباشر",
   intervalMs: 8000,
 };
 
@@ -100,6 +108,7 @@ function main() {
   // content/script.txt directement) : ça marche quel que soit le chemin
   // emprunté en amont — LLM, repli heuristique, ou manual-headlines.txt.
   const lang = detectLanguage(items.map((it) => it.t).join(" "));
+  const CONFIG = lang === "ar" ? CONFIG_AR : CONFIG_FR;
   const logoB64 = loadLogoBase64(lang);
 
   html = html
