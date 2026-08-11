@@ -31,6 +31,15 @@
   .locbadge .place::before{content:"";width:0;height:0;border-top:7px solid transparent;
     border-bottom:7px solid transparent;border-left:11px solid var(--blood);}
 
+  /* Variante arabe : locbadge et toprow (catégorie+date) passent à droite —
+     activée via classe "rtl" sur #stage, injectée par generate-overlay.mjs
+     selon la langue détectée. Le reste (texte des accroches, sens du wipe)
+     n'est volontairement pas touché. */
+  #stage.rtl .locbadge{left:auto; right:36px;}
+  #stage.rtl .locbadge .place{flex-direction:row-reverse; padding:6px 28px 6px 20px;}
+  #stage.rtl .locbadge .place::before{border-left:none; border-right:11px solid var(--blood);}
+  #stage.rtl .toprow{flex-direction:row-reverse; justify-content:flex-end;}
+
   /* ============ ZONE BASSE ============ */
   .cluster{
     position:absolute; left:0; bottom:0; width:1080px;
@@ -129,10 +138,10 @@
 </style>
 </head>
 <body>
-<div id="stage">
+<div id="stage" class="__RTL_CLASS__">
 
   <div class="locbadge">
-    <div class="place">SANS FILTRE</div>
+    <div class="place">__LOCATION__</div>
   </div>
 
   <div class="cluster">
