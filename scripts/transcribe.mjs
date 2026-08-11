@@ -15,7 +15,7 @@ const CONTENT_DIR = "content";
 const OUT_TXT = path.join(CONTENT_DIR, "script.txt");
 
 const WHISPER_BIN = "whisper.cpp/build/bin/whisper-cli";
-const WHISPER_MODEL = "whisper.cpp/models/ggml-base.bin";
+const WHISPER_MODEL = "whisper.cpp/models/ggml-small.bin";
 
 function hasUsableScript() {
   if (!existsSync(OUT_TXT)) return false;
@@ -69,7 +69,7 @@ function main() {
     );
   }
 
-  console.log("Transcription locale (whisper.cpp, modèle 'base', langue auto-détectée)...");
+  console.log("Transcription locale (whisper.cpp, modèle 'small', langue auto-détectée)...");
   const outBase = path.resolve(CONTENT_DIR, "whisper-output");
   execFileSync(
     WHISPER_BIN,

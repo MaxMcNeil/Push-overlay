@@ -35,6 +35,7 @@ import {
   todayTag,
   heuristicFallback,
   detectLanguage,
+  channelFor,
 } from "./extract-highlights.mjs";
 
 const MANUAL_HEADLINES_PATH = "content/manual-headlines.txt";
@@ -56,7 +57,7 @@ function readManualHeadlines() {
   const lang = detectLanguage(lines.join(" "));
   return lines.map((t) => ({
     c: guessCategory(t, lang),
-    s: `${CHANNEL} — ${date}`,
+    s: `${channelFor(lang)} — ${date}`,
     t: t.toUpperCase(),
   }));
 }
@@ -375,7 +376,7 @@ async function generateViaLLM(sourceText) {
   const date = todayTag();
   const items = ranked.map((t) => ({
     c: guessCategory(t, lang),
-    s: `${CHANNEL} — ${date}`,
+    s: `${channelFor(lang)} — ${date}`,
     t: t.toUpperCase(),
   }));
 

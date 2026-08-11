@@ -16,7 +16,14 @@ import { readFileSync, writeFileSync, existsSync } from "fs";
 
 export const SRC = "content/script.txt";
 export const OUT = "content/highlights.json";
-export const CHANNEL = "LE JOURNAL DU NON";
+export const CHANNEL_FR = "LE JOURNAL DU NON";
+export const CHANNEL_AR = "مركز الدراسات";
+// Rétrocompatibilité : CHANNEL pointe vers le français par défaut (code
+// existant qui l'importe sans se soucier de la langue).
+export const CHANNEL = CHANNEL_FR;
+export function channelFor(lang) {
+  return lang === "ar" ? CHANNEL_AR : CHANNEL_FR;
+}
 export const MAX_ITEMS = 26;
 const MIN_LEN = 35;
 const MAX_LEN = 100;
@@ -246,7 +253,7 @@ export function heuristicFallback(text) {
   const items = originalOrder
     .map((s) => ({
       c: guessCategory(s, lang),
-      s: `${CHANNEL} — ${date}`,
+      s: `${channelFor(lang)} — ${date}`,
       t: toHeadline(s),
     }))
     // au cas où le nettoyage aurait vidé une phrase entière (que des tics)
