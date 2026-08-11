@@ -31,6 +31,15 @@
   .locbadge .place::before{content:"";width:0;height:0;border-top:7px solid transparent;
     border-bottom:7px solid transparent;border-left:11px solid var(--blood);}
 
+  /* Variante arabe : locbadge et toprow (catégorie+date) passent à droite —
+     activée via classe "rtl" sur #stage, injectée par generate-overlay.mjs
+     selon la langue détectée. Le reste (texte des accroches, sens du wipe)
+     n'est volontairement pas touché. */
+  #stage.rtl .locbadge{left:auto; right:36px;}
+  #stage.rtl .locbadge .place{flex-direction:row-reverse; padding:6px 28px 6px 20px;}
+  #stage.rtl .locbadge .place::before{border-left:none; border-right:11px solid var(--blood);}
+  #stage.rtl .toprow{flex-direction:row-reverse; justify-content:flex-end;}
+
   /* ============ ZONE BASSE ============ */
   .cluster{
     position:absolute; left:0; bottom:0; width:1080px;
@@ -129,10 +138,10 @@
 </style>
 </head>
 <body>
-<div id="stage">
+<div id="stage" class="rtl">
 
   <div class="locbadge">
-    <div class="place">SANS FILTRE</div>
+    <div class="place">بلا فلتر</div>
   </div>
 
   <div class="cluster">
@@ -186,7 +195,7 @@
   }
   setInterval(tick,1000); tick();
 
-  const items = [{"c":"معلومات","s":"LE JOURNAL DU NON — 11/08/2026","t":"ورقاته ارى المواطن هذه مهدي الغهتاني ارى شد ولي العهت ورى شد ارى الملك سلمان ورى شد ولي العهت تضيفه…"}];
+  const items = [{"c":"معلومات","s":"مركز الدراسات — 11/08/2026","t":"حسبي الله على شركة نماء الكهرباء !"},{"c":"معلومات","s":"مركز الدراسات — 11/08/2026","t":"عزّ الظهر والناس تموت من الحر… والكهربا تقطع!"},{"c":"معلومات","s":"مركز الدراسات — 11/08/2026","t":"هذي ما صارت صدفة؟ انقطاعات الكهربا تتكرر كل أسبوع"},{"c":"معلومات","s":"مركز الدراسات — 11/08/2026","t":"إلى متى يا جماعة؟ انقطاع الكهربا !"},{"c":"معلومات","s":"مركز الدراسات — 11/08/2026","t":"كل أسبوع نفس السالفة… ليش الكهربا تقطع؟"}];
 
   let i = 0;
   const catEl = document.getElementById('cat'), srcEl = document.getElementById('src'),
