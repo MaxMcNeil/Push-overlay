@@ -69,14 +69,14 @@ function main() {
     );
   }
 
-  console.log("Transcription locale (whisper.cpp, modèle 'base', FR)...");
+  console.log("Transcription locale (whisper.cpp, modèle 'base', langue auto-détectée)...");
   const outBase = path.resolve(CONTENT_DIR, "whisper-output");
   execFileSync(
     WHISPER_BIN,
     [
       "-m", WHISPER_MODEL,
       "-f", path.resolve(wavPath),
-      "-l", "fr",
+      "-l", "auto",
       "-otxt",
       "-of", outBase,
     ],
