@@ -88,12 +88,12 @@ jobs:
             -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
             -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
           cmake --build whisper.cpp/build -j"$(nproc)" --config Release
-          cd whisper.cpp && bash models/download-ggml-model.sh base
+          cd whisper.cpp && bash models/download-ggml-model.sh small
 
       - name: Vérifier que le modèle whisper est présent (même si le cache a été touché)
         run: |
-          if [ ! -f whisper.cpp/models/ggml-base.bin ]; then
-            cd whisper.cpp && bash models/download-ggml-model.sh base
+          if [ ! -f whisper.cpp/models/ggml-small.bin ]; then
+            cd whisper.cpp && bash models/download-ggml-model.sh small
           fi
 
       # llama.cpp est compilé nous-mêmes (CMake) et mis en cache, comme
