@@ -90,7 +90,7 @@
     font-size:16px; letter-spacing:.06em; padding:6px 14px; white-space:nowrap;
   }
 
-  .stage-inner{position:relative; min-height:150px;}
+  .stage-inner{position:relative; height:150px; overflow:hidden;}
   .accroche{
     position:absolute; inset:0;
     clip-path:polygon(0 0,0 0,0 100%,0 100%);
@@ -108,7 +108,8 @@
     font-family:'Oswald',sans-serif; font-weight:700; font-size:40px; line-height:1.18;
     letter-spacing:.005em; color:var(--bone); text-transform:uppercase;
     text-shadow:0 0 12px rgba(53,229,255,.3);
-    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
+    width:100%; height:100%; display:flex; align-items:center; justify-content:center;
+    text-align:center; overflow:hidden;
   }
   .accroche.glitch .txt{animation:glitchtxt .3s steps(2) 1 .35s;}
   @keyframes glitchtxt{
@@ -195,7 +196,7 @@
   }
   setInterval(tick,1000); tick();
 
-  const items = [{"c":"معلومات","s":"مركز الدراسات — 13/08/2026","t":"حاجة بنتكارب الساعة واحدة في الليل"},{"c":"معلومات","s":"مركز الدراسات — 13/08/2026","t":"أنا عندي ثلاج خربة وسببكم انتم"},{"c":"معلومات","s":"مركز الدراسات — 13/08/2026","t":"أبدا بعد ما خربت ثلاج معي"},{"c":"معلومات","s":"مركز الدراسات — 13/08/2026","t":"عندما ما قادري دفع فتورة الكهرب"},{"c":"معلومات","s":"مركز الدراسات — 13/08/2026","t":"الناس الشياب اللي نايمين على الفراش"},{"c":"معلومات","s":"مركز الدراسات — 13/08/2026","t":"نحن نعرف انه انتو"},{"c":"معلومات","s":"مركز الدراسات — 13/08/2026","t":"أنا واحد ما اسامحكم"},{"c":"معلومات","s":"مركز الدراسات — 13/08/2026","t":"عادي في آخر الليل"},{"c":"معلومات","s":"مركز الدراسات — 13/08/2026","t":"يا مسولين حسوا"},{"c":"معلومات","s":"مركز الدراسات — 13/08/2026","t":"ما سمحتكم"}];
+  const items = [{"c":"معلومات","s":"مركز الدراسات — 16/08/2026","t":"نحن في حاجة للاحترام والمساعدات."},{"c":"معلومات","s":"مركز الدراسات — 16/08/2026","t":"حسوا أننا نحتاج مساعدتهم على طول الليل!"},{"c":"معلومات","s":"مركز الدراسات — 16/08/2026","t":"الحرامي ينافقكم دون العقاب، لكنهم لم تتحملو الفقرة والمساكين."},{"c":"معلومات","s":"مركز الدراسات — 16/08/2026","t":"فتورة الكهرب ضرورية لحياة الأطفال في هذه الأوقات."},{"c":"معلومات","s":"مركز الدراسات — 16/08/2026","t":"خراب الثلاج بسبب بيع الخدمات المغلفة بالظبط!"},{"c":"معلومات","s":"مركز الدراسات — 16/08/2026","t":"عاداً معانا مستمره يعانينا منكم."},{"c":"علوم","s":"مركز الدراسات — 16/08/2026","t":"نحن نعلم أنكم تحرقون حسابنا دون العقاب، لكنهم لم تعطوا فتورة الكهرب."},{"c":"معلومات","s":"مركز الدراسات — 16/08/2026","t":"حسوا أننا نحتاجهم عند الحاجة."},{"c":"علوم","s":"مركز الدراسات — 16/08/2026","t":"نحن نعلم أنك تحرقون حسابنا دون العقاب، لكنهم لم تعطوا فتورة الكهرب."},{"c":"معلومات","s":"مركز الدراسات — 16/08/2026","t":"أين هو مسؤولون عن الخدمات المغلفة بالظبط!"},{"c":"معلومات","s":"مركز الدراسات — 16/08/2026","t":"يئسنا من الخدمات اللي قد منا عليها!"}];
 
   let i = 0;
   const catEl = document.getElementById('cat'), srcEl = document.getElementById('src'),
@@ -206,6 +207,19 @@
   // et provoquer un clignotement rapide au bout de quelques cycles).
   accEl.style.setProperty('--wipe-dur', (8000/1000) + 's');
 
+  // Ajuste automatiquement la taille de police du titre pour qu'il remplisse
+  // au mieux la zone disponible (150px de haut, largeur du bandeau) sans
+  // jamais déborder — plus grand pour un titre court, réduit seulement si
+  // nécessaire pour un titre long.
+  function fitText(el, {min=20, max=52, step=1}={}){
+    let size = max;
+    el.style.fontSize = size + 'px';
+    while (size > min && el.scrollHeight > el.clientHeight) {
+      size -= step;
+      el.style.fontSize = size + 'px';
+    }
+  }
+
   function nextAccroche(){
     if (items.length === 0) return;
     i = (i+1) % items.length;
@@ -213,10 +227,12 @@
     accEl.classList.remove('run','glitch');
     void accEl.offsetWidth;
     catEl.textContent = it.c; srcEl.textContent = it.s; txtEl.textContent = it.t;
+    fitText(txtEl);
     accEl.classList.add('run','glitch');
   }
   if (items.length > 0) {
     catEl.textContent = items[0].c; srcEl.textContent = items[0].s; txtEl.textContent = items[0].t;
+    fitText(txtEl);
   }
   // Le changement de texte suit la fin réelle de l'animation CSS (événement natif),
   // plutôt qu'un minuteur indépendant qui peut se désynchroniser.
