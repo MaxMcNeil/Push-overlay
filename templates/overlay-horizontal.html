@@ -82,7 +82,8 @@
   .accroche .src{font-family:'Space Mono',monospace;font-weight:700;color:var(--void);background:var(--amber);
     font-size:18px;letter-spacing:.08em;padding:4px 15px;margin-right:21px;white-space:nowrap;flex-shrink:0;}
   .accroche .txt{font-family:'Oswald',sans-serif;font-weight:700;font-size:30px;letter-spacing:.01em;
-    color:var(--bone);text-transform:uppercase;white-space:nowrap;text-shadow:0 0 12px rgba(53,229,255,.3);}
+    color:var(--bone);text-transform:uppercase;white-space:nowrap;text-shadow:0 0 12px rgba(53,229,255,.3);
+    flex:1; min-width:0; text-align:center; overflow:hidden;}
   .accroche.glitch .txt{animation:glitchtxt .3s steps(2) 1 .35s;}
   @keyframes glitchtxt{
     0%{transform:translate(0,0);text-shadow:2px 0 var(--cyan), -2px 0 var(--blood);}
@@ -180,6 +181,19 @@
   // et provoquer un clignotement rapide au bout de quelques cycles).
   accEl.style.setProperty('--wipe-dur', (__INTERVAL_MS__/1000) + 's');
 
+  // Ajuste automatiquement la taille de police du titre pour qu'il tienne sur
+  // une ligne dans l'espace restant (après le badge catégorie et le badge
+  // source/date) sans jamais déborder — plus grand pour un titre court, réduit
+  // seulement si nécessaire pour un titre long.
+  function fitText(el, {min=16, max=38, step=1}={}){
+    let size = max;
+    el.style.fontSize = size + 'px';
+    while (size > min && el.scrollWidth > el.clientWidth) {
+      size -= step;
+      el.style.fontSize = size + 'px';
+    }
+  }
+
   function nextAccroche(){
     if (items.length === 0) return;
     i = (i+1) % items.length;
@@ -187,10 +201,12 @@
     accEl.classList.remove('run','glitch');
     void accEl.offsetWidth;
     catEl.textContent = it.c; srcEl.textContent = it.s; txtEl.textContent = it.t;
+    fitText(txtEl);
     accEl.classList.add('run','glitch');
   }
   if (items.length > 0) {
     catEl.textContent = items[0].c; srcEl.textContent = items[0].s; txtEl.textContent = items[0].t;
+    fitText(txtEl);
   }
   // Le changement de texte suit la fin réelle de l'animation CSS (événement natif),
   // plutôt qu'un minuteur indépendant qui peut se désynchroniser.
