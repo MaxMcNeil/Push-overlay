@@ -55,8 +55,16 @@
   .masthead .brand h1{font-family:'Oswald',sans-serif;font-weight:700;font-size:38px;letter-spacing:.02em;
     color:var(--bone);text-transform:uppercase;line-height:1;}
   .masthead .brand h1 span{color:var(--cyan);}
-  .masthead .brand .sub{font-family:'Space Mono',monospace;font-size:15px;color:rgba(243,239,228,.65);
-    letter-spacing:.1em;text-transform:uppercase;margin-top:4px;}
+  .masthead .brand .sub{font-family:'Space Mono',monospace;font-size:15px;color:#ffffff;
+    letter-spacing:.1em;text-transform:uppercase;margin-top:4px;text-shadow:0 0 8px rgba(255,255,255,.4);
+    animation:subPulse 180s ease-in-out infinite;}
+  @keyframes subPulse{
+    0%,4%{opacity:1;text-shadow:0 0 8px rgba(255,255,255,.4);}
+    6%{opacity:.5;text-shadow:0 0 20px rgba(53,229,255,.9);}
+    9%,90%{opacity:1;text-shadow:0 0 8px rgba(255,255,255,.4);}
+    93%{opacity:.5;text-shadow:0 0 20px rgba(242,169,0,.9);}
+    96%,100%{opacity:1;text-shadow:0 0 8px rgba(255,255,255,.4);}
+  }
   .masthead .rightinfo{display:flex;flex-direction:column;align-items:flex-end;gap:8px;
     font-family:'Space Mono',monospace;color:var(--bone);font-size:17px;}
   .livepill{display:flex;align-items:center;gap:9px;background:var(--blood);padding:4px 15px;
