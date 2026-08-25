@@ -13,7 +13,7 @@ import { detectLanguage } from "./extract-highlights.mjs";
 const CONFIG_FR = {
   channelLine1: "LE JOURNAL",
   channelLine2: "DU NON",
-  subtitle: "Enquête · Actualité en direct",
+  subtitle: "Tout est à titre informatif et sous réserve de mes erreurs",
   location: "SANS FILTRE",
   intervalMs: 8000,
 };

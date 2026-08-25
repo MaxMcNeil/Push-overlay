@@ -40,6 +40,27 @@ import {
 
 const MANUAL_HEADLINES_PATH = "content/manual-headlines.txt";
 
+// Disclaimers légaux/éditoriaux — toujours injectés en tête de highlights.json,
+// quel que soit le mode de génération (manuel, LLM, ou repli heuristique).
+// Comme le player (templates/*.html) boucle sur le tableau d'items via
+// `i = (i+1) % items.length`, les placer en position 0/1/2 garantit qu'ils
+// ouvrent CHAQUE cycle de la boucle perpétuelle, pas seulement le tout premier
+// affichage.
+const DISCLAIMER_HEADLINES = [
+  "Clause de non-responsabilité : les informations proposées ne constituent pas des vérités définitives et peuvent comporter des inexactitudes. Chaque utilisateur est invité à procéder à ses propres vérifications",
+  "Mes propos reflètent mon opinion et ne constituent pas une vérité absolue. À chacun de vérifier et de croiser les sources",
+  "Exercé au titre de la liberté d'expression (Art. 19 DUDH), ce contenu informatif peut comporter des erreurs. Il appartient à chacun de croiser et vérifier les sources",
+];
+
+function buildDisclaimerItems() {
+  const date = todayTag();
+  return DISCLAIMER_HEADLINES.map((t) => ({
+    c: "AVIS",
+    s: `${CHANNEL} — ${date}`,
+    t: t.toUpperCase(),
+  }));
+}
+
 // Lit content/manual-headlines.txt : une headline par ligne, lignes vides ou
 // commençant par # ignorées. Retourne null si le fichier est absent ou vide
 // (auquel cas on continue vers LLM/heuristique), sinon la liste d'items prête
@@ -384,10 +405,13 @@ async function generateViaLLM(sourceText) {
 }
 
 async function main() {
+  const disclaimerItems = buildDisclaimerItems();
+
   const manualItems = readManualHeadlines();
   if (manualItems) {
-    writeFileSync(OUT, JSON.stringify(manualItems, null, 2), "utf8");
-    console.log(`${manualItems.length} accroches écrites dans ${OUT} (mode: manuel — ${MANUAL_HEADLINES_PATH})`);
+    const items = [...disclaimerItems, ...manualItems];
+    writeFileSync(OUT, JSON.stringify(items, null, 2), "utf8");
+    console.log(`${items.length} accroches écrites dans ${OUT} (mode: manuel — ${MANUAL_HEADLINES_PATH}, dont ${disclaimerItems.length} disclaimers)`);
     return;
   }
 
@@ -408,8 +432,10 @@ async function main() {
     mode = "heuristique (repli)";
   }
 
+  items = [...disclaimerItems, ...items];
+
   writeFileSync(OUT, JSON.stringify(items, null, 2), "utf8");
-  console.log(`${items.length} accroches écrites dans ${OUT} (mode: ${mode})`);
+  console.log(`${items.length} accroches écrites dans ${OUT} (mode: ${mode}, dont ${disclaimerItems.length} disclaimers)`);
 }
 
 main();
