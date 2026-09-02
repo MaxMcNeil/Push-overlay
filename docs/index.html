@@ -195,16 +195,21 @@
   window.addEventListener('resize', fitStage);
   fitStage();
 
-  const liveStart = Date.now();
+  // Horloge et date en temps réel (heure/jour de la machine qui affiche la
+  // page, càd du spectateur qui a ouvert le lien) — pas un chrono qui repart
+  // de zéro à l'ouverture, et pas une date figée au moment du build.
+  const p2 = n => String(n).padStart(2,'0');
+  function todayStr(){
+    const d = new Date();
+    return `${p2(d.getDate())}/${p2(d.getMonth()+1)}/${d.getFullYear()}`;
+  }
   function tick(){
-    const totalSec = Math.floor((Date.now() - liveStart) / 1000);
-    const h = Math.floor(totalSec/3600), m = Math.floor((totalSec%3600)/60), s = totalSec%60;
-    const p = n => String(n).padStart(2,'0');
-    document.getElementById('clock').textContent = `${p(h)}:${p(m)}:${p(s)}`;
+    const d = new Date();
+    document.getElementById('clock').textContent = `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
   }
   setInterval(tick,1000); tick();
 
-  const items = [{"c":"AVIS","s":"LE JOURNAL DU NON — 30/08/2026","t":"CLAUSE DE NON-RESPONSABILITÉ : LES INFORMATIONS PROPOSÉES NE CONSTITUENT PAS DES VÉRITÉS DÉFINITIVES ET PEUVENT COMPORTER DES INEXACTITUDES. CHAQUE UTILISATEUR EST INVITÉ À PROCÉDER À SES PROPRES VÉRIFICATIONS"},{"c":"AVIS","s":"LE JOURNAL DU NON — 30/08/2026","t":"MES PROPOS REFLÈTENT MON OPINION ET NE CONSTITUENT PAS UNE VÉRITÉ ABSOLUE. À CHACUN DE VÉRIFIER ET DE CROISER LES SOURCES"},{"c":"AVIS","s":"LE JOURNAL DU NON — 30/08/2026","t":"EXERCÉ AU TITRE DE LA LIBERTÉ D'EXPRESSION (ART. 19 DUDH), CE CONTENU INFORMATIF PEUT COMPORTER DES ERREURS. IL APPARTIENT À CHACUN DE CROISER ET VÉRIFIER LES SOURCES"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"BUSINESS HALAL : DÉCRYPTAGE D'UN MARCHÉ DE 2 400 BILLIONS"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"L'INVENTION INDUSTRIELLE DU HALAL : CE QUE CACHE L'ÉTIQUETTE"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"RÉVOLUTION IRANIENNE DE 1979 : L'ORIGINE DU HALAL INDUSTRIEL"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"DU SACRÉ AU CODE-BARRES : LE COMMERCIALISATION DU HALAL"},{"c":"CHIFFRES","s":"LE JOURNAL DU NON — 30/08/2026","t":"100 % DU MARCHÉ FRANÇAIS CONTRÔLÉ PAR DES GÉANTS LAÏQUES ?"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"SCANDALE EN MALAISIE : 40 ANS DE FAUSSE VIANDE CERTIFIÉE"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"CERTIFICATION HALAL : RACKET FINANCIER OU VÉRITABLE CONTRÔLE ?"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"LE BRÉSIL ET NESTLÉ : LES VRAIS GAGNANTS DU MARCHÉ HALAL"},{"c":"SCIENCE","s":"LE JOURNAL DU NON — 30/08/2026","t":"IMPOSSIBLE À TESTER : L'ILLUSION SCIENTIFIQUE DE LA VIANDE HALAL"},{"c":"RÉGULATION","s":"LE JOURNAL DU NON — 30/08/2026","t":"L'ARTICLE 122-5 DU MARCHÉ : L'EXPLOITATION DU DÉSIR DE PURETÉ"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"L'ALLIANCE DU NÉOLIBÉRALISME ET DU RIGORISME DANS L'AGROALIMENTAIRE"},{"c":"CHIFFRES","s":"LE JOURNAL DU NON — 30/08/2026","t":"DES MILLIONS EN BOURSE : LE BUSINESS PRIVÉ DES CERTIFICATEURS"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"PAYS NON-MUSULMANS : QUI ENRICHOIT VRAIMENT LE MARCHÉ HALAL ?"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"EXPOSITION DES DÉRIVES DE LA CERTIFICATION DANS L'AGROALIMENTAIRE"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"L'ARNAQUE DE LA PURIFICATION DE L'EAU ET DES COSMÉTIQUES HALAL"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"DES ABBATOIRS TAYLORISÉS FACE AUX EXIGENCES THÉOLOGIQUES"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"AMAL BILNAT : LA PSYCHOLOGIE DU CONSOMMATEUR FACE À LA FRAUDE"},{"c":"CHIFFRES","s":"LE JOURNAL DU NON — 30/08/2026","t":"LE HALAL EN FRANCE : OÙ VONT VRAIMENT VOS 7 MILLIARDS D'EUROS ?"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"ORGANISMES DE CERTIFICATION : SANS CONTRÔLE NI ÉTAT-MAJOR"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"L'HYPER-EFFICACITÉ INDUSTRIELLE COMPATIBLE AVEC LE RITE SACRÉ ?"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"DES MENTIONS OFFICIELLES AUX SCANDALES DE POTS-DE-VIN"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"NEUTRALITÉ DU DÉBAT : ENQUÊTE SUR LES CIRCUITS DU HALAL"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"L'ILLUSION DU DÉCOUPEUR AUTOMATIQUE ET DES PRIÈRES EN CASSETTE"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"DE 1970 À NOS JOURS : L'ESSORT BRUTAL D'UNE NORME MONDIALE"},{"c":"INFO","s":"LE JOURNAL DU NON — 30/08/2026","t":"QUI POSSÈDE VRAIMENT VOS CONVICTIONS DANS LE SUPERMARCHÉ ?"}];
+  const items = [{"c":"INFO","s":"LE JOURNAL DU NON","t":"TEST TITRE UN"},{"c":"INFO","s":"LE JOURNAL DU NON","t":"TEST TITRE DEUX"}];
 
   let i = 0;
   const catEl = document.getElementById('cat'), srcEl = document.getElementById('src'),
@@ -234,12 +239,12 @@
     const it = items[i];
     accEl.classList.remove('run','glitch');
     void accEl.offsetWidth;
-    catEl.textContent = it.c; srcEl.textContent = it.s; txtEl.textContent = it.t;
+    catEl.textContent = it.c; srcEl.textContent = `${it.s.split(' — ')[0]} — ${todayStr()}`; txtEl.textContent = it.t;
     fitText(txtEl);
     accEl.classList.add('run','glitch');
   }
   if (items.length > 0) {
-    catEl.textContent = items[0].c; srcEl.textContent = items[0].s; txtEl.textContent = items[0].t;
+    catEl.textContent = items[0].c; srcEl.textContent = `${items[0].s.split(' — ')[0]} — ${todayStr()}`; txtEl.textContent = items[0].t;
     fitText(txtEl);
   }
   // Le changement de texte suit la fin réelle de l'animation CSS (événement natif),
