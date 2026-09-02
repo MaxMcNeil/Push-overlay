@@ -249,11 +249,13 @@ export function heuristicFallback(text) {
     .sort((a, b) => a.idx - b.idx)
     .map((o) => o.s);
 
-  const date = todayTag();
+  // Pas de date ici : elle est calculée en direct côté client (voir
+  // templates/*.html) pour toujours afficher le jour/l'heure réels au
+  // moment où le lien est ouvert, plutôt que la date du run du workflow.
   const items = originalOrder
     .map((s) => ({
       c: guessCategory(s, lang),
-      s: `${channelFor(lang)} — ${date}`,
+      s: channelFor(lang),
       t: toHeadline(s),
     }))
     // au cas où le nettoyage aurait vidé une phrase entière (que des tics)

@@ -32,7 +32,6 @@ import {
   CATEGORY_RULES,
   guessCategory,
   dedupe,
-  todayTag,
   heuristicFallback,
   detectLanguage,
   channelFor,
@@ -53,10 +52,10 @@ const DISCLAIMER_HEADLINES = [
 ];
 
 function buildDisclaimerItems() {
-  const date = todayTag();
+  // Pas de date ici : calculée en direct côté client (templates/*.html).
   return DISCLAIMER_HEADLINES.map((t) => ({
     c: "AVIS",
-    s: `${CHANNEL} — ${date}`,
+    s: CHANNEL,
     t: t.toUpperCase(),
   }));
 }
@@ -74,11 +73,10 @@ function readManualHeadlines() {
     .filter((l) => l.length > 0 && !l.startsWith("#"));
   if (lines.length === 0) return null;
 
-  const date = todayTag();
   const lang = detectLanguage(lines.join(" "));
   return lines.map((t) => ({
     c: guessCategory(t, lang),
-    s: `${channelFor(lang)} — ${date}`,
+    s: channelFor(lang),
     t: t.toUpperCase(),
   }));
 }
@@ -394,10 +392,9 @@ async function generateViaLLM(sourceText) {
     ranked.push(t);
   }
 
-  const date = todayTag();
   const items = ranked.map((t) => ({
     c: guessCategory(t, lang),
-    s: `${channelFor(lang)} — ${date}`,
+    s: channelFor(lang),
     t: t.toUpperCase(),
   }));
 
