@@ -167,12 +167,17 @@
   window.addEventListener('resize', fitStage);
   fitStage();
 
-  const liveStart = Date.now();
+  // Horloge et date en temps réel (heure/jour de la machine qui affiche la
+  // page, càd du spectateur qui a ouvert le lien) — pas un chrono qui repart
+  // de zéro à l'ouverture, et pas une date figée au moment du build.
+  const p2 = n => String(n).padStart(2,'0');
+  function todayStr(){
+    const d = new Date();
+    return `${p2(d.getDate())}/${p2(d.getMonth()+1)}/${d.getFullYear()}`;
+  }
   function tick(){
-    const totalSec = Math.floor((Date.now() - liveStart) / 1000);
-    const h = Math.floor(totalSec/3600), m = Math.floor((totalSec%3600)/60), s = totalSec%60;
-    const p = n => String(n).padStart(2,'0');
-    document.getElementById('clock').textContent = `${p(h)}:${p(m)}:${p(s)}`;
+    const d = new Date();
+    document.getElementById('clock').textContent = `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
   }
   setInterval(tick,1000); tick();
 
@@ -208,12 +213,12 @@
     const it = items[i];
     accEl.classList.remove('run','glitch');
     void accEl.offsetWidth;
-    catEl.textContent = it.c; srcEl.textContent = it.s; txtEl.textContent = it.t;
+    catEl.textContent = it.c; srcEl.textContent = `${it.s.split(' — ')[0]} — ${todayStr()}`; txtEl.textContent = it.t;
     fitText(txtEl);
     accEl.classList.add('run','glitch');
   }
   if (items.length > 0) {
-    catEl.textContent = items[0].c; srcEl.textContent = items[0].s; txtEl.textContent = items[0].t;
+    catEl.textContent = items[0].c; srcEl.textContent = `${items[0].s.split(' — ')[0]} — ${todayStr()}`; txtEl.textContent = items[0].t;
     fitText(txtEl);
   }
   // Le changement de texte suit la fin réelle de l'animation CSS (événement natif),
