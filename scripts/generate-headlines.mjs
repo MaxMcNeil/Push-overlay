@@ -27,7 +27,6 @@ import { cpus } from "os";
 import {
   SRC,
   OUT,
-  CHANNEL,
   MAX_ITEMS,
   CATEGORY_RULES,
   guessCategory,
@@ -45,17 +44,28 @@ const MANUAL_HEADLINES_PATH = "content/manual-headlines.txt";
 // `i = (i+1) % items.length`, les placer en position 0/1/2 garantit qu'ils
 // ouvrent CHAQUE cycle de la boucle perpétuelle, pas seulement le tout premier
 // affichage.
-const DISCLAIMER_HEADLINES = [
+const DISCLAIMER_HEADLINES_FR = [
   "Clause de non-responsabilité : les informations proposées ne constituent pas des vérités définitives et peuvent comporter des inexactitudes. Chaque utilisateur est invité à procéder à ses propres vérifications",
   "Mes propos reflètent mon opinion et ne constituent pas une vérité absolue. À chacun de vérifier et de croiser les sources",
   "Exercé au titre de la liberté d'expression (Art. 19 DUDH), ce contenu informatif peut comporter des erreurs. Il appartient à chacun de croiser et vérifier les sources",
 ];
 
-function buildDisclaimerItems() {
+// Mêmes trois clauses, en arabe — utilisées quand le contenu de l'overlay
+// (vidéo transcrite ou texte saisi dans content/manual-headlines.txt) est en
+// arabe, pour que le disclaimer ne s'affiche jamais dans une langue
+// différente du reste de l'overlay.
+const DISCLAIMER_HEADLINES_AR = [
+  "إخلاء مسؤولية: المعلومات المقدمة لا تشكل حقائق نهائية وقد تحتوي على أخطاء. كل مستخدم مدعو للتحقق بنفسه من المعلومات",
+  "آرائي تعكس وجهة نظري الشخصية ولا تشكل حقيقة مطلقة. لكل شخص أن يتحقق من المصادر ويقارن بينها",
+  "يُقدَّم هذا المحتوى الإعلامي في إطار حرية التعبير (المادة 19 من الإعلان العالمي لحقوق الإنسان)، وقد يتضمن أخطاء. يتوجب على كل شخص التحقق من المصادر ومقارنتها",
+];
+
+function buildDisclaimerItems(lang) {
   // Pas de date ici : calculée en direct côté client (templates/*.html).
-  return DISCLAIMER_HEADLINES.map((t) => ({
+  const headlines = lang === "ar" ? DISCLAIMER_HEADLINES_AR : DISCLAIMER_HEADLINES_FR;
+  return headlines.map((t) => ({
     c: "AVIS",
-    s: CHANNEL,
+    s: channelFor(lang),
     t: t.toUpperCase(),
   }));
 }
@@ -402,13 +412,15 @@ async function generateViaLLM(sourceText) {
 }
 
 async function main() {
-  const disclaimerItems = buildDisclaimerItems();
-
   const manualItems = readManualHeadlines();
   if (manualItems) {
+    // Langue déduite du texte réellement saisi manuellement, pas d'une
+    // valeur par défaut — le disclaimer suit la langue de l'overlay.
+    const lang = detectLanguage(manualItems.map((it) => it.t).join(" "));
+    const disclaimerItems = buildDisclaimerItems(lang);
     const items = [...disclaimerItems, ...manualItems];
     writeFileSync(OUT, JSON.stringify(items, null, 2), "utf8");
-    console.log(`${items.length} accroches écrites dans ${OUT} (mode: manuel — ${MANUAL_HEADLINES_PATH}, dont ${disclaimerItems.length} disclaimers)`);
+    console.log(`${items.length} accroches écrites dans ${OUT} (mode: manuel — ${MANUAL_HEADLINES_PATH}, dont ${disclaimerItems.length} disclaimers, langue: ${lang})`);
     return;
   }
 
@@ -429,10 +441,15 @@ async function main() {
     mode = "heuristique (repli)";
   }
 
+  // Langue déduite des accroches réellement générées (source de vérité
+  // unique, cohérente avec le channelFor(lang) déjà utilisé dedans) — le
+  // disclaimer suit toujours la langue effectivement affichée à l'écran.
+  const lang = detectLanguage(items.map((it) => it.t).join(" "));
+  const disclaimerItems = buildDisclaimerItems(lang);
   items = [...disclaimerItems, ...items];
 
   writeFileSync(OUT, JSON.stringify(items, null, 2), "utf8");
-  console.log(`${items.length} accroches écrites dans ${OUT} (mode: ${mode}, dont ${disclaimerItems.length} disclaimers)`);
+  console.log(`${items.length} accroches écrites dans ${OUT} (mode: ${mode}, dont ${disclaimerItems.length} disclaimers, langue: ${lang})`);
 }
 
 main();
