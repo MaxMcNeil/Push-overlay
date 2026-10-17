@@ -2,10 +2,12 @@
   "name": "push-overlay",
   "private": true,
   "type": "module",
-  "description": "Pipeline de génération d'overlay (transcription locale via whisper.cpp, extraction d'accroches, génération HTML)",
+  "description": "Vidéo brute -> vidéo finale montée (hook, headlines, cartes d'analyse, sous-titres animés, SFX), 100 % ffmpeg",
   "scripts": {
     "transcribe": "node scripts/transcribe.mjs",
-    "highlights": "node scripts/extract-highlights.mjs",
-    "overlay": "node scripts/generate-overlay.mjs"
+    "plan": "node scripts/plan-video.mjs",
+    "emoji": "python3 scripts/make-emoji.py content/plan.json",
+    "render": "node scripts/render-video.mjs",
+    "all": "node scripts/transcribe.mjs && node scripts/plan-video.mjs && python3 scripts/make-emoji.py content/plan.json && node scripts/render-video.mjs"
   }
 }

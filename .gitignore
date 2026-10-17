@@ -7,3 +7,14 @@ content/script.txt
 content/highlights.json
 input/video.*
 *.log
+output/
+content/transcript.json
+content/plan.json
+content/video.ass
+content/filter.txt
+content/all-text.txt
+content/whisper-output.json
+assets/emoji/
+assets/mask-*.png
+assets/sfx/
+fonts/*.ttf

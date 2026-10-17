@@ -1,6 +1,3 @@
-فضيحة بنك الراجحي: صالة مليئة بالموظفين الكسالى والكراسي الفارغة
-مهزلة بنك الراجحي: موظفون بدون رد وخدمات معطلة تماماً
-إهمال بنك الراجحي: مكاتب مهجورة وعملاء ينتظرون بلا مجيب
-كارثة بنك الراجحي: مئات الدولارات معطلة بسبب تعطيل الأجهزة
-المهزلة الكاملة في فرع بنك الراجحي: غياب تام للخدمة والموظفين
-
+# Optionnel : tes propres headlines, une par ligne (ligne 1 = 1er passage de la vidéo, etc.).
+# Si ce fichier contient des lignes, elles REMPLACENT les headlines générées, dans l'ordre.
+# Les lignes vides ou commençant par # sont ignorées. Laisse vide pour tout automatiser.

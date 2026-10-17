@@ -1,0 +1,155 @@
+name: Build Video
+
+# Dépose une vidéo dans une Release GitHub -> ce workflow la transcrit, écrit les
+# headlines + cartes d'analyse, puis rend la vidéo finale (output/final.mp4).
+# Résultat : onglet Actions -> run -> Artifacts, ET Release "renders" (téléchargeable direct).
+
+on:
+  release:
+    types: [published, edited]
+  push:
+    branches: [main]
+    paths:
+      - "content/manual-headlines.txt"
+      - "scripts/**"
+      - "input/logo*.png"
+      - ".github/workflows/build-video.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-video
+  cancel-in-progress: true
+
+env:
+  # Optionnel : secret ANTHROPIC_API_KEY -> headlines/analyses écrites par Claude (≈ 10 s, qualité maximale).
+  # Sans secret : LLM local Qwen2.5-7B (gratuit, plus lent, qualité correcte).
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+jobs:
+  build:
+    # évite la boucle : la Release "renders" qui reçoit le résultat ne relance pas le workflow
+    if: github.event_name != 'release' || github.event.release.tag_name != 'renders'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Outils (ffmpeg, cmake, emoji couleur, Pillow)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg cmake build-essential fonts-noto-color-emoji python3-pil fontconfig
+
+      - name: Polices (Poppins ExtraBold + Tajawal ExtraBold pour l'arabe)
+        run: |
+          mkdir -p fonts
+          curl -L --fail -o fonts/Poppins-ExtraBold.ttf "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-ExtraBold.ttf" || echo "Poppins indisponible : repli police système"
+          curl -L --fail -o fonts/Tajawal-ExtraBold.ttf "https://github.com/google/fonts/raw/main/ofl/tajawal/Tajawal-ExtraBold.ttf" || echo "Tajawal indisponible : repli police système"
+          fc-scan --format "%{family} | %{file}\n" fonts/*.ttf || true
+
+      - name: Télécharger la vidéo de la dernière Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p input
+          ASSET_NAME=$(gh release view --repo "${{ github.repository }}" --json assets \
+            -q '.assets[].name' 2>/dev/null | grep -Ei '\.(mp4|mov|mkv|webm|avi|m4v)$' | head -n1 || true)
+          if [ -z "$ASSET_NAME" ]; then
+            echo "::error::Aucune vidéo dans la dernière Release. Publie une Release avec ta vidéo en pièce jointe."
+            exit 1
+          fi
+          echo "Vidéo détectée : $ASSET_NAME"
+          gh release download --repo "${{ github.repository }}" --pattern "$ASSET_NAME" --dir input --clobber
+          EXT="${ASSET_NAME##*.}"
+          mv "input/$ASSET_NAME" "input/video.$EXT"
+          echo "ASSET_BASE=$(basename "$ASSET_NAME" ".$EXT" | tr -c 'A-Za-z0-9._-' '_')" >> "$GITHUB_ENV"
+          ffprobe -v error -show_entries stream=codec_type,width,height,duration -of csv=p=0 "input/video.$EXT"
+
+      # ---------- whisper.cpp (transcription locale, mot à mot) ----------
+      - name: Cache whisper.cpp
+        id: whisper-cache
+        uses: actions/cache@v4
+        with:
+          path: whisper.cpp
+          key: whispercpp-build-v3-${{ runner.os }}
+
+      - name: Compiler whisper.cpp (si pas en cache)
+        if: steps.whisper-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
+          cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+            -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
+          cmake --build whisper.cpp/build -j"$(nproc)" --config Release
+          cd whisper.cpp && bash models/download-ggml-model.sh small
+
+      - name: Vérifier le modèle whisper
+        run: |
+          if [ ! -f whisper.cpp/models/ggml-small.bin ]; then
+            cd whisper.cpp && bash models/download-ggml-model.sh small
+          fi
+
+      # ---------- llama.cpp + Qwen2.5-7B : uniquement si pas de clé Anthropic ----------
+      - name: Cache llama.cpp
+        if: env.ANTHROPIC_API_KEY == ''
+        id: llama-cache
+        uses: actions/cache@v4
+        with:
+          path: llama.cpp
+          key: llamacpp-qwen25-7b-v1-${{ runner.os }}
+
+      - name: Compiler llama.cpp + télécharger Qwen2.5-7B (si pas en cache)
+        if: env.ANTHROPIC_API_KEY == '' && steps.llama-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
+          cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+            -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
+          cmake --build llama.cpp/build -j"$(nproc)" --config Release --target llama-server
+          mkdir -p llama.cpp/models
+          curl -L --fail -o llama.cpp/models/qwen2.5-7b-instruct-q4_k_m.gguf \
+            "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+
+      # ---------- pipeline ----------
+      - name: Transcription (mot à mot, langue auto)
+        run: node scripts/transcribe.mjs
+        timeout-minutes: 30
+
+      - name: Scénario (hook, headlines, cartes d'analyse)
+        run: node scripts/plan-video.mjs
+        timeout-minutes: 45
+
+      - name: Emojis
+        run: python3 scripts/make-emoji.py content/plan.json
+
+      - name: Rendu vidéo
+        run: node scripts/render-video.mjs
+        timeout-minutes: 60
+
+      - name: Garder le scénario avec la vidéo
+        run: cp content/plan.json output/plan.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: video-finale
+          path: output/
+          retention-days: 14
+
+      - name: Publier dans la Release "renders"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view renders --repo "${{ github.repository }}" >/dev/null 2>&1 || \
+            gh release create renders --repo "${{ github.repository }}" --prerelease \
+              --title "Rendus vidéo" --notes "Vidéos générées automatiquement (ne pas supprimer cette release)."
+          NAME="$(date -u +%Y%m%d-%H%M)-${ASSET_BASE}.mp4"
+          cp output/final.mp4 "$NAME"
+          gh release upload renders "$NAME" --repo "${{ github.repository }}" --clobber
+          echo "### ✅ Vidéo prête : release « renders » → $NAME" >> "$GITHUB_STEP_SUMMARY"
