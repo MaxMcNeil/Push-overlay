@@ -74,6 +74,26 @@ export function isCleanHeadline(h, lang) {
   return true;
 }
 
+// Une carte ne doit contenir QUE la langue de la vidéo (pas d'anglais dans une carte arabe, etc.)
+const GARBAGE = /[\uFFFD\uE000-\uF8FF\u2580-\u25FF\u200B-\u200D\uFEFF]/;
+export function foreignScript(t, lang) {
+  if (!t) return false;
+  if (GARBAGE.test(t)) return true;
+  if (lang === "ar") return /[A-Za-z\u00C0-\u00FF]{2,}/.test(t); // latin dans une carte arabe
+  return /[\u0600-\u06FF]/.test(t); // arabe dans une carte FR/EN/IT
+}
+export function isCleanCardText(t, lang) {
+  if (!t) return false;
+  const n = wordCount(t);
+  if (n < 8 || n > 48) return false;
+  if (foreignScript(t, lang)) return false;
+  if (/\.{2,}|…/.test(t)) return false;
+  return true;
+}
+function cardOk(j, lang) {
+  return j && isCleanCardText(j.text, lang) && !foreignScript(j.title, lang) && !foreignScript(j.kicker, lang);
+}
+
 function keywords(text) {
   return new Set(
     text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -128,14 +148,18 @@ function systemPrompt(lang) {
     "- Choc mais honnête : contraste, enjeu, chiffre, conséquence concrète ou question qui pique. Pas de clickbait mensonger.",
     "- Elle doit parler PRÉCISÉMENT de ce qui est dit dans l'extrait (personnes, chiffres, idées). Hors-sujet = échec.",
     "- N'invente AUCUN chiffre, nom, citation ou fait absent de l'extrait.",
+    "- Personnes réelles : chaque affirmation (headline ET carte) doit être directement déductible de l'extrait. N'attribue jamais à une personne nommée une intention, une identité, une orientation, un acte ou une déclaration qu'elle n'a pas clairement exprimés dans l'extrait. En cas de doute, reformule en restant au plus près des mots prononcés.",
     "- Pas de \"je\". Pas d'hésitation orale. Varier les formes d'un extrait à l'autre (affirmation, question, contraste).",
     "",
     "RÈGLES DE LA CARTE D'ANALYSE (valeur ajoutée) :",
     "- kicker : 1 à 3 mots (ex. POURQUOI ?, LE CONTEXTE, COMMENT ÇA MARCHE).",
     "- title : 3 à 8 mots, une idée forte.",
-    "- text : 22 à 34 mots. N'est PAS un résumé : explique le POURQUOI ou le COMMENT, ou donne un éclairage de contexte général et vérifiable. Phrases courtes et claires. Pas de chiffres non présents dans l'extrait.",
+    "- text : 22 à 34 mots. N'est PAS un résumé : explique le POURQUOI ou le COMMENT, ou donne un éclairage de contexte général et vérifiable (jamais un fait nouveau sur une personne nommée). Phrases courtes, claires, complètes. Pas de chiffres non présents dans l'extrait.",
     "- emoji : UN seul emoji pertinent.",
-  ].join("\n");
+    "",
+    `LANGUE : TOUS les champs (headline, kicker, title, text) doivent être écrits EXCLUSIVEMENT en ${LANG_NAME[lang]}. Pas un seul mot d'une autre langue, aucun mot anglais, aucun caractère étrange.`,
+    lang === "ar" ? "اكتب جميع الحقول بالعربية الفصحى فقط، دون أي كلمة إنجليزية أو فرنسية، وبجمل كاملة وصحيحة نحويا." : "",
+  ].filter((x) => x !== "").join("\n");
 }
 
 function chunkUser(lang, chunk, i, n, prevHeadlines) {
@@ -239,14 +263,17 @@ async function viaLocal(chunks, lang, kwAll) {
     const beats = [];
     const prev = [];
     for (let i = 0; i < chunks.length; i++) {
-      let best = null;
-      for (let attempt = 0; attempt < 2 && !best; attempt++) {
+      let best = null, headOnly = null;
+      for (let attempt = 0; attempt < 3 && !best; attempt++) {
         try {
           const j = parseJson(await chatLocal(sys, chunkUser(lang, chunks[i], i, chunks.length, prev)));
-          if (j && isCleanHeadline(j.headline, lang) && grounded(j.headline, kwAll)) best = j;
-          else if (j) console.log(`  extrait ${i + 1}: headline rejetée (« ${j.headline} »), nouvel essai`);
+          const headOk = j && isCleanHeadline(j.headline, lang) && grounded(j.headline, kwAll);
+          if (headOk && cardOk(j, lang)) best = j;
+          else if (headOk && !headOnly) headOnly = j;
+          if (j && !best) console.log(`  extrait ${i + 1}: essai ${attempt + 1} rejeté (${headOk ? "carte hors langue/trop courte" : "headline"})`);
         } catch (e) { console.log(`  extrait ${i + 1}: ${e.message}`); }
       }
+      if (!best && headOnly) best = { headline: headOnly.headline, emoji: headOnly.emoji }; // headline OK, carte refaite en repli
       beats.push(best || {});
       if (best) prev.push(best.headline);
       console.log(`  extrait ${i + 1}/${chunks.length} ${best ? "ok" : "→ repli"}`);
@@ -313,6 +340,13 @@ async function main() {
     if (!(isCleanHeadline(b.headline, lang) && grounded(b.headline, kwAll))) b = { ...heuristicBeat(c, i, lang), ...(b.text && !b.fallback ? { text: b.text } : {}) };
     if (manual[i]) b.headline = manual[i];
     if (!b.headline) b.headline = c.text.split(/\s+/).slice(0, 9).join(" ");
+    // garde-fous communs : une carte ne sort jamais avec de l'anglais dans une vidéo arabe (ou l'inverse)
+    const excerpt = c.text.split(/\s+/).slice(0, 30).join(" ");
+    if (!isCleanCardText(b.text, lang)) { b.text = excerpt; b.fallback = true; }
+    if (foreignScript(b.title, lang) || wordCount(b.title || "") > 10) b.title = "";
+    if (!b.kicker || foreignScript(b.kicker, lang) || wordCount(b.kicker) > 4) b.kicker = KICKERS[lang][i % KICKERS[lang].length];
+    if (!/\p{Extended_Pictographic}/u.test(b.emoji || "")) b.emoji = EMOJIS[i % EMOJIS.length];
+    b.emoji = b.emoji.match(/\p{Extended_Pictographic}\uFE0F?/u)?.[0] || EMOJIS[i % EMOJIS.length];
     return {
       t0: c.t0, t1: c.t1,
       headline: b.headline.trim(),

@@ -17,7 +17,21 @@ const tr = JSON.parse(readFileSync(`${CONTENT_DIR}/transcript.json`, "utf8"));
 const videoPath = findVideo();
 if (!videoPath) throw new Error("Aucune vidéo dans input/.");
 const info = probeVideo(videoPath);
-const D = Math.min(info.duration || plan.duration, plan.duration || 1e9);
+// Durées RÉELLEMENT décodables : une vidéo téléchargée (TikTok…) peut annoncer 3:58 dans l'en-tête
+// alors que sa piste image est plus courte ou à fréquence variable. On mesure, on ne suppose pas.
+function measureDecoded(file, kind) {
+  const map = kind === "v" ? ["-map", "0:v:0", "-an"] : ["-map", "0:a:0", "-vn"];
+  const r = spawnSync("ffmpeg", ["-v", "error", "-nostats", "-progress", "pipe:1", "-i", file, ...map, "-f", "null", "-"], { maxBuffer: 1 << 26 });
+  const m = [...(r.stdout?.toString() || "").matchAll(/out_time_us=(\d+)/g)].pop();
+  return m ? Number(m[1]) / 1e6 : 0;
+}
+const decV = measureDecoded(videoPath, "v");
+const decA = info.hasAudio ? measureDecoded(videoPath, "a") : 0;
+console.log(`Durées : conteneur ${info.duration.toFixed(1)} s | image décodée ${decV.toFixed(1)} s | audio décodé ${decA.toFixed(1)} s`);
+const D = Math.min(Math.max(decV, decA, 1), info.duration || 1e9, plan.duration + 1);
+// si l'image s'arrête avant le son, on fige la dernière image au lieu de couper la vidéo
+const padSec = Math.max(0, D - decV);
+if (padSec > 0.5) console.log(`⚠ La piste image s'arrête ${padSec.toFixed(1)} s avant la fin : dernière image figée pour ne pas couper le son.`);
 const lang = plan.lang;
 const rtl = lang === "ar";
 
@@ -412,7 +426,7 @@ const emojiIdx = usableEmoji.map((e) => addInput(["-loop", "1", "-framerate", St
 const f = [];
 const bw = even(W / 8), bh = even(H / 8);
 const hasPunch = merged.some((s) => s.state === "punch");
-f.push(`[${iSrc}:v]fps=${FPS},setsar=1,split=${hasPunch ? 4 : 3}[bgs][nv0][sv0]${hasPunch ? "[pv0]" : ""}`);
+f.push(`[${iSrc}:v]setpts=PTS-STARTPTS,fps=${FPS},setsar=1${padSec > 0.5 ? `,tpad=stop_mode=clone:stop_duration=${(padSec + 1).toFixed(2)}` : ""},split=${hasPunch ? 4 : 3}[bgs][nv0][sv0]${hasPunch ? "[pv0]" : ""}`);
 f.push(`[bgs]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},gblur=sigma=5,eq=brightness=-0.2:saturation=1.6,hue=h='24*t':s=1.15,scale=${W}:${H}:flags=bicubic[bg]`);
 f.push(`[${iMN}:v]format=gray,split=${hasPunch ? 2 : 1}${hasPunch ? "[mn1][mn2]" : "[mn1]"}`);
 f.push(`[nv0]scale=${winNormal.w}:${winNormal.h},format=yuva420p[nv1]`);
@@ -461,7 +475,7 @@ for (const [type, evs] of Object.entries(byType)) {
 }
 f.push(`${sfxLabels.join("")}amix=inputs=${sfxLabels.length}:normalize=0:duration=longest,aresample=48000,aformat=channel_layouts=stereo[sfx]`);
 if (hasAudio) {
-  f.push(`[${iSrc}:a]aresample=48000,aformat=channel_layouts=stereo[voice]`);
+  f.push(`[${iSrc}:a]asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo[voice]`);
   f.push(`[voice][sfx]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.96[aout]`);
 } else {
   f.push(`[sfx]apad,alimiter=limit=0.96[aout]`);
@@ -479,6 +493,28 @@ const args = [
   "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
   "-t", D.toFixed(3), out,
 ];
+function outDur(file) {
+  const j = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "json", file]).toString());
+  const get = (t) => Number(j.streams.find((x) => x.codec_type === t)?.duration) || 0;
+  return { v: get("video"), a: get("audio") };
+}
+function runFfmpeg(srcFile) {
+  const a = [...args];
+  a[a.indexOf(videoPath)] = srcFile;
+  execFileSync("ffmpeg", a, { stdio: "inherit" });
+}
 console.log("Rendu ffmpeg en cours...");
-execFileSync("ffmpeg", args, { stdio: "inherit" });
+runFfmpeg(videoPath);
+let od = outDur(out);
+console.log(`Vérification : vidéo ${od.v.toFixed(1)} s / audio ${od.a.toFixed(1)} s (attendu ${D.toFixed(1)} s)`);
+if (od.v < D - 1.0) {
+  // le rendu est trop court : on normalise la source (image à cadence constante, timestamps réparés) et on recommence
+  console.log("⚠ Vidéo trop courte : nouvelle tentative sur une copie normalisée de la source...");
+  const norm = `${CONTENT_DIR}/source-cfr.mp4`;
+  execFileSync("ffmpeg", ["-y", "-v", "error", "-err_detect", "ignore_err", "-i", videoPath, "-vf", `fps=${FPS},format=yuv420p`, "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-af", "aresample=async=1:first_pts=0", "-c:a", "aac", "-b:a", "192k", norm], { stdio: "inherit" });
+  runFfmpeg(norm);
+  od = outDur(out);
+  console.log(`Vérification (2e essai) : vidéo ${od.v.toFixed(1)} s / audio ${od.a.toFixed(1)} s`);
+  if (od.v < D - 1.0) throw new Error(`Vidéo finale trop courte (${od.v.toFixed(1)} s au lieu de ${D.toFixed(1)} s). Voir les durées affichées plus haut.`);
+}
 console.log(`✔ ${out}`);
