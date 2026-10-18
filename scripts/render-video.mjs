@@ -186,6 +186,34 @@ const enableFor = (state) => {
 
 // ---------- ASS ----------
 const ass = new Ass(W, H, font.name, font.bold);
+
+// ---- arabe : un événement PAR MOT ----
+// libass range les blocs de couleur de gauche à droite et déplace donc les mots colorés en bout de ligne dans un
+// texte arabe (testé : même avec des marques de direction Unicode). On place chaque mot nous-mêmes, avec les
+// largeurs réelles mesurées, ce qui garde l'ordre de lecture exact.
+const wordPx = (t, em) => ((TM.w.get(t) ?? t.length * TM.avg) * fs(em)) / 100;
+const gapPx = (em) => (TM.space * fs(em)) / 100;
+const lineW = (line, em) => {
+  const toks = line.split(" ").filter(Boolean);
+  return toks.reduce((n, t) => n + wordPx(t, em), 0) + Math.max(0, toks.length - 1) * gapPx(em);
+};
+function placeWords({ layer, t0, t1, line, em, edge, yc, keys, hi, base, tags, move, stagger = 0, fadeOut = 140 }) {
+  // edge = bord droit de la ligne (arabe) ou bord gauche (autres langues)
+  const toks = line.split(" ").filter(Boolean);
+  let x = edge;
+  toks.forEach((t, k) => {
+    const w = wordPx(t, em);
+    const xc = Math.round(rtl ? x - w / 2 : x + w / 2);
+    const key = strip(t) !== "" && keys.includes(strip(t));
+    const ts = Math.min(t1 - 0.1, t0 + k * stagger);
+    const pos = move
+      ? `\\move(${xc + move.dx},${Math.round(yc + move.dy)},${xc},${Math.round(yc)},0,${move.ms})`
+      : `\\pos(${xc},${Math.round(yc)})`;
+    const pop = stagger ? `\\fscx55\\fscy55\\t(0,140,\\fscx110\\fscy110)\\t(140,240,\\fscx100\\fscy100)` : "";
+    ass.add(layer, ts, t1, `{\\an5${pos}${tags}${pop}${c1(key ? hi : base)}\\fad(${stagger ? 80 : 0},${fadeOut})}${t}`);
+    x += (rtl ? -1 : 1) * (w + gapPx(em));
+  });
+}
 const HOOK_END = plan.hook ? Math.min(3.3, D * 0.4) : 0.4;
 const FULL = `m 0 0 l ${W} 0 l ${W} ${H} l 0 ${H}`;
 const dirX = rtl ? -1 : 1; // sens de lecture / des balayages
@@ -245,9 +273,7 @@ beats.forEach((b, i) => {
   const tx = rtl ? bx + bw - 40 : bx + 40;
   const ty = by + bh / 2;
   const keys = keyWords(b.headline, 1);
-  const txt = lines.map((l) => colorize(l, keys, P.gold, P.white)).join("\\N");
-  ass.add(6, start, end,
-    `{\\an${rtl ? 6 : 4}\\pos(${tx},${ty})\\fs${fs(em)}\\bord0\\shad2${c4(P.black, 0.6)}${c1(P.white)}${wipe(120, 560)}\\fad(0,140)}${txt}`);
+  lines.forEach((ln, k) => placeWords({ layer: 6, t0: start + 0.12, t1: end, line: ln, em, edge: tx, yc: ty + (k - (lines.length - 1) / 2) * lh(em), keys, hi: P.gold, base: P.white, tags: `\\fs${fs(em)}\\bord0\\shad2${c4(P.black, 0.6)}`, stagger: 0.07 }));
   // reflet blanc qui traverse le bandeau
   const sx0 = rtl ? bx + bw + 80 : bx - 80, sx1 = rtl ? bx - 80 : bx + bw + 80;
   ass.add(7, start + 0.3, start + 0.95,
@@ -329,7 +355,7 @@ merged.filter((s) => s.state === "split").forEach((s) => {
       const yy = ly + k * lineH;
       const ls = pts ? gStart + k * 0.07 : t0 + 0.45 + k * step;
       if (ls >= t1 - 0.2) return;
-      ass.add(3, ls, t1, `{\\an${an}\\move(${textX + (rtl ? -50 : 50)},${yy + 14},${textX},${yy},0,260)\\fs${fs(bEm)}\\bord0\\shad1${c4(P.black, 0.5)}${c1(P.white)}\\fad(220,160)}${colorize(ln, keys, P.gold, P.white)}`);
+      placeWords({ layer: 3, t0: ls, t1, line: ln, em: bEm, edge: textX, yc: yy + lh(bEm) / 2, keys, hi: P.gold, base: P.white, tags: `\\fs${fs(bEm)}\\bord0\\shad1${c4(P.black, 0.5)}`, move: { dx: rtl ? -40 : 40, dy: 12, ms: 240 }, stagger: 0.045, fadeOut: 160 });
     });
     ly += lines.length * lineH + (pts ? lh(bEm) * 0.5 : 0);
   });
@@ -355,7 +381,7 @@ if (plan.hook) {
   const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
   ass.add(7, t0, t1, `{\\an7\\pos(${cx - hw / 2},${cy - hh / 2})\\bord6${c3(P.gold)}${c1(P.dark, 0.92)}\\shad0\\fad(150,260)\\t(0,300,\\bord10)\\t(300,600,\\bord6)\\p1}${rrect(hw, hh, 34)}{\\p0}`);
   const keys = keyWords(plan.hook, 1);
-  ass.add(8, t0, t1, `{\\an5\\pos(${cx},${cy})\\fs${fs(em)}\\fscx60\\fscy60\\t(0,200,\\fscx112\\fscy112)\\t(200,330,\\fscx100\\fscy100)\\bord0\\shad3${c4(P.black, 0.7)}${c1(P.white)}\\fad(150,260)}${lines.map((l) => colorize(l, keys, P.gold, P.white)).join("\\N")}`);
+  lines.forEach((ln, k) => placeWords({ layer: 8, t0, t1, line: ln, em, edge: rtl ? cx + lineW(ln, em) / 2 : cx - lineW(ln, em) / 2, yc: cy + (k - (lines.length - 1) / 2) * lh(em), keys, hi: P.gold, base: P.white, tags: `\\fs${fs(em)}\\bord0\\shad3${c4(P.black, 0.7)}`, stagger: 0.09, fadeOut: 260 }));
   emojiOverlays.push({ file: emojiFile(plan.hookEmoji), kind: "hook", t0, t1, x: cx - 80, y: cy - hh / 2 - 150, size: 160 });
 }
 
@@ -397,7 +423,7 @@ if (subMode === "keywords") {
     const a = evs[k - 1], b = evs[k];
     if (b.t0 < a.t1) a.t1 = Math.max(a.t0 + 0.08, b.t0);
   }
-  evs.forEach((e) => ass.add(10, e.t0, e.t1, e.text));
+  evs.forEach((e) => (e.texts || [e.text]).forEach((tx) => ass.add(10, e.t0, e.t1, tx)));
 } else if (subMode !== "off") {
   const words = tr.words.filter((w) => w.t0 < D);
   const phrases = [];
@@ -422,12 +448,32 @@ if (subMode === "keywords") {
       const t0 = i === 0 ? Math.max(prevEnd, w.t0 - 0.05) : w.t0;
       let t1 = i < ph.length - 1 ? ph[i + 1].t0 : Math.min(w.t1 + 0.18, nextStart);
       if (t1 - t0 < 0.12) t1 = t0 + 0.12;
-      const line = ph.map((x, j) => {
-        const wd = esc(x.w);
-        return j === i ? `{${c1(hi)}\\fscx114\\fscy114}${wd}{${c1(P.white)}\\fscx100\\fscy100}` : wd;
-      }).join(" ");
-      const pop = i === 0 ? "\\fscx70\\fscy70\\t(0,90,\\fscx116\\fscy116)\\t(90,170,\\fscx100\\fscy100)" : "";
-      evs.push({ t0, t1, text: `{\\an2\\pos(${cx},${L.subsY})\\frz${tilt}\\fs${fs(L.subsSize)}${pop}\\bord${vertical ? 8 : 7}${c3(P.black)}\\shad3${c4(P.black, 0.6)}${c1(P.white)}}${line}` });
+      let texts;
+      if (rtl) {
+        // arabe : un événement par mot (voir rtlWords), mot actif en couleur et agrandi
+        const toks = ph.map((x) => esc(x.w));
+        const em = L.subsSize;
+        const total = toks.reduce((n, t) => n + wordPx(t, em), 0) + (toks.length - 1) * gapPx(em);
+        let xr = cx + total / 2;
+        const yc = Math.round(L.subsY - lh(em) / 2);
+        texts = toks.map((t, j) => {
+          const w = wordPx(t, em);
+          const xc = Math.round(xr - w / 2);
+          xr -= w + gapPx(em);
+          const act = j === i;
+          const sc = act ? 114 : 100;
+          const popT = i === 0 ? `\\fscx70\\fscy70\\t(0,90,\\fscx118\\fscy118)\\t(90,170,\\fscx${sc}\\fscy${sc})` : `\\fscx${sc}\\fscy${sc}`;
+          return `{\\an5\\pos(${xc},${yc})\\fs${fs(em)}${popT}\\bord${vertical ? 8 : 7}${c3(P.black)}\\shad3${c4(P.black, 0.6)}${c1(act ? hi : P.white)}}${t}`;
+        });
+      } else {
+        const line = ph.map((x, j) => {
+          const wd = esc(x.w);
+          return j === i ? `{${c1(hi)}\\fscx114\\fscy114}${wd}{${c1(P.white)}\\fscx100\\fscy100}` : wd;
+        }).join(" ");
+        const pop = i === 0 ? "\\fscx70\\fscy70\\t(0,90,\\fscx116\\fscy116)\\t(90,170,\\fscx100\\fscy100)" : "";
+        texts = [`{\\an2\\pos(${cx},${L.subsY})\\frz${tilt}\\fs${fs(L.subsSize)}${pop}\\bord${vertical ? 8 : 7}${c3(P.black)}\\shad3${c4(P.black, 0.6)}${c1(P.white)}}${line}`];
+      }
+      evs.push({ t0, t1, texts });
     });
   });
   // jamais deux sous-titres en même temps (les horodatages de la transcription se chevauchent parfois)
@@ -439,7 +485,7 @@ if (subMode === "keywords") {
       if (b.t1 <= b.t0) b.t1 = b.t0 + 0.1;
     }
   }
-  evs.forEach((e) => ass.add(10, e.t0, e.t1, e.text));
+  evs.forEach((e) => (e.texts || [e.text]).forEach((tx) => ass.add(10, e.t0, e.t1, tx)));
 }
 
 // 9) ticker de disclaimers permanent : défilement continu SANS trou (largeur mesurée exactement)

@@ -161,6 +161,7 @@ function systemPrompt(lang) {
     "- Personnes réelles : chaque affirmation (headline ET carte) doit être directement déductible de l'extrait. N'attribue jamais à une personne nommée une intention, une identité, une orientation, un acte ou une déclaration qu'elle n'a pas clairement exprimés dans l'extrait. En cas de doute, reformule en restant au plus près des mots prononcés.",
     "- ATTRIBUTION : le locuteur est la personne qui parle dans la vidéo ; ne le confonds JAMAIS avec les personnes qu'il cite, interpelle ou dont il parle. Toute affirmation, vision, prédiction ou accusation du locuteur est présentée COMME SA PAROLE (« il affirme », « selon lui », « il dit avoir vu », « il défie… »), jamais comme un fait établi, surtout quand elle concerne des personnes réelles, une autorité ou la religion.",
     "- Si la transcription semble contenir une erreur de reconnaissance (nom propre douteux), évite ce nom plutôt que de le deviner.",
+    "- VARIÉTÉ : ne commence pas deux headlines consécutives par le même mot (surtout pas « Le locuteur / Il / المتحدث » à chaque fois). Alterne : un fait concret, une question, un verbe d'action, un contraste, le sujet traité. L'attribution se glisse ailleurs dans la phrase (« selon lui », « يقول », « بحسب كلامه »).",
     "- Pas de \"je\". Pas d'hésitation orale. Varier les formes d'un extrait à l'autre (affirmation, question, contraste).",
     "",
     "RÈGLES DE LA CARTE D'ANALYSE (valeur ajoutée) :",
