@@ -6,10 +6,11 @@ horizontale, vertical si elle est verticale. Tout tourne sur GitHub (ffmpeg), sa
 
 ## Ce que contient la vidéo finale
 - **Jamais 100 % de l'écran** : ta vidéo vit dans une fenêtre arrondie (halo néon) sur un fond animé (copie floutée + dérive de teinte).
-- **Hook d'ouverture** (≈ 3 s) : question ou affirmation choc.
+- **Hook d'ouverture** (≈ 3 s) : question ou affirmation choc, mot-clé en or.
+- **Mouvement permanent** : fond dégradé animé, travelling lent dans la fenêtre, tremblement à l'entrée des zooms, balayages de couleur + flash à chaque transition, reflet qui traverse la headline, emojis qui montent.
 - **Bandeau de headline** qui change à chaque séquence (phrases complètes, validées par le script).
 - **Valeur ajoutée** : cartes d'analyse en *split-screen* (« Pourquoi ? », « Le contexte »…) avec flèche vers la vidéo, emoji, transitions flash, **zooms punch**.
-- **Sous-titres animés mot à mot** (mot prononcé en jaune), très lisibles.
+- **Sous-titres animés mot à mot** : pop, légère inclinaison, couleur qui change à chaque phrase. Largeurs mesurées avec le vrai moteur de rendu : l'arabe est parfaitement calé.
 - **Ticker permanent des 3 disclaimers** (FR/AR/EN/IT) : ta protection reste affichée du début à la fin.
 - **Logo selon la langue** : arabe → `input/logo-ar.png`, français (et EN/IT) → `input/logo-fr.png`. L'interface se met en miroir pour l'arabe.
 - **Effets sonores** synthétisés (impact d'ouverture, whoosh de transition, ding de headline, pop d'emoji), barre de progression.
@@ -18,7 +19,14 @@ horizontale, vertical si elle est verticale. Tout tourne sur GitHub (ffmpeg), sa
 ## Mise en place (une fois)
 1. Pousse ce dossier sur GitHub.
 2. *Settings → Actions → General → Workflow permissions* : **Read and write permissions**.
-3. (Recommandé) *Settings → Secrets → Actions* : ajoute **`ANTHROPIC_API_KEY`** → headlines et analyses écrites par Claude en ~10 s, bien meilleures. Sans ce secret, le workflow utilise un LLM local (Qwen2.5-7B) : gratuit mais plus lent et moins brillant.
+3. **IA gratuite pour écrire les headlines (fortement recommandé)** — le LLM local est gratuit mais écrit mal l'arabe. Crée UNE de ces clés (sans carte bancaire) :
+   - **Gemini** (meilleur en arabe) : https://aistudio.google.com → *Get API key*.
+   - **Groq** (très rapide, Llama 3.3 70B) : https://console.groq.com/keys.
+
+   Puis ajoute-la comme secret du dépôt, nom exact `GEMINI_API_KEY` ou `GROQ_API_KEY`
+   (site : *Settings → Secrets and variables → Actions → New repository secret* ; ou Termux : `gh secret set GEMINI_API_KEY --repo MaxMcNeil/Push-overlay`, puis colle la clé).
+   Ordre d'essai : Gemini → Groq → Claude (optionnel, payant : `ANTHROPIC_API_KEY`) → LLM local. Avec une clé, plus de téléchargement de modèle : le run est bien plus court.
+   Les offres gratuites changent : si un fournisseur refuse, le script passe au suivant, puis au LLM local. Les requêtes gratuites de Gemini peuvent être utilisées par Google pour améliorer ses produits : n'envoie que des contenus que tu publies de toute façon.
 
 ## Utilisation
 1. *Releases → Draft a new release* → joins ta vidéo (n'importe quel nom) → **Publish**.

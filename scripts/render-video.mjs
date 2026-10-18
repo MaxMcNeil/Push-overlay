@@ -11,6 +11,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { execFileSync, spawnSync } from "child_process";
 import { CONTENT_DIR, OUTPUT_DIR, findVideo, probeVideo, listFontFiles } from "./lib/util.mjs";
 import { Ass, PALETTE as P, c1, c3, c4, rrect, esc } from "./lib/ass.mjs";
+import { measureTokens, measureLine } from "./lib/measure.mjs";
 
 const plan = JSON.parse(readFileSync(`${CONTENT_DIR}/plan.json`, "utf8"));
 const tr = JSON.parse(readFileSync(`${CONTENT_DIR}/transcript.json`, "utf8"));
@@ -68,9 +69,8 @@ function pickFont() {
 }
 const font = pickFont();
 
-// ---------- mesure réelle des glyphes (python + Pillow) ----------
-// \fs d'ASS = hauteur de ligne complète, pas la taille du "M" : on mesure la police
-// pour obtenir des tailles lisibles ET des retours à la ligne exacts.
+// ---------- mesure EXACTE du texte (libass + bbox) ----------
+// \fs d'ASS = hauteur de ligne complète : LF convertit une taille "visuelle" (em) en \fs.
 function fontFile() {
   const local = rtl ? "Tajawal-ExtraBold.ttf" : "Poppins-ExtraBold.ttf";
   if (files.includes(local)) return `fonts/${local}`;
@@ -78,30 +78,32 @@ function fontFile() {
   const r = spawnSync("fc-match", ["-f", "%{file}", q]);
   return r.stdout?.toString().trim();
 }
-const allText = [
-  plan.hook, ...plan.disclaimers, ...plan.beats.flatMap((b) => [b.headline, b.title, b.text, b.kicker]),
-  ...tr.words.map((w) => w.w), "0123456789 ●.,;:!?'’\"«»()-–—%€$ ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzéèêàçùôîïÉÀ",
-].join(" ");
-let M = { lf: 1.4, adv: {}, avg: 560 };
+let LF = 1.4;
 try {
-  writeFileSync(`${CONTENT_DIR}/all-text.txt`, allText);
-  const r = spawnSync("python3", ["scripts/font-metrics.py", fontFile(), `${CONTENT_DIR}/all-text.txt`], { maxBuffer: 1 << 26 });
-  if (r.status === 0) {
-    const j = JSON.parse(r.stdout.toString());
-    const vals = Object.values(j.adv);
-    M = { lf: j.lf, adv: j.adv, avg: vals.reduce((a, b) => a + b, 0) / Math.max(1, vals.length) };
-  } else console.log("Mesure des polices indisponible (Pillow ?) — estimation approximative utilisée.");
-} catch { console.log("Mesure des polices indisponible — estimation approximative utilisée."); }
-const tw = (str, em) => ([...str].reduce((n, c) => n + (M.adv[c] ?? M.avg), 0) / 1000) * em;
-const fs = (em) => Math.round(em * M.lf);
+  writeFileSync(`${CONTENT_DIR}/lf.txt`, "Mg");
+  const r = spawnSync("python3", ["scripts/font-metrics.py", fontFile(), `${CONTENT_DIR}/lf.txt`], { maxBuffer: 1 << 24 });
+  if (r.status === 0) LF = JSON.parse(r.stdout.toString()).lf || 1.4;
+} catch {}
 const nb = (t) => t.replace(/ +([?!:;»؟])/g, "\u00A0$1").replace(/(«) +/g, "$1\u00A0");
+const tokensOf = (text) => nb(esc(text)).split(/ +/).filter(Boolean);
+const allTokens = new Set(["●"]);
+[plan.hook, ...plan.disclaimers, ...plan.beats.flatMap((b) => [b.headline, b.title, b.text, b.kicker]), ...tr.words.map((w) => w.w)]
+  .filter(Boolean).forEach((t) => tokensOf(t).forEach((k) => allTokens.add(k)));
+const TM = measureTokens({ tokens: [...allTokens], font, dir: CONTENT_DIR });
+console.log(`Mesure du texte : ${TM.w.size} mots mesurés${TM.ok ? "" : " (⚠ mesure partielle, estimation utilisée)"}, espace = ${TM.space}px`);
+const fs = (em) => Math.round(em * LF);
+const tw = (str, em) => {
+  const toks = tokensOf(str);
+  const w = toks.reduce((n, t) => n + (TM.w.get(t) ?? t.length * TM.avg), 0) + Math.max(0, toks.length - 1) * TM.space;
+  return (w * fs(em)) / 100;
+};
 function wrapPx(text, maxPx, em, maxLines = 99) {
-  const words = nb(esc(text)).split(/ +/).filter(Boolean);
+  const words = tokensOf(text);
   const lines = [];
   let cur = "";
   for (const w of words) {
     if (!cur) cur = w;
-    else if (tw(cur + " " + w, em) <= maxPx) cur += " " + w;
+    else if (tw(cur + " " + w, em) <= maxPx * 0.97) cur += " " + w;
     else { lines.push(cur); cur = w; }
   }
   if (cur) lines.push(cur);
@@ -109,7 +111,7 @@ function wrapPx(text, maxPx, em, maxLines = 99) {
 }
 // coupe proprement (dernier mot entier) pour tenir dans maxLines
 function wrapClamp(text, maxPx, em, maxLines) {
-  let words = nb(esc(text)).split(/ +/);
+  let words = tokensOf(text);
   for (;;) {
     const l = wrapPx(words.join(" "), maxPx, em, maxLines);
     if (l) return l;
@@ -117,7 +119,15 @@ function wrapClamp(text, maxPx, em, maxLines) {
     if (words.length < 3) return [words.join(" ")];
   }
 }
-const lh = (em) => em * M.lf; // pas de ligne en px
+const lh = (em) => em * LF; // pas de ligne en px
+// mots les plus "forts" d'une phrase (les plus longs) : mis en couleur
+const strip = (t) => t.replace(/[\p{P}\p{S}\u00A0]/gu, "");
+const keyWords = (text, n) => {
+  const seen = new Set();
+  return tokensOf(text).map((t) => strip(t)).filter((t) => t.length >= 4 && !seen.has(t) && seen.add(t)).sort((a, b) => b.length - a.length).slice(0, n);
+};
+const colorize = (line, keys, hi, base) =>
+  line.split(" ").map((t) => (keys.includes(strip(t)) && strip(t) ? `{${c1(hi)}}${t}{${c1(base)}}` : t)).join(" ");
 
 // ---------- géométrie ----------
 const even = (n) => Math.round(n / 2) * 2;
@@ -178,6 +188,8 @@ const enableFor = (state) => {
 const ass = new Ass(W, H, font.name, font.bold);
 const HOOK_END = Math.min(3.3, D * 0.4);
 const FULL = `m 0 0 l ${W} 0 l ${W} ${H} l 0 ${H}`;
+const dirX = rtl ? -1 : 1; // sens de lecture / des balayages
+const SUB_COLORS = [P.gold, P.cyan, "#FF7AB6", "#9DFF5C"];
 
 // 1) barre de progression
 const pbY = H - 8;
@@ -185,25 +197,30 @@ ass.shape(2, 0, D, 0, pbY, `m 0 0 l ${W} 0 l ${W} 8 l 0 8`, c1(P.white, 0.3));
 ass.shape(3, 0, D, rtl ? W : 0, pbY, `m 0 0 l ${W} 0 l ${W} 8 l 0 8`,
   `${c1(P.gold)}${rtl ? "\\an9" : ""}\\fscx1\\t(0,${Math.round(D * 1000)},\\fscx100)`);
 
-// 2) fenêtre vidéo : halo + cadre fin, par segment
+// 2) fenêtre vidéo : halo qui "respire" + cadre fin, par segment
 const winFor = (state) => (state === "split" ? winSplitFinal : winNormal);
 for (const s of merged) {
   const w = winFor(s.state);
   const glow = s.state === "punch" ? P.gold : P.cyan;
-  ass.shape(1, s.t0, s.t1, w.x, w.y, rrect(w.w, w.h, 26), `\\1a&HFF&${c3(glow, 0.55)}\\bord18\\blur14\\fad(120,0)`);
+  const pulse = `\\t(0,500,\\bord24\\blur20)\\t(500,1000,\\bord14\\blur12)\\t(1000,1500,\\bord24\\blur20)\\t(1500,2000,\\bord14\\blur12)`;
+  ass.shape(1, s.t0, s.t1, w.x, w.y, rrect(w.w, w.h, 26), `\\1a&HFF&${c3(glow, 0.6)}\\bord14\\blur12\\fad(120,0)${pulse}`);
   ass.shape(4, s.t0, s.t1, w.x, w.y, rrect(w.w, w.h, 26), `\\1a&HFF&${c3(P.white, 0.95)}\\bord4\\blur0.6\\fad(120,0)`);
 }
 
-// 3) transitions flash à chaque changement d'état
+// 3) transitions : flash + deux bandes de couleur qui balaient l'écran
 merged.forEach((s, i) => {
   if (i === 0) return;
-  ass.shape(9, s.t0, s.t0 + 0.28, 0, 0, FULL, `${c1(P.white, 0.45)}\\t(0,260,\\1a&HFF&)`);
+  ass.shape(9, s.t0, s.t0 + 0.28, 0, 0, FULL, `${c1(P.white, 0.4)}\\t(0,260,\\1a&HFF&)`);
+  const x0 = rtl ? W + 320 : -320, x1 = rtl ? -320 : W + 320;
+  const band = (wd, sk) => `m 0 0 l ${dirX * wd} 0 l ${dirX * (wd - sk)} ${H} l ${dirX * -sk} ${H}`;
+  ass.add(9, s.t0, s.t0 + 0.46, `{\\an7\\move(${x0},0,${x1},0,0,440)\\bord0\\shad0${c1(P.accent, 0.9)}\\p1}${band(240, 220)}{\\p0}`);
+  ass.add(9, s.t0 + 0.07, s.t0 + 0.5, `{\\an7\\move(${x0},0,${x1},0,0,440)\\bord0\\shad0${c1(P.cyan, 0.85)}\\p1}${band(110, 220)}{\\p0}`);
 });
 
 // 4) logo (cadre accent)
 ass.shape(5, 0, D, logoR.x, logoR.y, rrect(L.logo.w, L.logo.h, 26), `\\1a&HFF&${c3(P.accent)}\\bord6\\blur0.4`);
 
-// 5) bandeau de headline
+// 5) bandeau de headline : révélation par balayage + reflet + mot-clé en couleur
 function fitBanner(text) {
   const maxW = bannerR.w - 80;
   for (const em of L.bannerSizes) {
@@ -219,17 +236,24 @@ beats.forEach((b, i) => {
   if (end - start < 0.4) return;
   const { lines, em } = fitBanner(b.headline);
   const bx = bannerR.x, by = bannerR.y, bw = bannerR.w, bh = bannerR.h;
-  const slide = rtl ? 70 : -70;
-  ass.add(2, start, end, `{\\an7\\move(${bx + slide},${by},${bx},${by},0,260)\\bord0\\shad0${c1(P.dark, 0.93)}\\fad(220,140)\\p1}${rrect(bw, bh, 22)}{\\p0}`);
+  const clipFrom = rtl ? `\\clip(${bx + bw},${by},${bx + bw},${by + bh})` : `\\clip(${bx},${by},${bx},${by + bh})`;
+  const wipe = (d0, d1) => `${clipFrom}\\t(${d0},${d1},\\clip(${bx},${by},${bx + bw},${by + bh}))`;
+  ass.add(2, start, end, `{\\an7\\pos(${bx},${by})\\bord0\\shad0${c1(P.dark, 0.93)}${wipe(0, 380)}\\fad(0,140)\\p1}${rrect(bw, bh, 22)}{\\p0}`);
   const barX = rtl ? bx + bw - 14 : bx;
-  ass.add(3, start, end, `{\\an7\\move(${barX + slide},${by},${barX},${by},0,260)\\bord0\\shad0${c1(P.accent)}\\fad(220,140)\\p1}${rrect(14, bh, 7)}{\\p0}`);
+  ass.add(3, start, end, `{\\an7\\pos(${barX},${by})\\bord0\\shad0${c1(P.accent)}${wipe(60, 440)}\\fad(0,140)\\p1}${rrect(14, bh, 7)}{\\p0}`);
   const tx = rtl ? bx + bw - 40 : bx + 40;
   const ty = by + bh / 2;
+  const keys = keyWords(b.headline, 1);
+  const txt = lines.map((l) => colorize(l, keys, P.gold, P.white)).join("\\N");
   ass.add(6, start, end,
-    `{\\an${rtl ? 6 : 4}\\move(${tx + slide},${ty},${tx},${ty},0,260)\\fs${fs(em)}\\bord0\\shad2${c4(P.black, 0.6)}${c1(P.white)}\\fad(220,140)}${lines.join("\\N")}`);
+    `{\\an${rtl ? 6 : 4}\\pos(${tx},${ty})\\fs${fs(em)}\\bord0\\shad2${c4(P.black, 0.6)}${c1(P.white)}${wipe(120, 560)}\\fad(0,140)}${txt}`);
+  // reflet blanc qui traverse le bandeau
+  const sx0 = rtl ? bx + bw + 80 : bx - 80, sx1 = rtl ? bx - 80 : bx + bw + 80;
+  ass.add(7, start + 0.3, start + 0.95,
+    `{\\an7\\move(${sx0},${by - 6},${sx1},${by - 6})\\clip(${bx},${by},${bx + bw},${by + bh})\\bord0\\shad0${c1(P.white, 0.2)}\\p1}m 0 0 l ${dirX * 70} 0 l ${dirX * 20} ${bh + 12} l ${dirX * -50} ${bh + 12}{\\p0}`);
 });
 
-// 6) cartes d'analyse en split-screen
+// 6) cartes d'analyse en split-screen : texte qui entre ligne par ligne, mots clés en or
 const emojiHex = (e) => [...(e || "")].map((c) => c.codePointAt(0).toString(16)).join("-");
 const emojiFile = (e) => `assets/emoji/${emojiHex(e)}.png`;
 const emojiOverlays = []; // {file, kind, t0, t1, x, y, size}
@@ -240,13 +264,14 @@ merged.filter((s) => s.state === "split").forEach((s) => {
   const slide = rtl ? -90 : 90;
   const pad = 30;
   ass.add(1, t0, t1, `{\\an7\\move(${p.x + slide},${p.y},${p.x},${p.y},0,300)\\bord5${c3(P.cyan)}${c1(P.card, 0.94)}\\shad0\\fad(220,160)\\p1}${rrect(p.w, p.h, 28)}{\\p0}`);
+  // liseré supérieur coloré qui grandit
+  ass.add(2, t0 + 0.1, t1, `{\\an${rtl ? 9 : 7}\\pos(${rtl ? p.x + p.w - pad : p.x + pad},${p.y + 14})\\bord0\\shad0${c1(P.accent)}\\fscx2\\t(0,500,\\fscx100)\\fad(100,160)\\p1}${rrect(p.w - pad * 2 - 110, 6, 3)}{\\p0}`);
   const innerW = p.w - pad * 2;
   const tx = rtl ? p.x + p.w - pad : p.x + pad;
   const an = rtl ? 9 : 7;
-  let y = p.y + 26;
-  // emoji icône (incrustation PNG) à côté du kicker
+  let y = p.y + 30;
   const iconSize = 84;
-  emojiOverlays.push({ file: emojiFile(b.emoji), kind: "card", t0, t1, x: rtl ? p.x + pad : p.x + p.w - pad - iconSize, y: p.y + 20, size: iconSize });
+  emojiOverlays.push({ file: emojiFile(b.emoji), kind: "card", t0, t1, x: rtl ? p.x + pad : p.x + p.w - pad - iconSize, y: p.y + 24, size: iconSize });
   // kicker (pastille)
   const kEm = vertical ? 28 : 30;
   const kicker = esc(b.kicker || "");
@@ -255,31 +280,45 @@ merged.filter((s) => s.state === "split").forEach((s) => {
   const kx = rtl ? p.x + p.w - pad - kW : p.x + pad;
   ass.add(2, t0, t1, `{\\an7\\move(${kx + slide},${y},${kx},${y},0,300)\\bord0\\shad0${c1(P.accent)}\\fad(220,160)\\p1}${rrect(kW, pillH, pillH / 2)}{\\p0}`);
   ass.add(3, t0, t1, `{\\an5\\move(${kx + kW / 2 + slide},${y + pillH / 2},${kx + kW / 2},${y + pillH / 2},0,300)\\fs${fs(kEm)}\\bord0\\shad0${c1(P.white)}\\fad(220,160)}${kicker}`);
-  y += pillH + 24;
-  // titre (optionnel : absent quand il ne ferait que répéter la headline)
+  y += pillH + 26;
+
+  // contenu (titre + corps) : on choisit la plus grande taille qui tient, puis on centre le bloc
+  const availBottom = p.y + p.h - 34;
   const titleTxt = (b.title || "").trim();
-  if (titleTxt && titleTxt !== (b.headline || "").trim()) {
-    let tEm = L.titleSize;
-    let tLines = wrapPx(titleTxt, innerW, tEm, 3);
+  const hasTitle = titleTxt && titleTxt !== (b.headline || "").trim();
+  let tEm = L.titleSize, tLines = [];
+  if (hasTitle) {
+    tLines = wrapPx(titleTxt, innerW, tEm, 3);
     if (!tLines) { tEm = Math.round(tEm * 0.84); tLines = wrapClamp(titleTxt, innerW, tEm, 3); }
-    ass.add(3, t0, t1, `{\\an${an}\\move(${tx + slide},${y},${tx},${y},0,300)\\fs${fs(tEm)}\\bord0\\shad2${c4(P.black, 0.6)}${c1(P.gold)}\\fad(260,160)}${tLines.join("\\N")}`);
-    y += tLines.length * lh(tEm) + 12;
   }
-  // ligne séparatrice
-  ass.add(2, t0, t1, `{\\an7\\pos(${rtl ? tx - 90 : tx},${y})\\bord0\\shad0${c1(P.accent)}\\fad(300,160)\\p1}${rrect(90, 6, 3)}{\\p0}`);
-  y += 22;
-  // texte (valeur ajoutée) : on réduit la police puis on tronque proprement s'il déborde
-  const room = p.y + p.h - 28 - y;
-  let bEm = vertical ? 40 : 38;
-  let bLines;
+  const titleH = tLines.length ? tLines.length * lh(tEm) + 14 : 0;
+  const sepH = 30;
+  const room = availBottom - y - titleH - sepH;
+  let bEm = vertical ? 54 : 46, bLines;
   for (;;) {
     bLines = wrapPx(b.text, innerW, bEm);
-    if (bLines.length * lh(bEm) * 1.04 <= room || bEm <= 27) break;
+    if (bLines.length * lh(bEm) * 1.06 <= room || bEm <= 26) break;
     bEm -= 1;
   }
-  const maxLinesBody = Math.max(2, Math.floor(room / (lh(bEm) * 1.04)));
-  if (bLines.length > maxLinesBody) bLines = wrapClamp(b.text, innerW, bEm, maxLinesBody);
-  ass.add(3, t0 + 0.15, t1, `{\\an${an}\\move(${tx + slide},${y},${tx},${y},0,340)\\fs${fs(bEm)}\\bord0\\shad1${c4(P.black, 0.5)}${c1(P.white)}\\fad(300,160)}${bLines.join("\\N")}`);
+  const maxBody = Math.max(2, Math.floor(room / (lh(bEm) * 1.06)));
+  if (bLines.length > maxBody) bLines = wrapClamp(b.text, innerW, bEm, maxBody);
+  const bodyH = bLines.length * lh(bEm) * 1.06;
+  y += Math.max(0, (room - bodyH) * 0.35);
+
+  if (tLines.length) {
+    ass.add(3, t0 + 0.1, t1, `{\\an${an}\\move(${tx + slide},${y},${tx},${y},0,320)\\fs${fs(tEm)}\\bord0\\shad2${c4(P.black, 0.6)}${c1(P.gold)}\\fad(260,160)}${tLines.join("\\N")}`);
+    y += titleH;
+  }
+  ass.add(2, t0 + 0.2, t1, `{\\an7\\pos(${rtl ? tx - 90 : tx},${y})\\bord0\\shad0${c1(P.accent)}\\fscx2\\t(0,420,\\fscx100)\\fad(100,160)\\p1}${rrect(90, 6, 3)}{\\p0}`);
+  y += sepH;
+  const keys = keyWords(b.text, 4);
+  const step = Math.min(0.24, Math.max(0.08, (t1 - t0 - 1.2) / Math.max(1, bLines.length)));
+  bLines.forEach((ln, k) => {
+    const ly = y + k * lh(bEm) * 1.06;
+    const ls = t0 + 0.45 + k * step;
+    if (ls >= t1 - 0.2) return;
+    ass.add(3, ls, t1, `{\\an${an}\\move(${tx + (rtl ? -50 : 50)},${ly + 14},${tx},${ly},0,260)\\fs${fs(bEm)}\\bord0\\shad1${c4(P.black, 0.5)}${c1(P.white)}\\fad(220,160)}${colorize(ln, keys, P.gold, P.white)}`);
+  });
 
   // flèche pulsante qui relie la carte à la vidéo
   const w = winSplitFinal;
@@ -287,7 +326,7 @@ merged.filter((s) => s.state === "split").forEach((s) => {
   const ay = w.y + w.h / 2;
   const dir = rtl ? 1 : -1; // pointe vers la vidéo
   const arrow = `m 0 0 l ${-dir * 24} ${-27} l ${-dir * 24} ${-11} l ${-dir * 40} ${-11} l ${-dir * 40} ${11} l ${-dir * 24} ${11} l ${-dir * 24} ${27}`;
-  ass.add(8, t0 + 0.2, t1, `{\\an7\\pos(${ax},${ay})\\bord2${c3(P.dark)}\\shad0${c1(P.accent)}\\fad(200,150)\\t(0,500,\\fscx118\\fscy118)\\t(500,1000,\\fscx100\\fscy100)\\t(1000,1500,\\fscx118\\fscy118)\\t(1500,2000,\\fscx100\\fscy100)\\p1}${arrow}{\\p0}`);
+  ass.add(8, t0 + 0.2, t1, `{\\an7\\pos(${ax},${ay})\\bord2${c3(P.dark)}\\shad0${c1(P.accent)}\\fad(200,150)\\t(0,500,\\fscx125\\fscy125)\\t(500,1000,\\fscx100\\fscy100)\\t(1000,1500,\\fscx125\\fscy125)\\t(1500,2000,\\fscx100\\fscy100)\\p1}${arrow}{\\p0}`);
 });
 
 // 7) hook d'ouverture
@@ -300,12 +339,13 @@ merged.filter((s) => s.state === "split").forEach((s) => {
   if (!lines) { em = Math.round(em * 0.8); lines = wrapClamp(plan.hook, hw - 90, em, 4); }
   const hh = lines.length * lh(em) + 64;
   const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
-  ass.add(7, t0, t1, `{\\an7\\pos(${cx - hw / 2},${cy - hh / 2})\\bord6${c3(P.gold)}${c1(P.dark, 0.92)}\\shad0\\fad(150,260)\\p1}${rrect(hw, hh, 34)}{\\p0}`);
-  ass.add(8, t0, t1, `{\\an5\\pos(${cx},${cy})\\fs${fs(em)}\\fscx70\\fscy70\\t(0,220,\\fscx108\\fscy108)\\t(220,340,\\fscx100\\fscy100)\\bord0\\shad3${c4(P.black, 0.7)}${c1(P.white)}\\fad(150,260)}${lines.join("\\N")}`);
+  ass.add(7, t0, t1, `{\\an7\\pos(${cx - hw / 2},${cy - hh / 2})\\bord6${c3(P.gold)}${c1(P.dark, 0.92)}\\shad0\\fad(150,260)\\t(0,300,\\bord10)\\t(300,600,\\bord6)\\p1}${rrect(hw, hh, 34)}{\\p0}`);
+  const keys = keyWords(plan.hook, 1);
+  ass.add(8, t0, t1, `{\\an5\\pos(${cx},${cy})\\fs${fs(em)}\\fscx60\\fscy60\\t(0,200,\\fscx112\\fscy112)\\t(200,330,\\fscx100\\fscy100)\\bord0\\shad3${c4(P.black, 0.7)}${c1(P.white)}\\fad(150,260)}${lines.map((l) => colorize(l, keys, P.gold, P.white)).join("\\N")}`);
   emojiOverlays.push({ file: emojiFile(plan.hookEmoji), kind: "hook", t0, t1, x: cx - 80, y: cy - hh / 2 - 150, size: 160 });
 }
 
-// stickers emoji pendant les phases "normal" / "punch" (coin de la fenêtre)
+// stickers emoji (coin de la fenêtre) + petits emojis qui montent
 merged.filter((s) => s.state !== "split").forEach((s) => {
   const b = beats[s.beat];
   if (s.t0 < HOOK_END) return;
@@ -315,9 +355,15 @@ merged.filter((s) => s.state !== "split").forEach((s) => {
     file: emojiFile(b.emoji), kind: "sticker", t0: s.t0 + 0.2, t1: Math.min(s.t1, s.t0 + 3.6),
     x: rtl ? w.x - size * 0.35 : w.x + w.w - size * 0.65, y: w.y - size * 0.45, size,
   });
+  [0, 1].forEach((k) => {
+    emojiOverlays.push({
+      file: emojiFile(b.emoji), kind: "float", t0: s.t0 + 0.5 + k * 0.45, t1: Math.min(s.t1, s.t0 + 0.5 + k * 0.45 + 2.2),
+      x: (k ? w.x + w.w * 0.18 : w.x + w.w * 0.78), y: w.y + w.h - 150, size: 78,
+    });
+  });
 });
 
-// 8) sous-titres dynamiques mot à mot (la phrase courante, le mot dit en jaune)
+// 8) sous-titres dynamiques mot à mot : pop, légère inclinaison, couleur qui change à chaque phrase
 {
   const words = tr.words.filter((w) => w.t0 < D);
   const phrases = [];
@@ -332,38 +378,53 @@ merged.filter((s) => s.state !== "split").forEach((s) => {
   }
   flush();
   const cx = W / 2;
+  const evs = [];
   phrases.forEach((ph, pi) => {
     const nextStart = pi < phrases.length - 1 ? phrases[pi + 1][0].t0 - 0.05 : Infinity;
     const prevEnd = pi > 0 ? phrases[pi - 1][phrases[pi - 1].length - 1].t1 + 0.02 : 0;
+    const hi = SUB_COLORS[pi % SUB_COLORS.length];
+    const tilt = pi % 2 ? 2 : -2;
     ph.forEach((w, i) => {
       const t0 = i === 0 ? Math.max(prevEnd, w.t0 - 0.05) : w.t0;
       let t1 = i < ph.length - 1 ? ph[i + 1].t0 : Math.min(w.t1 + 0.18, nextStart);
       if (t1 - t0 < 0.12) t1 = t0 + 0.12;
       const line = ph.map((x, j) => {
         const wd = esc(x.w);
-        return j === i ? `{${c1(P.gold)}\\fscx112\\fscy112}${wd}{${c1(P.white)}\\fscx100\\fscy100}` : wd;
+        return j === i ? `{${c1(hi)}\\fscx114\\fscy114}${wd}{${c1(P.white)}\\fscx100\\fscy100}` : wd;
       }).join(" ");
-      const pop = i === 0 ? "\\fscx84\\fscy84\\t(0,110,\\fscx100\\fscy100)" : "";
-      ass.add(10, t0, t1, `{\\an2\\pos(${cx},${L.subsY})\\fs${fs(L.subsSize)}${pop}\\bord${vertical ? 8 : 7}${c3(P.black)}\\shad3${c4(P.black, 0.6)}${c1(P.white)}}${line}`);
+      const pop = i === 0 ? "\\fscx70\\fscy70\\t(0,90,\\fscx116\\fscy116)\\t(90,170,\\fscx100\\fscy100)" : "";
+      evs.push({ t0, t1, text: `{\\an2\\pos(${cx},${L.subsY})\\frz${tilt}\\fs${fs(L.subsSize)}${pop}\\bord${vertical ? 8 : 7}${c3(P.black)}\\shad3${c4(P.black, 0.6)}${c1(P.white)}}${line}` });
     });
   });
+  // jamais deux sous-titres en même temps (les horodatages de la transcription se chevauchent parfois)
+  for (let k = 1; k < evs.length; k++) {
+    const a = evs[k - 1], b = evs[k];
+    if (b.t0 < a.t1) {
+      if (b.t0 - a.t0 >= 0.06) a.t1 = b.t0;
+      else { b.t0 = a.t0 + 0.06; a.t1 = b.t0; }
+      if (b.t1 <= b.t0) b.t1 = b.t0 + 0.1;
+    }
+  }
+  evs.forEach((e) => ass.add(10, e.t0, e.t1, e.text));
 }
 
-// 9) ticker de disclaimers permanent (protection : toujours visible)
+// 9) ticker de disclaimers permanent : défilement continu SANS trou (largeur mesurée exactement)
 {
   const tk = L.ticker;
   const mid = tk.y + tk.h / 2 + 1;
   ass.shape(11, 0, D, 0, tk.y, `m 0 0 l ${W} 0 l ${W} ${tk.h} l 0 ${tk.h}`, c1(P.dark, 0.9));
   ass.shape(11, 0, D, 0, tk.y, `m 0 0 l ${W} 0 l ${W} 3 l 0 3`, c1(P.accent));
-  const sep = "      ●      ";
-  const full = plan.disclaimers.map((t) => esc(lang === "ar" ? t : t.toUpperCase())).join(sep) + sep;
-  const textW = tw(full, tk.size);
+  const full = plan.disclaimers.map((t) => esc(lang === "ar" ? t : t.toUpperCase()).replace(/ +/g, " ")).join(" ● ") + " ●";
+  const exact = measureLine({ text: full, fs: fs(tk.size), font, dir: CONTENT_DIR });
+  const textW = Math.round((exact || tw(full, tk.size)) * 1.01) + 8;
+  console.log(`Ticker : largeur ${textW}px (${exact ? "mesurée" : "estimée"})`);
+  const gap = 140;
   const speed = 150;
-  const cycle = textW / speed;
+  const cycle = (textW + gap) / speed;
   const dur = (W + textW) / speed;
   for (let start = 0; start < D; start += cycle) {
     ass.add(12, start, Math.min(D, start + dur),
-      `{\\an4\\move(${W},${mid},${-Math.round(textW)},${mid})\\clip(0,${tk.y},${W},${tk.y + tk.h})\\fs${fs(tk.size)}\\bord0\\shad0${c1(P.white)}}${full}`);
+      `{\\an4\\move(${W},${mid},${-textW},${mid})\\clip(0,${tk.y},${W},${tk.y + tk.h})\\fs${fs(tk.size)}\\bord0\\shad0${c1(P.white)}}${full}`);
   }
 }
 
@@ -425,23 +486,32 @@ const emojiIdx = usableEmoji.map((e) => addInput(["-loop", "1", "-framerate", St
 
 const f = [];
 const bw = even(W / 8), bh = even(H / 8);
+const gw = even(W / 6), gh = even(H / 6);
 const hasPunch = merged.some((s) => s.state === "punch");
 f.push(`[${iSrc}:v]setpts=PTS-STARTPTS,fps=${FPS},setsar=1${padSec > 0.5 ? `,tpad=stop_mode=clone:stop_duration=${(padSec + 1).toFixed(2)}` : ""},split=${hasPunch ? 4 : 3}[bgs][nv0][sv0]${hasPunch ? "[pv0]" : ""}`);
-f.push(`[bgs]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},gblur=sigma=5,eq=brightness=-0.2:saturation=1.6,hue=h='24*t':s=1.15,scale=${W}:${H}:flags=bicubic[bg]`);
+// fond : copie floutée + dérive de teinte + dégradé animé (basse résolution = rapide)
+f.push(`[bgs]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},gblur=sigma=5,eq=brightness=-0.2:saturation=1.6,hue=h='24*t':s=1.15,scale=${W}:${H}:flags=bicubic,format=yuv420p[bg0]`);
+f.push(`gradients=size=${gw}x${gh}:rate=${FPS}:duration=${D.toFixed(3)}:c0=0xFF2E63:c1=0x08D9D6:c2=0x7B2FF7:nb_colors=3:speed=0.03,scale=${W}:${H}:flags=bicubic,format=yuv420p[grad]`);
+f.push(`[bg0][grad]blend=all_mode=overlay:all_opacity=0.5[bg]`);
 f.push(`[${iMN}:v]format=gray,split=${hasPunch ? 2 : 1}${hasPunch ? "[mn1][mn2]" : "[mn1]"}`);
-f.push(`[nv0]scale=${winNormal.w}:${winNormal.h},format=yuva420p[nv1]`);
+// travelling lent dans la fenêtre : la vidéo "vit" même quand le plan est fixe
+const pan = (z) => `x='(iw-ow)/2*(1+0.9*sin(t*0.55))':y='(ih-oh)/2*(1+0.9*cos(t*0.42))'`;
+const kb = (w, h, z) => `scale=${even(w * z)}:${even(h * z)},crop=${w}:${h}:${pan(z)},format=yuva420p`;
+f.push(`[nv0]${kb(winNormal.w, winNormal.h, 1.12)}[nv1]`);
 f.push(`[nv1][mn1]alphamerge[nv]`);
-f.push(`[sv0]scale=${winSplitFinal.w}:${winSplitFinal.h},format=yuva420p[sv1]`);
+f.push(`[sv0]${kb(winSplitFinal.w, winSplitFinal.h, 1.12)}[sv1]`);
 f.push(`[${iMS}:v]format=gray[ms]`);
 f.push(`[sv1][ms]alphamerge[sv]`);
 let last = "bg";
 f.push(`[${last}][nv]overlay=${winNormal.x}:${winNormal.y}:enable='${enableFor("normal")}'[o1]`); last = "o1";
 f.push(`[${last}][sv]overlay=${winSplitFinal.x}:${winSplitFinal.y}:enable='${enableFor("split")}'[o2]`); last = "o2";
 if (hasPunch) {
-  const Z = 1.32;
-  f.push(`[pv0]scale=${even(winNormal.w * Z)}:${even(winNormal.h * Z)},crop=${winNormal.w}:${winNormal.h},format=yuva420p[pv1]`);
+  f.push(`[pv0]${kb(winNormal.w, winNormal.h, 1.34)}[pv1]`);
   f.push(`[pv1][mn2]alphamerge[pv]`);
-  f.push(`[${last}][pv]overlay=${winNormal.x}:${winNormal.y}:enable='${enableFor("punch")}'[o3]`); last = "o3";
+  // tremblement court à l'entrée de chaque zoom "punch"
+  const shake = merged.filter((s) => s.state === "punch")
+    .map((s) => `between(t,${s.t0.toFixed(3)},${(s.t0 + 0.45).toFixed(3)})*8*sin(70*t)*(1-(t-${s.t0.toFixed(3)})/0.45)`).join("+") || "0";
+  f.push(`[${last}][pv]overlay=x='${winNormal.x}+(${shake})':y='${winNormal.y}+(${shake})*0.6':enable='${enableFor("punch")}'[o3]`); last = "o3";
 }
 if (logoFile) {
   f.push(`[${iLogo}:v]scale=${L.logo.w}:${L.logo.h},format=yuva420p[lg0]`);
@@ -454,8 +524,11 @@ usableEmoji.forEach((e, k) => {
   const ix = emojiIdx[k];
   const fade = `fade=in:st=${e.t0.toFixed(3)}:d=0.18:alpha=1,fade=out:st=${Math.max(e.t0, e.t1 - 0.2).toFixed(3)}:d=0.2:alpha=1`;
   f.push(`[${ix}:v]scale=${e.size}:${e.size},format=rgba,${fade}[e${k}]`);
-  const bounce = e.kind === "card" ? `${Math.round(e.y)}` : `${Math.round(e.y)}-14*abs(sin(5*(t-${e.t0.toFixed(3)})))`;
-  f.push(`[${last}][e${k}]overlay=${Math.round(e.x)}:'${bounce}':enable='between(t,${e.t0.toFixed(3)},${e.t1.toFixed(3)})'[oe${k}]`);
+  const T0 = e.t0.toFixed(3);
+  let ex = `${Math.round(e.x)}`, ey = `${Math.round(e.y)}`;
+  if (e.kind === "sticker" || e.kind === "hook") ey = `${Math.round(e.y)}-14*abs(sin(5*(t-${T0})))`;
+  if (e.kind === "float") { ey = `${Math.round(e.y)}-150*(t-${T0})`; ex = `${Math.round(e.x)}+22*sin(4*(t-${T0}))`; }
+  f.push(`[${last}][e${k}]overlay=x='${ex}':y='${ey}':enable='between(t,${T0},${e.t1.toFixed(3)})'[oe${k}]`);
   last = `oe${k}`;
 });
 f.push(`[${last}]format=yuv420p[vout]`);

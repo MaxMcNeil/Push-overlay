@@ -149,6 +149,8 @@ function systemPrompt(lang) {
     "- Elle doit parler PRÉCISÉMENT de ce qui est dit dans l'extrait (personnes, chiffres, idées). Hors-sujet = échec.",
     "- N'invente AUCUN chiffre, nom, citation ou fait absent de l'extrait.",
     "- Personnes réelles : chaque affirmation (headline ET carte) doit être directement déductible de l'extrait. N'attribue jamais à une personne nommée une intention, une identité, une orientation, un acte ou une déclaration qu'elle n'a pas clairement exprimés dans l'extrait. En cas de doute, reformule en restant au plus près des mots prononcés.",
+    "- ATTRIBUTION : le locuteur est la personne qui parle dans la vidéo ; ne le confonds JAMAIS avec les personnes qu'il cite, interpelle ou dont il parle. Toute affirmation, vision, prédiction ou accusation du locuteur est présentée COMME SA PAROLE (« il affirme », « selon lui », « il dit avoir vu », « il défie… »), jamais comme un fait établi, surtout quand elle concerne des personnes réelles, une autorité ou la religion.",
+    "- Si la transcription semble contenir une erreur de reconnaissance (nom propre douteux), évite ce nom plutôt que de le deviner.",
     "- Pas de \"je\". Pas d'hésitation orale. Varier les formes d'un extrait à l'autre (affirmation, question, contraste).",
     "",
     "RÈGLES DE LA CARTE D'ANALYSE (valeur ajoutée) :",
@@ -187,33 +189,136 @@ function parseJson(raw) {
   try { return JSON.parse(m[0]); } catch { return null; }
 }
 
-// ---------- moteur 1 : Claude via API (optionnel) ----------
-async function viaClaude(chunks, lang) {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) return null;
+// ---------- moteur 1 : IA en ligne (GRATUITES : Gemini, Groq ; optionnelle payante : Claude) ----------
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const DIACRITICS = /[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g; // tashkeel + tatweel : illisibles en sous-titre
+export const tidy = (t, lang) => {
+  if (typeof t !== "string") return t;
+  let o = t.replace(/\s+/g, " ").replace(/^["«“'\s]+|["»”'\s]+$/g, "").trim();
+  if (lang === "ar") o = o.replace(DIACRITICS, "");
+  return o;
+};
+
+const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
+const GROQ_BASE = process.env.GROQ_BASE_URL || "https://api.groq.com";
+async function callGemini(sys, user) {
+  const key = process.env.GEMINI_API_KEY;
+  const H = { "content-type": "application/json", "x-goog-api-key": key };
+  let candidates = [];
+  if (process.env.GEMINI_MODEL) candidates = [process.env.GEMINI_MODEL];
+  else {
+    // "gemini-flash-latest" suit automatiquement le dernier modèle Flash ; on garde en secours les Flash trouvés
+    // via l'API (les modèles anciens sont retirés régulièrement, on ne code donc aucun nom en dur).
+    candidates = ["gemini-flash-latest"];
+    try {
+      const r = await fetch(`${GEMINI_BASE}/v1beta/models?pageSize=200`, { headers: H });
+      if (r.ok) {
+        const found = ((await r.json()).models || [])
+          .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+          .map((m) => m.name.replace(/^models\//, ""))
+          .filter((n) => /flash/.test(n) && !/(lite|image|tts|live|audio|embedding|robotics|computer|thinking-exp)/.test(n))
+          .sort((x, y) => {
+            const vx = parseFloat((x.match(/(\d+(?:\.\d+)?)/) || [0])[0]), vy = parseFloat((y.match(/(\d+(?:\.\d+)?)/) || [0])[0]);
+            return vy - vx || (/preview/.test(x) ? 1 : 0) - (/preview/.test(y) ? 1 : 0);
+          });
+        candidates.push(...found.slice(0, 4));
+      }
+    } catch {}
+  }
+  let lastErr = new Error("aucun modèle Gemini disponible");
+  for (const m of [...new Set(candidates)]) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetch(`${GEMINI_BASE}/v1beta/models/${m}:generateContent`, {
+          method: "POST", headers: H,
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: sys }] },
+            contents: [{ role: "user", parts: [{ text: user }] }],
+            generationConfig: { temperature: 0.7, responseMimeType: "application/json", maxOutputTokens: 8192 },
+          }),
+          signal: AbortSignal.timeout(3 * 60 * 1000),
+        });
+        if (res.status === 429 || res.status === 503) { console.log(`  Gemini ${m} : saturé (${res.status}), pause...`); await sleep(20000 * (attempt + 1)); continue; }
+        if (!res.ok) throw new Error(`Gemini ${m} : HTTP ${res.status} ${(await res.text()).slice(0, 180)}`);
+        const d = await res.json();
+        const txt = (d.candidates?.[0]?.content?.parts || []).map((x) => x.text || "").join("");
+        if (!txt) throw new Error(`Gemini ${m} : réponse vide`);
+        console.log(`  Gemini : modèle utilisé = ${m}`);
+        return txt;
+      } catch (e) { lastErr = e; console.log(`  ${e.message}`); break; }
+    }
+  }
+  throw lastErr;
+}
+
+async function callGroq(sys, user) {
+  const model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+  let lastErr;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(`${GROQ_BASE}/openai/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+      body: JSON.stringify({
+        model, temperature: 0.6, max_tokens: 4096, response_format: { type: "json_object" },
+        messages: [{ role: "system", content: sys }, { role: "user", content: user }],
+      }),
+      signal: AbortSignal.timeout(3 * 60 * 1000),
+    });
+    if (res.status === 429) {
+      const wait = Math.min(60, Number(res.headers.get("retry-after")) || 15 * (attempt + 1));
+      console.log(`  Groq : limite atteinte, pause ${wait}s...`);
+      await sleep(wait * 1000);
+      lastErr = new Error("Groq : limite de débit (429)");
+      continue;
+    }
+    if (!res.ok) throw new Error(`Groq ${model} : HTTP ${res.status} ${(await res.text()).slice(0, 180)}`);
+    const d = await res.json();
+    console.log(`  Groq : modèle utilisé = ${model}`);
+    return d.choices?.[0]?.message?.content || "";
+  }
+  throw lastErr;
+}
+
+async function callClaude(sys, user) {
   const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
+  const res = await fetch(process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model, max_tokens: 6000, system: sys, messages: [{ role: "user", content: user }] }),
+  });
+  if (!res.ok) throw new Error(`Claude : HTTP ${res.status} ${(await res.text()).slice(0, 180)}`);
+  const data = await res.json();
+  return data.content.map((c) => c.text || "").join("");
+}
+
+// Un seul appel avec TOUTE la vidéo : le modèle comprend l'histoire d'ensemble (bien meilleur qu'extrait par extrait).
+async function viaApi(chunks, lang) {
+  const providers = [
+    ["gemini", process.env.GEMINI_API_KEY, callGemini],
+    ["groq", process.env.GROQ_API_KEY, callGroq],
+    ["claude", process.env.ANTHROPIC_API_KEY, callClaude],
+  ].filter((x) => x[1]);
+  if (!providers.length) return null;
   const sys = systemPrompt(lang);
   const user = [
-    "Voici la vidéo découpée en extraits horodatés :",
+    "Voici la vidéo découpée en extraits horodatés (transcription automatique : elle peut contenir des erreurs de reconnaissance, reste prudent) :",
     chunks.map((c, i) => `[#${i + 1}] (${c.t0.toFixed(0)}s-${c.t1.toFixed(0)}s) ${c.text.slice(0, 1400)}`).join("\n\n"),
     "",
-    `Produis le scénario complet. Réponds UNIQUEMENT par un objet JSON : {"hook":"...","hook_emoji":"...","beats":[{"headline":"...","emoji":"...","kicker":"...","title":"...","text":"..."}]} avec EXACTEMENT ${chunks.length} beats (un par extrait, dans l'ordre), tout en ${LANG_NAME[lang]}. Le hook est une question percutante ou une affirmation choc de 5 à 10 mots.`,
+    `Étape 1 : comprends de quoi parle la vidéo dans son ensemble (champ "summary" : 2 phrases fidèles, en ${LANG_NAME[lang]}).`,
+    `Étape 2 : produis le scénario. Réponds UNIQUEMENT par un objet JSON : {"summary":"...","hook":"...","hook_emoji":"...","beats":[{"headline":"...","emoji":"...","kicker":"...","title":"...","text":"..."}]} avec EXACTEMENT ${chunks.length} beats (un par extrait, dans l'ordre), tout en ${LANG_NAME[lang]}. Le hook est une question percutante ou une affirmation choc de 5 à 10 mots.`,
   ].join("\n");
-  try {
-    const res = await fetch(process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model, max_tokens: 6000, system: sys, messages: [{ role: "user", content: user }] }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);
-    const data = await res.json();
-    const j = parseJson(data.content.map((c) => c.text || "").join(""));
-    if (!j || !Array.isArray(j.beats)) throw new Error("JSON inattendu");
-    return { hook: j.hook, hookEmoji: j.hook_emoji, beats: j.beats };
-  } catch (e) {
-    console.log(`Claude indisponible (${e.message}) — repli sur le LLM local.`);
-    return null;
+  for (const [name, , fn] of providers) {
+    try {
+      console.log(`Écriture du scénario via ${name}...`);
+      const j = parseJson(await fn(sys, user));
+      if (!j || !Array.isArray(j.beats)) throw new Error("JSON inattendu");
+      if (j.summary) console.log(`  Résumé compris par l'IA : ${String(j.summary).slice(0, 220)}`);
+      return { engine: name, hook: j.hook, hookEmoji: j.hook_emoji, beats: j.beats };
+    } catch (e) {
+      console.log(`${name} indisponible (${e.message}) — essai suivant.`);
+    }
   }
+  return null;
 }
 
 // ---------- moteur 2 : llama.cpp local ----------
@@ -327,8 +432,8 @@ async function main() {
   const kwAll = keywords(chunks.map((c) => c.text).join(" "));
   console.log(`Langue ${lang}, ${chunks.length} beats sur ${tr.duration.toFixed(0)} s.`);
 
-  let res = (await viaClaude(chunks, lang)) || (await viaLocal(chunks, lang, kwAll));
-  let engine = res ? (process.env.ANTHROPIC_API_KEY ? "claude/local" : "local") : "heuristique";
+  let res = (await viaApi(chunks, lang)) || (await viaLocal(chunks, lang, kwAll));
+  let engine = res ? (res.engine || "local") : "heuristique";
   const raw = res?.beats || [];
 
   // Headlines manuelles (content/manual-headlines.txt) : prioritaires, une par beat dans l'ordre.
@@ -337,6 +442,7 @@ async function main() {
 
   const beats = chunks.map((c, i) => {
     let b = raw[i] || {};
+    for (const k of ["headline", "kicker", "title", "text", "emoji"]) if (b[k]) b[k] = tidy(b[k], lang);
     if (!(isCleanHeadline(b.headline, lang) && grounded(b.headline, kwAll))) b = { ...heuristicBeat(c, i, lang), ...(b.text && !b.fallback ? { text: b.text } : {}) };
     if (manual[i]) b.headline = manual[i];
     if (!b.headline) b.headline = c.text.split(/\s+/).slice(0, 9).join(" ");
@@ -358,6 +464,7 @@ async function main() {
     };
   });
 
+  if (res?.hook) res.hook = tidy(res.hook, lang);
   let hook = res?.hook && wordCount(res.hook) >= 3 && wordCount(res.hook) <= 14 ? res.hook.trim() : null;
   if (!hook) {
     // repli : la 1re headline devient le hook, telle quelle (pas de "?" artificiel qui changerait le sens)

@@ -18,3 +18,7 @@ assets/emoji/
 assets/mask-*.png
 assets/sfx/
 fonts/*.ttf
+content/measure.ass
+content/measure-line.ass
+content/lf.txt
+content/source-cfr.mp4

@@ -24,8 +24,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Optionnel : secret ANTHROPIC_API_KEY -> headlines/analyses écrites par Claude (≈ 10 s, qualité maximale).
-  # Sans secret : LLM local Qwen2.5-7B (gratuit, plus lent, qualité correcte).
+  # IA GRATUITE (recommandé) : crée une clé gratuite et ajoute-la comme secret du dépôt.
+  #   - GEMINI_API_KEY : clé gratuite Google AI Studio (aistudio.google.com) -> meilleur arabe
+  #   - GROQ_API_KEY   : clé gratuite console.groq.com (Llama 3.3 70B, très rapide)
+  #   - ANTHROPIC_API_KEY : (payant, optionnel)
+  # Ordre d'essai : Gemini -> Groq -> Claude -> LLM local Qwen (gratuit mais bien plus faible, surtout en arabe).
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
 jobs:
@@ -97,7 +102,7 @@ jobs:
 
       # ---------- llama.cpp + Qwen2.5-7B : uniquement si pas de clé Anthropic ----------
       - name: Cache llama.cpp
-        if: env.ANTHROPIC_API_KEY == ''
+        if: env.GEMINI_API_KEY == '' && env.GROQ_API_KEY == '' && env.ANTHROPIC_API_KEY == ''
         id: llama-cache
         uses: actions/cache@v4
         with:
@@ -105,7 +110,7 @@ jobs:
           key: llamacpp-qwen25-7b-v1-${{ runner.os }}
 
       - name: Compiler llama.cpp + télécharger Qwen2.5-7B (si pas en cache)
-        if: env.ANTHROPIC_API_KEY == '' && steps.llama-cache.outputs.cache-hit != 'true'
+        if: env.GEMINI_API_KEY == '' && env.GROQ_API_KEY == '' && env.ANTHROPIC_API_KEY == '' && steps.llama-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         run: |
           git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
