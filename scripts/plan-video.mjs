@@ -10,10 +10,10 @@
 // contenu). Celles qui échouent sont régénérées puis remplacées par le repli.
 // Les 3 disclaimers de protection restent TOUJOURS en tête (ticker permanent + 1er items).
 
-import { readFileSync, writeFileSync, existsSync } from "fs";
-import { spawn } from "child_process";
+import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
+import { spawn, execFileSync } from "child_process";
 import { cpus } from "os";
-import { CONTENT_DIR, wordCount } from "./lib/util.mjs";
+import { CONTENT_DIR, wordCount, findVideo } from "./lib/util.mjs";
 
 const TR = `${CONTENT_DIR}/transcript.json`;
 const OUT = `${CONTENT_DIR}/plan.json`;
@@ -90,8 +90,18 @@ export function isCleanCardText(t, lang) {
   if (/\.{2,}|…/.test(t)) return false;
   return true;
 }
+export function isCleanPoint(p, lang) {
+  if (typeof p !== "string") return false;
+  const n = wordCount(p);
+  if (n < 3 || n > 14) return false;
+  if (foreignScript(p, lang) || /\.{2,}|…/.test(p)) return false;
+  return true;
+}
+function pointsOk(j, lang) {
+  return j && Array.isArray(j.points) && j.points.length >= 2 && j.points.length <= 4 && j.points.every((x) => isCleanPoint(x, lang));
+}
 function cardOk(j, lang) {
-  return j && isCleanCardText(j.text, lang) && !foreignScript(j.title, lang) && !foreignScript(j.kicker, lang);
+  return j && (pointsOk(j, lang) || isCleanCardText(j.text, lang)) && !foreignScript(j.title, lang) && !foreignScript(j.kicker, lang);
 }
 
 function keywords(text) {
@@ -156,11 +166,12 @@ function systemPrompt(lang) {
     "RÈGLES DE LA CARTE D'ANALYSE (valeur ajoutée) :",
     "- kicker : 1 à 3 mots (ex. POURQUOI ?, LE CONTEXTE, COMMENT ÇA MARCHE).",
     "- title : 3 à 8 mots, une idée forte.",
-    "- text : 22 à 34 mots. N'est PAS un résumé : explique le POURQUOI ou le COMMENT, ou donne un éclairage de contexte général et vérifiable (jamais un fait nouveau sur une personne nommée). Phrases courtes, claires, complètes. Pas de chiffres non présents dans l'extrait.",
+    "- points : EXACTEMENT 3 points courts (5 à 9 mots chacun), phrases complètes et propres. Ils apportent la VALEUR AJOUTÉE : le POURQUOI, le COMMENT ou un éclairage de contexte général et vérifiable. Ce n'est NI un résumé NI une citation de la parole (jamais de phrase brisée de la transcription). Jamais de fait nouveau sur une personne nommée. Pas de chiffres absents de l'extrait.",
     "- emoji : UN seul emoji pertinent.",
     "",
-    `LANGUE : TOUS les champs (headline, kicker, title, text) doivent être écrits EXCLUSIVEMENT en ${LANG_NAME[lang]}. Pas un seul mot d'une autre langue, aucun mot anglais, aucun caractère étrange.`,
-    lang === "ar" ? "اكتب جميع الحقول بالعربية الفصحى فقط، دون أي كلمة إنجليزية أو فرنسية، وبجمل كاملة وصحيحة نحويا." : "",
+    `LANGUE : TOUS les champs (headline, kicker, title, points) doivent être écrits EXCLUSIVEMENT en ${LANG_NAME[lang]}. Pas un seul mot d'une autre langue, aucun mot anglais, aucun caractère étrange.`,
+    "TRANSCRIPTION BRUITÉE : le texte fourni vient d'une reconnaissance vocale automatique qui se trompe beaucoup (dialecte, noms propres, mots inventés). Ne recopie JAMAIS ses phrases brisées : comprends le SENS GLOBAL (écoute l'audio s'il est joint) et reformule proprement.",
+    lang === "ar" ? "اكتب جميع الحقول بالعربية الفصحى المبسطة (لغة الإعلام) حتى لو كان المتحدث يتكلم بلهجة خليجية: أعد صياغة المعنى بفصحى سليمة، ولا تنقل كلمات اللهجة كما هي، ولا تكتب كلمات لا معنى لها، ولا أي كلمة إنجليزية أو فرنسية، وبجمل كاملة وصحيحة نحويا." : "",
   ].filter((x) => x !== "").join("\n");
 }
 
@@ -169,7 +180,7 @@ function chunkUser(lang, chunk, i, n, prevHeadlines) {
     `Extrait ${i + 1}/${n} de la vidéo :`,
     `"""${chunk.text.slice(0, 1400)}"""`,
     prevHeadlines.length ? `Headlines déjà utilisées (ne pas répéter l'angle) : ${prevHeadlines.slice(-4).join(" | ")}` : "",
-    `Réponds UNIQUEMENT par un objet JSON : {"headline":"...","emoji":"...","kicker":"...","title":"...","text":"..."} en ${LANG_NAME[lang]}.`,
+    `Réponds UNIQUEMENT par un objet JSON : {"headline":"...","emoji":"...","kicker":"...","title":"...","points":["...","...","..."]} en ${LANG_NAME[lang]}.`,
   ].filter(Boolean).join("\n");
 }
 
@@ -201,7 +212,7 @@ export const tidy = (t, lang) => {
 
 const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
 const GROQ_BASE = process.env.GROQ_BASE_URL || "https://api.groq.com";
-async function callGemini(sys, user) {
+async function callGemini(sys, user, ctx = {}) {
   const key = process.env.GEMINI_API_KEY;
   const H = { "content-type": "application/json", "x-goog-api-key": key };
   let candidates = [];
@@ -233,13 +244,19 @@ async function callGemini(sys, user) {
           method: "POST", headers: H,
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: sys }] },
-            contents: [{ role: "user", parts: [{ text: user }] }],
+            contents: [{ role: "user", parts: [...(ctx.audio ? [ctx.audio] : []), { text: user }] }],
             generationConfig: { temperature: 0.7, responseMimeType: "application/json", maxOutputTokens: 8192 },
           }),
           signal: AbortSignal.timeout(3 * 60 * 1000),
         });
         if (res.status === 429 || res.status === 503) { console.log(`  Gemini ${m} : saturé (${res.status}), pause...`); await sleep(20000 * (attempt + 1)); continue; }
-        if (!res.ok) throw new Error(`Gemini ${m} : HTTP ${res.status} ${(await res.text()).slice(0, 180)}`);
+        if (!res.ok) {
+          const body = (await res.text()).replace(/\s+/g, " ").slice(0, 700);
+          const hint = res.status === 403 || res.status === 400
+            ? " → CLÉ REFUSÉE (clé restreinte à d'autres API, API non activée, ou clé invalide). Crée une NOUVELLE clé sur https://aistudio.google.com/apikey (« Create API key in new project », sans aucune restriction) puis remets le secret GEMINI_API_KEY."
+            : "";
+          throw new Error(`Gemini ${m} : HTTP ${res.status} ${body}${hint}`);
+        }
         const d = await res.json();
         const txt = (d.candidates?.[0]?.content?.parts || []).map((x) => x.text || "").join("");
         if (!txt) throw new Error(`Gemini ${m} : réponse vide`);
@@ -251,7 +268,7 @@ async function callGemini(sys, user) {
   throw lastErr;
 }
 
-async function callGroq(sys, user) {
+async function callGroq(sys, user, ctx = {}) {
   const model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
   let lastErr;
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -279,7 +296,7 @@ async function callGroq(sys, user) {
   throw lastErr;
 }
 
-async function callClaude(sys, user) {
+async function callClaude(sys, user, ctx = {}) {
   const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
   const res = await fetch(process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -291,6 +308,17 @@ async function callClaude(sys, user) {
   return data.content.map((c) => c.text || "").join("");
 }
 
+function audioPart() {
+  const v = findVideo();
+  if (!v) return null;
+  try {
+    const out = `${CONTENT_DIR}/audio-gemini.mp3`;
+    execFileSync("ffmpeg", ["-y", "-v", "error", "-i", v, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", out], { stdio: ["ignore", "ignore", "ignore"] });
+    if (statSync(out).size > 14 * 1024 * 1024) return null; // limite de la requête inline
+    return { inlineData: { mimeType: "audio/mp3", data: readFileSync(out).toString("base64") } };
+  } catch { return null; }
+}
+
 // Un seul appel avec TOUTE la vidéo : le modèle comprend l'histoire d'ensemble (bien meilleur qu'extrait par extrait).
 async function viaApi(chunks, lang) {
   const providers = [
@@ -300,20 +328,22 @@ async function viaApi(chunks, lang) {
   ].filter((x) => x[1]);
   if (!providers.length) return null;
   const sys = systemPrompt(lang);
+  const audio = providers.some((x) => x[0] === "gemini") ? audioPart() : null;
   const user = [
-    "Voici la vidéo découpée en extraits horodatés (transcription automatique : elle peut contenir des erreurs de reconnaissance, reste prudent) :",
+    "Voici la vidéo découpée en extraits horodatés (transcription automatique BRUITÉE : elle contient des erreurs de reconnaissance, surtout en dialecte) :",
     chunks.map((c, i) => `[#${i + 1}] (${c.t0.toFixed(0)}s-${c.t1.toFixed(0)}s) ${c.text.slice(0, 1400)}`).join("\n\n"),
     "",
+    audio ? "L'AUDIO ORIGINAL de la vidéo est joint : en cas de divergence avec la transcription, fie-toi à l'AUDIO." : "",
     `Étape 1 : comprends de quoi parle la vidéo dans son ensemble (champ "summary" : 2 phrases fidèles, en ${LANG_NAME[lang]}).`,
-    `Étape 2 : produis le scénario. Réponds UNIQUEMENT par un objet JSON : {"summary":"...","hook":"...","hook_emoji":"...","beats":[{"headline":"...","emoji":"...","kicker":"...","title":"...","text":"..."}]} avec EXACTEMENT ${chunks.length} beats (un par extrait, dans l'ordre), tout en ${LANG_NAME[lang]}. Le hook est une question percutante ou une affirmation choc de 5 à 10 mots.`,
-  ].join("\n");
+    `Étape 2 : produis le scénario. Réponds UNIQUEMENT par un objet JSON : {"summary":"...","hook":"...","hook_emoji":"...","keywords":["..."],"beats":[{"headline":"...","emoji":"...","kicker":"...","title":"...","points":["...","...","..."]}]} avec EXACTEMENT ${chunks.length} beats (un par extrait, dans l'ordre), tout en ${LANG_NAME[lang]}. Le hook est une question percutante ou une affirmation choc de 5 à 10 mots. "keywords" : 12 à 25 mots-clés IMPORTANTS, recopiés EXACTEMENT comme ils apparaissent dans la transcription ci-dessus (même graphie), utilisés pour les faire apparaître à l'écran quand le locuteur les prononce.`,
+  ].filter(Boolean).join("\n");
   for (const [name, , fn] of providers) {
     try {
       console.log(`Écriture du scénario via ${name}...`);
-      const j = parseJson(await fn(sys, user));
+      const j = parseJson(await fn(sys, user, { audio }));
       if (!j || !Array.isArray(j.beats)) throw new Error("JSON inattendu");
       if (j.summary) console.log(`  Résumé compris par l'IA : ${String(j.summary).slice(0, 220)}`);
-      return { engine: name, hook: j.hook, hookEmoji: j.hook_emoji, beats: j.beats };
+      return { engine: name, hook: j.hook, hookEmoji: j.hook_emoji, beats: j.beats, keywords: j.keywords };
     } catch (e) {
       console.log(`${name} indisponible (${e.message}) — essai suivant.`);
     }
@@ -440,45 +470,64 @@ async function main() {
   let manual = [];
   if (existsSync(MANUAL)) manual = readFileSync(MANUAL, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
 
+  const degraded = engine === "heuristique";
+  const norm = (t) => String(t).replace(/[\p{P}\p{S}\u00A0]/gu, "").replace(DIACRITICS, "").trim();
+  const cleanEmoji = (e, i) => (String(e || "").match(/\p{Extended_Pictographic}\uFE0F?/u)?.[0] || EMOJIS[i % EMOJIS.length]);
+
   const beats = chunks.map((c, i) => {
-    let b = raw[i] || {};
-    for (const k of ["headline", "kicker", "title", "text", "emoji"]) if (b[k]) b[k] = tidy(b[k], lang);
-    if (!(isCleanHeadline(b.headline, lang) && grounded(b.headline, kwAll))) b = { ...heuristicBeat(c, i, lang), ...(b.text && !b.fallback ? { text: b.text } : {}) };
-    if (manual[i]) b.headline = manual[i];
-    if (!b.headline) b.headline = c.text.split(/\s+/).slice(0, 9).join(" ");
-    // garde-fous communs : une carte ne sort jamais avec de l'anglais dans une vidéo arabe (ou l'inverse)
-    const excerpt = c.text.split(/\s+/).slice(0, 30).join(" ");
-    if (!isCleanCardText(b.text, lang)) { b.text = excerpt; b.fallback = true; }
-    if (foreignScript(b.title, lang) || wordCount(b.title || "") > 10) b.title = "";
-    if (!b.kicker || foreignScript(b.kicker, lang) || wordCount(b.kicker) > 4) b.kicker = KICKERS[lang][i % KICKERS[lang].length];
-    if (!/\p{Extended_Pictographic}/u.test(b.emoji || "")) b.emoji = EMOJIS[i % EMOJIS.length];
-    b.emoji = b.emoji.match(/\p{Extended_Pictographic}\uFE0F?/u)?.[0] || EMOJIS[i % EMOJIS.length];
-    return {
-      t0: c.t0, t1: c.t1,
-      headline: b.headline.trim(),
-      emoji: (b.emoji || EMOJIS[i % EMOJIS.length]).trim(),
-      kicker: (b.kicker || KICKERS[lang][i % KICKERS[lang].length]).trim(),
-      title: (b.title ?? "").trim(),
-      text: (b.text || "").trim(),
-      fallback: !!b.fallback,
-    };
+    if (degraded) {
+      // Aucune IA disponible : on NE publie PAS de texte brut tiré d'une transcription bruitée (sans sens).
+      // Pas de headline ni de carte ; seules tes headlines manuelles (manual-headlines.txt) sont gardées.
+      return { t0: c.t0, t1: c.t1, headline: (manual[i] || "").trim(), emoji: EMOJIS[i % EMOJIS.length], kicker: "", title: "", points: [], text: "", fallback: true };
+    }
+    const b = { ...(raw[i] || {}) };
+    for (const k of ["headline", "kicker", "title", "text"]) if (b[k]) b[k] = tidy(b[k], lang);
+    if (Array.isArray(b.points)) b.points = b.points.map((x) => tidy(String(x), lang));
+    // headline : propre ; "ancrée dans le contenu" seulement pour le petit LLM local (les IA en ligne reformulent en littéraire)
+    const headOk = isCleanHeadline(b.headline, lang) && (engine !== "local" || grounded(b.headline, kwAll));
+    let headline = headOk ? b.headline : "";
+    if (manual[i]) headline = manual[i];
+    // carte : 3 points propres, sinon texte propre, sinon PAS de carte (jamais de citation brute)
+    let points = [], text = "";
+    if (pointsOk(b, lang)) { points = b.points.slice(0, 4); text = points.join(" "); }
+    else if (isCleanCardText(b.text, lang)) text = b.text;
+    const hasCard = !!(points.length || text);
+    const kicker = hasCard && b.kicker && !foreignScript(b.kicker, lang) && wordCount(b.kicker) <= 4 ? b.kicker : KICKERS[lang][i % KICKERS[lang].length];
+    const title = hasCard && b.title && !foreignScript(b.title, lang) && wordCount(b.title) <= 10 ? b.title : "";
+    return { t0: c.t0, t1: c.t1, headline: (headline || "").trim(), emoji: cleanEmoji(b.emoji, i), kicker: hasCard ? kicker : "", title, points, text, fallback: !headOk || !hasCard };
   });
 
+  // mots-clés (affichés à l'écran quand le locuteur les prononce en mode "keywords")
+  const tokSet = new Set(tr.words.map((w) => norm(w.w)).filter(Boolean));
+  let kws = (Array.isArray(res?.keywords) ? res.keywords : []).map(norm).filter((k) => k.length >= 3 && tokSet.has(k));
+  if (kws.length < 8) {
+    const freq = new Map();
+    for (const w of tr.words) { const t = norm(w.w); if (t.length >= 5) freq.set(t, (freq.get(t) || 0) + 1); }
+    const extra = [...freq.entries()].sort((a, b) => b[0].length * Math.sqrt(b[1]) - a[0].length * Math.sqrt(a[1])).slice(0, 18).map((x) => x[0]);
+    kws = [...kws, ...extra];
+  }
+  kws = [...new Set(kws)].slice(0, 30);
+
   if (res?.hook) res.hook = tidy(res.hook, lang);
-  let hook = res?.hook && wordCount(res.hook) >= 3 && wordCount(res.hook) <= 14 ? res.hook.trim() : null;
-  if (!hook) {
-    // repli : la 1re headline devient le hook, telle quelle (pas de "?" artificiel qui changerait le sens)
-    hook = beats[0].headline.replace(/[.!؟?]+$/, "") + (lang === "fr" || lang === "it" ? " !" : "!");
+  let hook = !degraded && res?.hook && wordCount(res.hook) >= 3 && wordCount(res.hook) <= 14 ? res.hook.trim() : "";
+  if (!hook && !degraded) {
+    const h0 = beats.find((x) => x.headline)?.headline || "";
+    hook = h0 ? h0.replace(/[.!؟?]+$/, "") + (lang === "fr" || lang === "it" ? " !" : "!") : "";
   }
   const plan = {
-    lang, engine, duration: tr.duration,
+    lang, engine, degraded, duration: tr.duration,
     hook, hookEmoji: (res?.hookEmoji || "🤯").trim(),
     disclaimers: DISCLAIMERS[lang],
+    keywords: kws,
     beats,
   };
   writeFileSync(OUT, JSON.stringify(plan, null, 2));
-  console.log(`plan.json écrit (moteur : ${engine}, hook : « ${hook} »).`);
-  beats.forEach((b, i) => console.log(`  ${i + 1}. [${b.t0.toFixed(0)}s] ${b.headline}${b.fallback ? "  (repli)" : ""}`));
+  if (degraded) {
+    console.log("⚠⚠⚠ AUCUNE IA n'a répondu (clé refusée ? voir les messages plus haut) : montage SANS headlines ni cartes,");
+    console.log("     uniquement sous-titres + effets. Corrige la clé (GEMINI_API_KEY / GROQ_API_KEY) et relance.");
+  }
+  console.log(`plan.json écrit (moteur : ${engine}${hook ? `, hook : « ${hook} »` : ""}), ${beats.filter((x) => x.points.length || x.text).length}/${beats.length} cartes, ${kws.length} mots-clés.`);
+  beats.forEach((x, i) => console.log(`  ${i + 1}. [${x.t0.toFixed(0)}s] ${x.headline || "(pas de headline)"}${x.points.length ? `  | ${x.points.length} points` : ""}`));
 }
 
 main();

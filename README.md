@@ -28,6 +28,15 @@ horizontale, vertical si elle est verticale. Tout tourne sur GitHub (ffmpeg), sa
    Ordre d'essai : Gemini → Groq → Claude (optionnel, payant : `ANTHROPIC_API_KEY`) → LLM local. Avec une clé, plus de téléchargement de modèle : le run est bien plus court.
    Les offres gratuites changent : si un fournisseur refuse, le script passe au suivant, puis au LLM local. Les requêtes gratuites de Gemini peuvent être utilisées par Google pour améliorer ses produits : n'envoie que des contenus que tu publies de toute façon.
 
+### Qualité du texte (important)
+- **La clé Groq sert aussi à transcrire** : Whisper large-v3 gratuit, nettement meilleur que le whisper local pour l'arabe dialectal. Sans clé Groq, le workflow utilise whisper large-v3-turbo en local (meilleur que l'ancien « small », mais plus lent).
+- Les headlines/cartes sont écrites en **arabe littéraire simple**, avec **3 points courts** par carte. Avec Gemini, l'**audio** de la vidéo est envoyé à l'IA : elle comprend le sens même quand la transcription est mauvaise.
+- **Aucune IA disponible ? Plus de texte brut** : le montage sort sans headlines ni cartes (sous-titres + effets seulement) et le log affiche un gros avertissement. Rien de faux n'est publié.
+- Erreur Gemini 403 dans le log = clé restreinte/refusée → crée une nouvelle clé sur https://aistudio.google.com/apikey (« Create API key in new project ») et remets le secret.
+
+### Mode sous-titres
+Fichier optionnel `content/style.json` : `{"subtitles":"full"}` (défaut : tous les mots), `{"subtitles":"keywords"}` (seulement les mots importants, en grand, quand ils sont prononcés) ou `{"subtitles":"off"}`.
+
 ## Utilisation
 1. *Releases → Draft a new release* → joins ta vidéo (n'importe quel nom) → **Publish**.
 2. Attends la fin du workflow (onglet Actions).

@@ -87,7 +87,7 @@ try {
 const nb = (t) => t.replace(/ +([?!:;»؟])/g, "\u00A0$1").replace(/(«) +/g, "$1\u00A0");
 const tokensOf = (text) => nb(esc(text)).split(/ +/).filter(Boolean);
 const allTokens = new Set(["●"]);
-[plan.hook, ...plan.disclaimers, ...plan.beats.flatMap((b) => [b.headline, b.title, b.text, b.kicker]), ...tr.words.map((w) => w.w)]
+[plan.hook, ...plan.disclaimers, ...plan.beats.flatMap((b) => [b.headline, b.title, b.text, b.kicker, ...(b.points || [])]), ...tr.words.map((w) => w.w)]
   .filter(Boolean).forEach((t) => tokensOf(t).forEach((k) => allTokens.add(k)));
 const TM = measureTokens({ tokens: [...allTokens], font, dir: CONTENT_DIR });
 console.log(`Mesure du texte : ${TM.w.size} mots mesurés${TM.ok ? "" : " (⚠ mesure partielle, estimation utilisée)"}, espace = ${TM.space}px`);
@@ -165,7 +165,7 @@ const beats = plan.beats.filter((b) => b.t0 < D).map((b) => ({ ...b, t1: Math.mi
 const segs = [];
 beats.forEach((b, i) => {
   const len = b.t1 - b.t0;
-  const canSplit = len >= 7 && b.text && b.text.length > 10;
+  const canSplit = len >= 7 && ((b.points && b.points.length) || (b.text && b.text.length > 10));
   const punch = i > 0 && i % 2 === 1 && len >= 4;
   let t = b.t0;
   if (punch) { segs.push({ t0: t, t1: t + 1.9, state: "punch", beat: i }); t += 1.9; }
@@ -186,7 +186,7 @@ const enableFor = (state) => {
 
 // ---------- ASS ----------
 const ass = new Ass(W, H, font.name, font.bold);
-const HOOK_END = Math.min(3.3, D * 0.4);
+const HOOK_END = plan.hook ? Math.min(3.3, D * 0.4) : 0.4;
 const FULL = `m 0 0 l ${W} 0 l ${W} ${H} l 0 ${H}`;
 const dirX = rtl ? -1 : 1; // sens de lecture / des balayages
 const SUB_COLORS = [P.gold, P.cyan, "#FF7AB6", "#9DFF5C"];
@@ -231,6 +231,7 @@ function fitBanner(text) {
   return { lines: wrapClamp(text, maxW, em, L.bannerMaxLines), em };
 }
 beats.forEach((b, i) => {
+  if (!b.headline) return;
   const start = i === 0 ? HOOK_END - 0.2 : b.t0;
   const end = b.t1;
   if (end - start < 0.4) return;
@@ -294,16 +295,18 @@ merged.filter((s) => s.state === "split").forEach((s) => {
   const titleH = tLines.length ? tLines.length * lh(tEm) + 14 : 0;
   const sepH = 30;
   const room = availBottom - y - titleH - sepH;
-  let bEm = vertical ? 54 : 46, bLines;
-  for (;;) {
-    bLines = wrapPx(b.text, innerW, bEm);
-    if (bLines.length * lh(bEm) * 1.06 <= room || bEm <= 26) break;
-    bEm -= 1;
+  const pts = b.points && b.points.length ? b.points : null;
+  const bulletW = 46;
+  let bEm = vertical ? 54 : 46;
+  const layout = (em) => (pts ? pts.map((pt) => wrapPx(pt, innerW - bulletW, em)) : [wrapPx(b.text, innerW, em)]);
+  const heightOf = (gs, em) => gs.reduce((n, l) => n + l.length, 0) * lh(em) * 1.06 + (pts ? (gs.length - 1) * lh(em) * 0.5 : 0);
+  let groups = layout(bEm);
+  while (heightOf(groups, bEm) > room && bEm > 26) { bEm -= 1; groups = layout(bEm); }
+  if (heightOf(groups, bEm) > room) {
+    if (pts) { while (groups.length > 2 && heightOf(groups, bEm) > room) groups.pop(); }
+    else groups = [wrapClamp(b.text, innerW, bEm, Math.max(2, Math.floor(room / (lh(bEm) * 1.06))))];
   }
-  const maxBody = Math.max(2, Math.floor(room / (lh(bEm) * 1.06)));
-  if (bLines.length > maxBody) bLines = wrapClamp(b.text, innerW, bEm, maxBody);
-  const bodyH = bLines.length * lh(bEm) * 1.06;
-  y += Math.max(0, (room - bodyH) * 0.35);
+  y += Math.max(0, (room - heightOf(groups, bEm)) * 0.35);
 
   if (tLines.length) {
     ass.add(3, t0 + 0.1, t1, `{\\an${an}\\move(${tx + slide},${y},${tx},${y},0,320)\\fs${fs(tEm)}\\bord0\\shad2${c4(P.black, 0.6)}${c1(P.gold)}\\fad(260,160)}${tLines.join("\\N")}`);
@@ -311,13 +314,24 @@ merged.filter((s) => s.state === "split").forEach((s) => {
   }
   ass.add(2, t0 + 0.2, t1, `{\\an7\\pos(${rtl ? tx - 90 : tx},${y})\\bord0\\shad0${c1(P.accent)}\\fscx2\\t(0,420,\\fscx100)\\fad(100,160)\\p1}${rrect(90, 6, 3)}{\\p0}`);
   y += sepH;
-  const keys = keyWords(b.text, 4);
-  const step = Math.min(0.24, Math.max(0.08, (t1 - t0 - 1.2) / Math.max(1, bLines.length)));
-  bLines.forEach((ln, k) => {
-    const ly = y + k * lh(bEm) * 1.06;
-    const ls = t0 + 0.45 + k * step;
-    if (ls >= t1 - 0.2) return;
-    ass.add(3, ls, t1, `{\\an${an}\\move(${tx + (rtl ? -50 : 50)},${ly + 14},${tx},${ly},0,260)\\fs${fs(bEm)}\\bord0\\shad1${c4(P.black, 0.5)}${c1(P.white)}\\fad(220,160)}${colorize(ln, keys, P.gold, P.white)}`);
+  const keys = keyWords(pts ? pts.join(" ") : b.text, 4);
+  const lineH = lh(bEm) * 1.06;
+  const step = Math.min(0.24, Math.max(0.08, (t1 - t0 - 1.2) / Math.max(1, groups[0].length)));
+  const textX = pts ? (rtl ? tx - bulletW : tx + bulletW) : tx;
+  let ly = y;
+  groups.forEach((lines, gi) => {
+    const gStart = t0 + 0.45 + gi * Math.min(0.6, Math.max(0.2, (t1 - t0 - 1.4) / groups.length));
+    if (pts && gStart < t1 - 0.2) {
+      const cx = rtl ? tx - 13 : tx + 13, cy = ly + lh(bEm) * 0.5;
+      ass.add(3, gStart, t1, `{\\an7\\pos(${cx - 12},${cy - 12})\\bord0\\shad0${c1(P.gold)}\\fscx0\\fscy0\\t(0,220,\\fscx100\\fscy100)\\fad(0,160)\\p1}m 12 0 b 19 0 24 5 24 12 b 24 19 19 24 12 24 b 5 24 0 19 0 12 b 0 5 5 0 12 0{\\p0}`);
+    }
+    lines.forEach((ln, k) => {
+      const yy = ly + k * lineH;
+      const ls = pts ? gStart + k * 0.07 : t0 + 0.45 + k * step;
+      if (ls >= t1 - 0.2) return;
+      ass.add(3, ls, t1, `{\\an${an}\\move(${textX + (rtl ? -50 : 50)},${yy + 14},${textX},${yy},0,260)\\fs${fs(bEm)}\\bord0\\shad1${c4(P.black, 0.5)}${c1(P.white)}\\fad(220,160)}${colorize(ln, keys, P.gold, P.white)}`);
+    });
+    ly += lines.length * lineH + (pts ? lh(bEm) * 0.5 : 0);
   });
 
   // flèche pulsante qui relie la carte à la vidéo
@@ -329,8 +343,8 @@ merged.filter((s) => s.state === "split").forEach((s) => {
   ass.add(8, t0 + 0.2, t1, `{\\an7\\pos(${ax},${ay})\\bord2${c3(P.dark)}\\shad0${c1(P.accent)}\\fad(200,150)\\t(0,500,\\fscx125\\fscy125)\\t(500,1000,\\fscx100\\fscy100)\\t(1000,1500,\\fscx125\\fscy125)\\t(1500,2000,\\fscx100\\fscy100)\\p1}${arrow}{\\p0}`);
 });
 
-// 7) hook d'ouverture
-{
+// 7) hook d'ouverture (absent si aucune IA n'a pu l'écrire)
+if (plan.hook) {
   const t0 = 0.15, t1 = HOOK_END;
   const box = winNormal;
   const hw = Math.min(box.w * 0.92, vertical ? 940 : 1200);
@@ -363,8 +377,28 @@ merged.filter((s) => s.state !== "split").forEach((s) => {
   });
 });
 
+const style = existsSync(`${CONTENT_DIR}/style.json`) ? JSON.parse(readFileSync(`${CONTENT_DIR}/style.json`, "utf8")) : {};
+const subMode = String(process.env.SUBTITLES || style.subtitles || "full").toLowerCase(); // full | keywords | off
+const normTok = (t) => String(t).replace(/[\p{P}\p{S}\u00A0]/gu, "").replace(/[\u064B-\u065F\u0670\u0640]/g, "").trim();
+console.log(`Sous-titres : mode « ${subMode} »`);
 // 8) sous-titres dynamiques mot à mot : pop, légère inclinaison, couleur qui change à chaque phrase
-{
+if (subMode === "keywords") {
+  // mode mots-clés : seuls les mots importants apparaissent, en grand, au moment où le locuteur les prononce
+  const kset = new Set(plan.keywords || []);
+  const evs = [];
+  let ci = 0;
+  for (const w of tr.words.filter((x) => x.t0 < D)) {
+    if (!kset.has(normTok(w.w))) continue;
+    ci++;
+    const em = L.subsSize * 1.5;
+    evs.push({ t0: w.t0, t1: Math.max(w.t1, w.t0 + 1.0), text: `{\\an5\\pos(${W / 2},${L.subsY - 40})\\frz${ci % 2 ? -4 : 4}\\fs${fs(em)}\\fscx60\\fscy60\\t(0,100,\\fscx118\\fscy118)\\t(100,200,\\fscx100\\fscy100)\\bord9${c3(P.black)}\\shad4${c4(P.black, 0.6)}${c1(SUB_COLORS[ci % SUB_COLORS.length])}\\fad(0,120)}${esc(w.w)}` });
+  }
+  for (let k = 1; k < evs.length; k++) {
+    const a = evs[k - 1], b = evs[k];
+    if (b.t0 < a.t1) a.t1 = Math.max(a.t0 + 0.08, b.t0);
+  }
+  evs.forEach((e) => ass.add(10, e.t0, e.t1, e.text));
+} else if (subMode !== "off") {
   const words = tr.words.filter((w) => w.t0 < D);
   const phrases = [];
   let cur = [];

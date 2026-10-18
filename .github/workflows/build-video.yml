@@ -82,7 +82,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: whisper.cpp
-          key: whispercpp-build-v3-${{ runner.os }}
+          key: whispercpp-build-v4-${{ runner.os }}
 
       - name: Compiler whisper.cpp (si pas en cache)
         if: steps.whisper-cache.outputs.cache-hit != 'true'
@@ -92,13 +92,16 @@ jobs:
             -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
             -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
           cmake --build whisper.cpp/build -j"$(nproc)" --config Release
-          cd whisper.cpp && bash models/download-ggml-model.sh small
+          cd whisper.cpp
+          bash models/download-ggml-model.sh small
+          bash models/download-ggml-model.sh large-v3-turbo-q5_0 || echo "modèle turbo indisponible : whisper small sera utilisé"
 
-      - name: Vérifier le modèle whisper
+      - name: Vérifier les modèles whisper
         run: |
-          if [ ! -f whisper.cpp/models/ggml-small.bin ]; then
-            cd whisper.cpp && bash models/download-ggml-model.sh small
-          fi
+          cd whisper.cpp
+          [ -f models/ggml-small.bin ] || bash models/download-ggml-model.sh small
+          [ -f models/ggml-large-v3-turbo-q5_0.bin ] || bash models/download-ggml-model.sh large-v3-turbo-q5_0 || echo "modèle turbo indisponible"
+          ls -la models/*.bin
 
       # ---------- llama.cpp + Qwen2.5-7B : uniquement si pas de clé Anthropic ----------
       - name: Cache llama.cpp
@@ -123,9 +126,9 @@ jobs:
             "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
 
       # ---------- pipeline ----------
-      - name: Transcription (mot à mot, langue auto)
+      - name: Transcription (Groq Whisper large-v3 si clé, sinon whisper local turbo)
         run: node scripts/transcribe.mjs
-        timeout-minutes: 30
+        timeout-minutes: 60
 
       - name: Scénario (hook, headlines, cartes d'analyse)
         run: node scripts/plan-video.mjs
