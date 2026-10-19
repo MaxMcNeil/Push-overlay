@@ -7,6 +7,8 @@ horizontale, vertical si elle est verticale. Tout tourne sur GitHub (ffmpeg), sa
 ## Ce que contient la vidéo finale
 - **Jamais 100 % de l'écran** : ta vidéo vit dans une fenêtre arrondie (halo néon) sur un fond animé (copie floutée + dérive de teinte).
 - **Hook d'ouverture** (≈ 3 s) : question ou affirmation choc, mot-clé en or.
+- **Synchro parole/idées** : petits coups de zoom, flashs de lumière sur le cadre, éclats sur le fond et balayages lumineux à chaque nouvelle idée, mot-clé prononcé ou reprise de phrase après une pause.
+- **Titres courts et percutants** (3 à 7 mots), cartes en 3 puces de 4 à 8 mots, dans toutes les langues ; l'arabe est écrit en littéraire simple.
 - **Mouvement permanent** : fond dégradé animé, travelling lent dans la fenêtre, tremblement à l'entrée des zooms, balayages de couleur + flash à chaque transition, reflet qui traverse la headline, emojis qui montent.
 - **Bandeau de headline** qui change à chaque séquence (phrases complètes, validées par le script).
 - **Valeur ajoutée** : cartes d'analyse en *split-screen* (« Pourquoi ? », « Le contexte »…) avec flèche vers la vidéo, emoji, transitions flash, **zooms punch**.

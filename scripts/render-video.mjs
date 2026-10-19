@@ -142,13 +142,13 @@ const L = vertical
       logo: { x: 40, y: 190, w: 120, h: 120 }, banner: { x: 180, y: 170, w: 860, h: 200 },
       normalBox: { x: 40, y: 400, w: 1000, h: 1150 }, splitBox: { x: 40, y: 400, w: 520, h: 900 },
       panel: { x: 580, y: 400, w: 460, h: 900 }, subsY: 1520, subsSize: 74, subsPx: 940, subsWords: 4,
-      ticker: { y: 1620, h: 54, size: 28 }, bannerMaxLines: 3, bannerSizes: [54, 48, 42, 36], titleSize: 44, bodySize: 31, hookSize: 80,
+      ticker: { y: 1620, h: 54, size: 28 }, bannerMaxLines: 3, bannerSizes: [66, 58, 52, 46, 40, 34], titleSize: 44, bodySize: 31, hookSize: 80,
     }
   : {
       logo: { x: 44, y: 30, w: 120, h: 120 }, banner: { x: 190, y: 34, w: 1686, h: 128 },
       normalBox: { x: 320, y: 185, w: 1280, h: 720 }, splitBox: { x: 50, y: 185, w: 1130, h: 640 },
       panel: { x: 1210, y: 185, w: 660, h: 640 }, subsY: 1000, subsSize: 78, subsPx: 1560, subsWords: 5,
-      ticker: { y: 1020, h: 54, size: 30 }, bannerMaxLines: 2, bannerSizes: [56, 50, 44, 38], titleSize: 50, bodySize: 33, hookSize: 88,
+      ticker: { y: 1020, h: 54, size: 30 }, bannerMaxLines: 2, bannerSizes: [76, 66, 58, 52, 46, 40, 34], titleSize: 50, bodySize: 33, hookSize: 88,
     };
 const logoR = mirror(L.logo);
 const bannerR = (() => {
@@ -219,6 +219,31 @@ const FULL = `m 0 0 l ${W} 0 l ${W} ${H} l 0 ${H}`;
 const dirX = rtl ? -1 : 1; // sens de lecture / des balayages
 const SUB_COLORS = [P.gold, P.cyan, "#FF7AB6", "#9DFF5C"];
 
+// ---------- impulsions synchronisées avec la parole et les idées ----------
+// À chaque nouvelle idée (début de séquence), mot-clé prononcé ou reprise de phrase après une pause : petit "coup"
+// de zoom dans la fenêtre, flash de lumière sur le cadre et éclat sur le fond. Espacées d'au moins 1,4 s.
+const ntok = (t) => String(t).replace(/[\p{P}\p{S}\u00A0]/gu, "").replace(/[\u064B-\u065F\u0670\u0640]/g, "").trim();
+const pulses = (() => {
+  const ev = [];
+  beats.forEach((b) => { if (b.t0 > 0.3) ev.push({ t: b.t0, a: 0.1, b: 0.16, idea: true }); });
+  const kset = new Set(plan.keywords || []);
+  const ws = tr.words.filter((w) => w.t0 < D - 0.3);
+  ws.forEach((w, i) => {
+    const gap = i ? w.t0 - ws[i - 1].t1 : 1;
+    if (kset.has(ntok(w.w))) ev.push({ t: w.t0, a: 0.055, b: 0.08 });
+    else if (i && gap >= 0.5) ev.push({ t: w.t0, a: 0.035, b: 0.045 });
+  });
+  ev.sort((x, y) => x.t - y.t);
+  const out = [];
+  for (const e of ev) {
+    const last = out[out.length - 1];
+    if (last && e.t - last.t < 1.4) { if (e.idea && !last.idea) out[out.length - 1] = e; continue; }
+    out.push(e);
+  }
+  return out.slice(0, 160);
+})();
+const pulseExpr = (T, key, k) => pulses.map((e) => `if(gte(${T},${e.t.toFixed(3)}),${e[key].toFixed(3)}*exp(-${k}*(${T}-${e.t.toFixed(3)})),0)`).join("+") || "0";
+console.log(`Impulsions synchronisées : ${pulses.length} (zoom + lumière)`);
 // 1) barre de progression
 const pbY = H - 8;
 ass.shape(2, 0, D, 0, pbY, `m 0 0 l ${W} 0 l ${W} 8 l 0 8`, c1(P.white, 0.3));
@@ -227,6 +252,18 @@ ass.shape(3, 0, D, rtl ? W : 0, pbY, `m 0 0 l ${W} 0 l ${W} 8 l 0 8`,
 
 // 2) fenêtre vidéo : halo qui "respire" + cadre fin, par segment
 const winFor = (state) => (state === "split" ? winSplitFinal : winNormal);
+pulses.forEach((e, k) => {
+  const seg = merged.find((m) => e.t >= m.t0 && e.t < m.t1);
+  if (!seg) return;
+  const w = winFor(seg.state);
+  ass.shape(5, e.t, e.t + 0.45, w.x, w.y, rrect(w.w, w.h, 26), `\\1a&HFF&${c3(e.idea ? P.gold : P.white, 0.7)}\\bord${e.idea ? 30 : 18}\\blur14\\fad(0,380)`);
+  if (k % 3 === 0 && e.t + 0.9 < D) {
+    // balayage de lumière douce sur toute l'image
+    const x0 = rtl ? W + 220 : -220, x1 = rtl ? -220 : W + 220;
+    ass.add(0, e.t, e.t + 0.9, `{\\an7\\move(${x0},0,${x1},0,0,850)\\bord0\\shad0\\blur30${c1(P.white, e.idea ? 0.16 : 0.1)}\\p1}m 0 0 l ${dirX * 170} 0 l ${dirX * 110} ${H} l ${dirX * -60} ${H}{\\p0}`);
+  }
+});
+
 for (const s of merged) {
   const w = winFor(s.state);
   const glow = s.state === "punch" ? P.gold : P.cyan;
@@ -570,13 +607,15 @@ const gw = even(W / 6), gh = even(H / 6);
 const hasPunch = merged.some((s) => s.state === "punch");
 f.push(`[${iSrc}:v]setpts=PTS-STARTPTS,fps=${FPS},setsar=1${padSec > 0.5 ? `,tpad=stop_mode=clone:stop_duration=${(padSec + 1).toFixed(2)}` : ""},split=${hasPunch ? 4 : 3}[bgs][nv0][sv0]${hasPunch ? "[pv0]" : ""}`);
 // fond : copie floutée + dérive de teinte + dégradé animé (basse résolution = rapide)
-f.push(`[bgs]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},gblur=sigma=5,eq=brightness=-0.2:saturation=1.6,hue=h='24*t':s=1.15,scale=${W}:${H}:flags=bicubic,format=yuv420p[bg0]`);
+f.push(`[bgs]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},gblur=sigma=5,eq=brightness='-0.2+${pulseExpr("t", "b", 6)}':saturation=1.6:eval=frame,hue=h='24*t':s=1.15,scale=${W}:${H}:flags=bicubic,format=yuv420p[bg0]`);
 f.push(`gradients=size=${gw}x${gh}:rate=${FPS}:duration=${D.toFixed(3)}:c0=0xFF2E63:c1=0x08D9D6:c2=0x7B2FF7:nb_colors=3:speed=0.03,scale=${W}:${H}:flags=bicubic,format=yuv420p[grad]`);
 f.push(`[bg0][grad]blend=all_mode=overlay:all_opacity=0.5[bg]`);
 f.push(`[${iMN}:v]format=gray,split=${hasPunch ? 2 : 1}${hasPunch ? "[mn1][mn2]" : "[mn1]"}`);
 // travelling lent dans la fenêtre : la vidéo "vit" même quand le plan est fixe
-const pan = (z) => `x='(iw-ow)/2*(1+0.9*sin(t*0.55))':y='(ih-oh)/2*(1+0.9*cos(t*0.42))'`;
-const kb = (w, h, z) => `scale=${even(w * z)}:${even(h * z)},crop=${w}:${h}:${pan(z)},format=yuva420p`;
+// zoompan : travelling lent + "coups" de zoom synchronisés (T = temps de la sortie, d=1 : une image en entrée = une en sortie)
+const ZP = pulseExpr(`on/${FPS}`, "a", 7);
+const kb = (w, h, base) =>
+  `scale=${even(w * 1.5)}:${even(h * 1.5)},zoompan=z='${base}+${ZP}':x='(iw-iw/zoom)/2*(1+0.9*sin(on/${FPS}*0.55))':y='(ih-ih/zoom)/2*(1+0.9*cos(on/${FPS}*0.42))':d=1:s=${w}x${h}:fps=${FPS},format=yuva420p`;
 f.push(`[nv0]${kb(winNormal.w, winNormal.h, 1.12)}[nv1]`);
 f.push(`[nv1][mn1]alphamerge[nv]`);
 f.push(`[sv0]${kb(winSplitFinal.w, winSplitFinal.h, 1.12)}[sv1]`);
@@ -629,7 +668,7 @@ for (const [type, evs] of Object.entries(byType)) {
 f.push(`${sfxLabels.join("")}amix=inputs=${sfxLabels.length}:normalize=0:duration=longest,aresample=48000,aformat=channel_layouts=stereo[sfx]`);
 if (hasAudio) {
   f.push(`[${iSrc}:a]asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo[voice]`);
-  f.push(`[voice][sfx]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.96[aout]`);
+  f.push(`[voice][sfx]amix=inputs=2:normalize=0:duration=first,apad=whole_dur=${D.toFixed(3)},alimiter=limit=0.96[aout]`);
 } else {
   f.push(`[sfx]apad,alimiter=limit=0.96[aout]`);
 }

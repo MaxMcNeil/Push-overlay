@@ -42,6 +42,12 @@ export const DISCLAIMERS = {
   ],
 };
 
+const STYLE_EXAMPLES = {
+  fr: "« La faim, vraie violence ? » · « Des millions privés de l'essentiel » · « Quand la colère n'a plus de voix » · « Il jure sur sa vie »",
+  ar: "«الجوع هو العنف الحقيقي» · «ملايين عاجزون عن سد حاجاتهم» · «حين يُواجَه الاحتجاج بالقمع» · «يقسم بحياته»",
+  en: "“Hunger is the real violence” · “Millions can't afford the basics” · “When protest meets repression” · “He stakes his life on it”",
+  it: "«La fame è la vera violenza» · «Milioni senza il necessario» · «Quando la protesta incontra la repressione» · «Giura sulla sua vita»",
+};
 const LANG_NAME = { fr: "français", ar: "arabe (العربية, écriture arabe)", en: "anglais", it: "italien" };
 const KICKERS = {
   fr: ["POURQUOI ?", "LE CONTEXTE", "COMMENT ÇA MARCHE", "À RETENIR", "L'ANGLE MORT", "CE QUE ÇA CHANGE"],
@@ -62,7 +68,7 @@ export function isCleanHeadline(h, lang) {
   if (!h) return false;
   const t = h.trim();
   const n = wordCount(t);
-  if (n < 4 || n > 13) return false;
+  if (n < 3 || n > 9) return false;
   if (/\.{2,}|…$/.test(t)) return false;
   if (/[{}\[\]<>_*#]/.test(t)) return false;
   if ((DANGLING[lang] || DANGLING.fr).test(t.replace(/[?!.،؟]+$/, ""))) return false;
@@ -93,7 +99,7 @@ export function isCleanCardText(t, lang) {
 export function isCleanPoint(p, lang) {
   if (typeof p !== "string") return false;
   const n = wordCount(p);
-  if (n < 3 || n > 14) return false;
+  if (n < 3 || n > 11) return false;
   if (foreignScript(p, lang) || /\.{2,}|…/.test(p)) return false;
   return true;
 }
@@ -154,20 +160,22 @@ function systemPrompt(lang) {
     "OBJECTIF : apporter une VALEUR AJOUTÉE à la vidéo (explication, contexte, mise en perspective, ironie maîtrisée) et maximiser la rétention.",
     "",
     "RÈGLES DES HEADLINES (strictes) :",
-    "- Une PHRASE COMPLÈTE et grammaticalement correcte : sujet + verbe, de 5 à 11 mots. Jamais de fragment, jamais coupée en plein milieu, jamais finie par un article ou une préposition.",
+    "- Titre CHOC et COURT, style une d'actualité : 3 à 7 mots (8 au maximum). Phrase correcte et nette (sujet + verbe, ou formule nominale percutante), jamais coupée en plein milieu, jamais finie par un article ou une préposition. Aucune formulation académique ou administrative.",
+    "- Techniques qui marchent : verbe d'action fort au présent, contraste (« X contre Y »), chiffre ou fait concret, question brève qui pique, mot-clé en tête de phrase.",
+    `- Exemples de TON et de LONGUEUR uniquement (ne les réutilise pas, parle du contenu réel) : ${STYLE_EXAMPLES[lang]}`,
     "- Choc mais honnête : contraste, enjeu, chiffre, conséquence concrète ou question qui pique. Pas de clickbait mensonger.",
     "- Elle doit parler PRÉCISÉMENT de ce qui est dit dans l'extrait (personnes, chiffres, idées). Hors-sujet = échec.",
     "- N'invente AUCUN chiffre, nom, citation ou fait absent de l'extrait.",
     "- Personnes réelles : chaque affirmation (headline ET carte) doit être directement déductible de l'extrait. N'attribue jamais à une personne nommée une intention, une identité, une orientation, un acte ou une déclaration qu'elle n'a pas clairement exprimés dans l'extrait. En cas de doute, reformule en restant au plus près des mots prononcés.",
-    "- ATTRIBUTION : le locuteur est la personne qui parle dans la vidéo ; ne le confonds JAMAIS avec les personnes qu'il cite, interpelle ou dont il parle. Toute affirmation, vision, prédiction ou accusation du locuteur est présentée COMME SA PAROLE (« il affirme », « selon lui », « il dit avoir vu », « il défie… »), jamais comme un fait établi, surtout quand elle concerne des personnes réelles, une autorité ou la religion.",
+    "- ATTRIBUTION : le locuteur est la personne qui parle dans la vidéo ; ne le confonds JAMAIS avec les personnes qu'il cite, interpelle ou dont il parle. Toute affirmation, vision, prédiction ou accusation du locuteur est présentée COMME SA PAROLE, jamais comme un fait établi, surtout quand elle concerne des personnes réelles, une autorité ou la religion. Reste BREF : verbe d'attribution court (« jure », « affirme », « accuse », « défie ») ou « Selon lui, » en début, ou guillemets. Ne l'ajoute que pour les accusations, visions et prédictions, pas pour chaque titre.",
     "- Si la transcription semble contenir une erreur de reconnaissance (nom propre douteux), évite ce nom plutôt que de le deviner.",
     "- VARIÉTÉ : ne commence pas deux headlines consécutives par le même mot (surtout pas « Le locuteur / Il / المتحدث » à chaque fois). Alterne : un fait concret, une question, un verbe d'action, un contraste, le sujet traité. L'attribution se glisse ailleurs dans la phrase (« selon lui », « يقول », « بحسب كلامه »).",
     "- Pas de \"je\". Pas d'hésitation orale. Varier les formes d'un extrait à l'autre (affirmation, question, contraste).",
     "",
     "RÈGLES DE LA CARTE D'ANALYSE (valeur ajoutée) :",
     "- kicker : 1 à 3 mots (ex. POURQUOI ?, LE CONTEXTE, COMMENT ÇA MARCHE).",
-    "- title : 3 à 8 mots, une idée forte.",
-    "- points : EXACTEMENT 3 points courts (5 à 9 mots chacun), phrases complètes et propres. Ils apportent la VALEUR AJOUTÉE : le POURQUOI, le COMMENT ou un éclairage de contexte général et vérifiable. Ce n'est NI un résumé NI une citation de la parole (jamais de phrase brisée de la transcription). Jamais de fait nouveau sur une personne nommée. Pas de chiffres absents de l'extrait.",
+    "- title : 2 à 5 mots, une idée forte.",
+    "- points : EXACTEMENT 3 points TRÈS courts (4 à 8 mots chacun), phrases complètes et propres. Ils apportent la VALEUR AJOUTÉE : le POURQUOI, le COMMENT ou un éclairage de contexte général et vérifiable. Ce n'est NI un résumé NI une citation de la parole (jamais de phrase brisée de la transcription). Jamais de fait nouveau sur une personne nommée. Pas de chiffres absents de l'extrait.",
     "- emoji : UN seul emoji pertinent.",
     "",
     `LANGUE : TOUS les champs (headline, kicker, title, points) doivent être écrits EXCLUSIVEMENT en ${LANG_NAME[lang]}. Pas un seul mot d'une autre langue, aucun mot anglais, aucun caractère étrange.`,
@@ -189,7 +197,7 @@ function hookUser(lang, headlines) {
   return [
     "Voici les headlines de la vidéo :",
     headlines.map((h, i) => `${i + 1}. ${h}`).join("\n"),
-    `Écris le HOOK d'ouverture (affiché 3 secondes avant tout le reste) en ${LANG_NAME[lang]} : UNE question percutante ou UNE affirmation choc de 5 à 10 mots, phrase complète, qui donne envie de rester jusqu'au bout et reste vraie par rapport au contenu.`,
+    `Écris le HOOK d'ouverture (affiché 3 secondes avant tout le reste) en ${LANG_NAME[lang]} : UNE question percutante ou UNE affirmation choc de 4 à 7 mots, phrase complète, qui donne envie de rester jusqu'au bout et reste vraie par rapport au contenu.`,
     'Réponds UNIQUEMENT par un objet JSON : {"hook":"...","emoji":"..."}',
   ].join("\n");
 }
@@ -336,7 +344,7 @@ async function viaApi(chunks, lang) {
     "",
     audio ? "L'AUDIO ORIGINAL de la vidéo est joint : en cas de divergence avec la transcription, fie-toi à l'AUDIO." : "",
     `Étape 1 : comprends de quoi parle la vidéo dans son ensemble (champ "summary" : 2 phrases fidèles, en ${LANG_NAME[lang]}).`,
-    `Étape 2 : produis le scénario. Réponds UNIQUEMENT par un objet JSON : {"summary":"...","hook":"...","hook_emoji":"...","keywords":["..."],"beats":[{"headline":"...","emoji":"...","kicker":"...","title":"...","points":["...","...","..."]}]} avec EXACTEMENT ${chunks.length} beats (un par extrait, dans l'ordre), tout en ${LANG_NAME[lang]}. Le hook est une question percutante ou une affirmation choc de 5 à 10 mots. "keywords" : 12 à 25 mots-clés IMPORTANTS, recopiés EXACTEMENT comme ils apparaissent dans la transcription ci-dessus (même graphie), utilisés pour les faire apparaître à l'écran quand le locuteur les prononce.`,
+    `Étape 2 : produis le scénario. Réponds UNIQUEMENT par un objet JSON : {"summary":"...","hook":"...","hook_emoji":"...","keywords":["..."],"beats":[{"headline":"...","emoji":"...","kicker":"...","title":"...","points":["...","...","..."]}]} avec EXACTEMENT ${chunks.length} beats (un par extrait, dans l'ordre), tout en ${LANG_NAME[lang]}. Le hook est une question percutante ou une affirmation choc de 4 à 7 mots. "keywords" : 12 à 25 mots-clés IMPORTANTS, recopiés EXACTEMENT comme ils apparaissent dans la transcription ci-dessus (même graphie), utilisés pour les faire apparaître à l'écran quand le locuteur les prononce.`,
   ].filter(Boolean).join("\n");
   for (const [name, , fn] of providers) {
     try {
