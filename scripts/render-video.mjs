@@ -223,27 +223,52 @@ const SUB_COLORS = [P.gold, P.cyan, "#FF7AB6", "#9DFF5C"];
 // À chaque nouvelle idée (début de séquence), mot-clé prononcé ou reprise de phrase après une pause : petit "coup"
 // de zoom dans la fenêtre, flash de lumière sur le cadre et éclat sur le fond. Espacées d'au moins 1,4 s.
 const ntok = (t) => String(t).replace(/[\p{P}\p{S}\u00A0]/gu, "").replace(/[\u064B-\u065F\u0670\u0640]/g, "").trim();
+// niveau d'énergie : "high" (par défaut, nerveux), "normal" ou "low" — réglable via content/style.json {"energy":"normal"}
+const energy = (() => {
+  try {
+    const st = existsSync(`${CONTENT_DIR}/style.json`) ? JSON.parse(readFileSync(`${CONTENT_DIR}/style.json`, "utf8")) : {};
+    return String(process.env.ENERGY || st.energy || "high").toLowerCase();
+  } catch { return "high"; }
+})();
+const EN = {
+  low: { gap: 1.4, idea: 0.1, kw: 0.055, sent: 0.035, long: 0, fill: 0, sweepEvery: 3, tick: false },
+  normal: { gap: 1.0, idea: 0.12, kw: 0.065, sent: 0.045, long: 0, fill: 0, sweepEvery: 3, tick: false },
+  high: { gap: 0.75, idea: 0.14, kw: 0.08, sent: 0.055, long: 0.045, fill: 0.032, sweepEvery: 2, tick: true },
+}[energy] || null;
+const E = EN || { gap: 0.75, idea: 0.14, kw: 0.08, sent: 0.055, long: 0.045, fill: 0.032, sweepEvery: 2, tick: true };
 const pulses = (() => {
   const ev = [];
-  beats.forEach((b) => { if (b.t0 > 0.3) ev.push({ t: b.t0, a: 0.1, b: 0.16, idea: true }); });
+  beats.forEach((b) => { if (b.t0 > 0.3) ev.push({ t: b.t0, a: E.idea, b: E.idea * 1.6, idea: true }); });
   const kset = new Set(plan.keywords || []);
   const ws = tr.words.filter((w) => w.t0 < D - 0.3);
   ws.forEach((w, i) => {
     const gap = i ? w.t0 - ws[i - 1].t1 : 1;
-    if (kset.has(ntok(w.w))) ev.push({ t: w.t0, a: 0.055, b: 0.08 });
-    else if (i && gap >= 0.5) ev.push({ t: w.t0, a: 0.035, b: 0.045 });
+    const tok = ntok(w.w);
+    if (kset.has(tok)) ev.push({ t: w.t0, a: E.kw, b: E.kw * 1.45, kw: true });
+    else if (i && gap >= 0.45) ev.push({ t: w.t0, a: E.sent, b: E.sent * 1.3 });
+    else if (E.long && tok.length >= 7) ev.push({ t: w.t0, a: E.long, b: E.long * 1.3 });
   });
   ev.sort((x, y) => x.t - y.t);
   const out = [];
   for (const e of ev) {
     const last = out[out.length - 1];
-    if (last && e.t - last.t < 1.4) { if (e.idea && !last.idea) out[out.length - 1] = e; continue; }
+    if (last && e.t - last.t < E.gap) { if ((e.idea && !last.idea) || (e.a > last.a * 1.4 && e.t - last.t > E.gap * 0.5)) out[out.length - 1] = e; continue; }
     out.push(e);
   }
-  return out.slice(0, 160);
+  // remplissage : jamais plus de 2 s sans mouvement (mode nerveux)
+  if (E.fill) {
+    const filled = [];
+    for (let i = 0; i < out.length; i++) {
+      filled.push(out[i]);
+      const next = out[i + 1] ? out[i + 1].t : D;
+      for (let t = out[i].t + 2.0; t < next - 0.9; t += 2.0) filled.push({ t, a: E.fill, b: E.fill * 1.3 });
+    }
+    out.length = 0; out.push(...filled);
+  }
+  return out.slice(0, 320);
 })();
 const pulseExpr = (T, key, k) => pulses.map((e) => `if(gte(${T},${e.t.toFixed(3)}),${e[key].toFixed(3)}*exp(-${k}*(${T}-${e.t.toFixed(3)})),0)`).join("+") || "0";
-console.log(`Impulsions synchronisées : ${pulses.length} (zoom + lumière)`);
+console.log(`Impulsions synchronisées : ${pulses.length} (zoom + lumière, énergie « ${energy} »)`);
 // 1) barre de progression
 const pbY = H - 8;
 ass.shape(2, 0, D, 0, pbY, `m 0 0 l ${W} 0 l ${W} 8 l 0 8`, c1(P.white, 0.3));
@@ -257,7 +282,7 @@ pulses.forEach((e, k) => {
   if (!seg) return;
   const w = winFor(seg.state);
   ass.shape(5, e.t, e.t + 0.45, w.x, w.y, rrect(w.w, w.h, 26), `\\1a&HFF&${c3(e.idea ? P.gold : P.white, 0.7)}\\bord${e.idea ? 30 : 18}\\blur14\\fad(0,380)`);
-  if (k % 3 === 0 && e.t + 0.9 < D) {
+  if (k % E.sweepEvery === 0 && e.t + 0.9 < D) {
     // balayage de lumière douce sur toute l'image
     const x0 = rtl ? W + 220 : -220, x1 = rtl ? -220 : W + 220;
     ass.add(0, e.t, e.t + 0.9, `{\\an7\\move(${x0},0,${x1},0,0,850)\\bord0\\shad0\\blur30${c1(P.white, e.idea ? 0.16 : 0.1)}\\p1}m 0 0 l ${dirX * 170} 0 l ${dirX * 110} ${H} l ${dirX * -60} ${H}{\\p0}`);
@@ -564,6 +589,7 @@ const sfxEvents = [{ type: "impact", t: 0.1, v: 0.9 }];
 beats.forEach((b, i) => { if (i > 0 || b.t0 + 0.2 >= HOOK_END) sfxEvents.push({ type: "ding", t: Math.max(b.t0, HOOK_END - 0.2), v: 0.35 }); });
 merged.forEach((s, i) => { if (i > 0) sfxEvents.push({ type: "whoosh", t: s.t0, v: 0.55 }); });
 emojiOverlays.filter((e) => e.kind === "sticker").forEach((e) => sfxEvents.push({ type: "pop", t: e.t0, v: 0.5 }));
+if (E.tick) pulses.filter((e) => e.kw).slice(0, 120).forEach((e) => sfxEvents.push({ type: "pop", t: e.t, v: 0.16 }));
 
 // ---------- masques arrondis (une image fixe, générée par ffmpeg) ----------
 function mask(name, w, h, r) {

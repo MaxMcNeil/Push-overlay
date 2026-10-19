@@ -37,6 +37,8 @@ horizontale, vertical si elle est verticale. Tout tourne sur GitHub (ffmpeg), sa
 - Erreur Gemini 403 dans le log = clé restreinte/refusée → crée une nouvelle clé sur https://aistudio.google.com/apikey (« Create API key in new project ») et remets le secret.
 
 ### Mode sous-titres
+Niveau d'énergie des zooms/lumières : `{"energy":"high"}` (défaut, nerveux), `"normal"` ou `"low"`. Les deux réglages se combinent : `{"subtitles":"full","energy":"high"}`.
+
 Fichier optionnel `content/style.json` : `{"subtitles":"full"}` (défaut : tous les mots), `{"subtitles":"keywords"}` (seulement les mots importants, en grand, quand ils sont prononcés) ou `{"subtitles":"off"}`.
 
 ## Utilisation
