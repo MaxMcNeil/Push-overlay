@@ -41,6 +41,12 @@ Niveau d'énergie des zooms/lumières : `{"energy":"high"}` (défaut, nerveux), 
 
 Fichier optionnel `content/style.json` : `{"subtitles":"full"}` (défaut : tous les mots), `{"subtitles":"keywords"}` (seulement les mots importants, en grand, quand ils sont prononcés) ou `{"subtitles":"off"}`.
 
+### Variété des styles (anti « contenu répétitif »)
+Chaque vidéo reçoit automatiquement un **thème** différent parmi 8 (palette de couleurs, dégradé, sons, transitions, animation des sous-titres, forme des puces, côté de la carte, arrondis, barre de progression…), plus de petites variations aléatoires propres à chaque vidéo. **Chaque chaîne a son propre historique** (FR/EN/IT d'un côté, arabe de l'autre) : un thème ne revient pas avant au moins 4 vidéos sur la même chaîne ; les deux chaînes peuvent partager un même thème. L'historique est enregistré dans `state/style-history.json` (commit automatique `[skip ci]`).
+- Forcer un thème : `content/style.json` → `{"style":"sunset"}` (thèmes : neon-night, sunset, emerald, royal, crimson, ocean, mono-gold, candy). Revenir à l'ancien rendu fixe : `{"style":"default"}`.
+- Le logo et la place de la headline ne changent jamais (identité de chaîne). Le thème utilisé est noté dans `theme.json` (Artifacts).
+- À toi de varier aussi le fond (commentaire, angles, durée) : la politique de YouTube vise surtout les contenus produits en série sans valeur ajoutée propre.
+
 ## Utilisation
 1. *Releases → Draft a new release* → joins ta vidéo (n'importe quel nom) → **Publish**.
 2. Attends la fin du workflow (onglet Actions).

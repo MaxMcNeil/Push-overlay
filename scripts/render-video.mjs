@@ -10,7 +10,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { execFileSync, spawnSync } from "child_process";
 import { CONTENT_DIR, OUTPUT_DIR, findVideo, probeVideo, listFontFiles } from "./lib/util.mjs";
-import { Ass, PALETTE as P, c1, c3, c4, rrect, esc } from "./lib/ass.mjs";
+import { Ass, PALETTE, c1, c3, c4, rrect, esc } from "./lib/ass.mjs";
 import { measureTokens, measureLine } from "./lib/measure.mjs";
 
 const plan = JSON.parse(readFileSync(`${CONTENT_DIR}/plan.json`, "utf8"));
@@ -35,6 +35,17 @@ const padSec = Math.max(0, D - decV);
 if (padSec > 0.5) console.log(`⚠ La piste image s'arrête ${padSec.toFixed(1)} s avant la fin : dernière image figée pour ne pas couper le son.`);
 const lang = plan.lang;
 const rtl = lang === "ar";
+
+// ---------- thème visuel (voir lib/styles.mjs) : absent = rendu d'origine ----------
+const theme = (() => {
+  try { return existsSync(`${CONTENT_DIR}/theme.json`) ? JSON.parse(readFileSync(`${CONTENT_DIR}/theme.json`, "utf8")) : {}; } catch { return {}; }
+})();
+const T = { radius: 26, transition: "bands", subAnim: "pop", bullet: "dot", flip: false, progress: "bottom", subsDy: 0, sfx: 0, energy: "high", frame: "white", pill: "round", hueSpeed: 24, sat: 1.6, tilt: true, ...theme };
+const MV = { hueOffset: 0, subsScale: 1, flareScale: 1, bgDark: -0.2, gradSpeed: 0.03, ...(theme.micro || {}) };
+const P = { ...PALETTE, ...(theme.palette || {}) };
+const GRAD = theme.gradient || ["FF2E63", "08D9D6", "7B2FF7"];
+const layoutRTL = rtl !== !!T.flip; // côté de la carte d'analyse (le logo et la headline ne bougent pas : identité de chaîne)
+console.log(`Thème : ${theme.id || "neon-night (défaut)"}`);
 
 // ---------- orientation : suit la vidéo (ou content/orientation.txt si présent) ----------
 let vertical = info.height > info.width;
@@ -132,6 +143,7 @@ const colorize = (line, keys, hi, base) =>
 // ---------- géométrie ----------
 const even = (n) => Math.round(n / 2) * 2;
 const mirror = (r) => (rtl ? { ...r, x: W - r.x - r.w } : r);
+const mirrorW = (r) => (layoutRTL ? { ...r, x: W - r.x - r.w } : r);
 function fit(box, a) {
   let w, h;
   if (box.w / box.h > a) { h = box.h; w = h * a; } else { w = box.w; h = w / a; }
@@ -157,8 +169,11 @@ const bannerR = (() => {
   return rtl ? { ...b, x: W - b.x - b.w } : b;
 })();
 const winNormal = fit(mirror(L.normalBox), srcAspect);
-const panelR = mirror(L.panel);
-const winSplitFinal = fit(mirror(L.splitBox), srcAspect);
+const panelR = mirrorW(L.panel);
+const winSplitFinal = fit(mirrorW(L.splitBox), srcAspect);
+// variations propres à la vidéo / au thème
+L.subsSize = Math.round(L.subsSize * MV.subsScale);
+L.subsY += Math.min(T.subsDy || 0, vertical ? 30 : 0);
 
 // ---------- timeline des états : normal / split / punch ----------
 const beats = plan.beats.filter((b) => b.t0 < D).map((b) => ({ ...b, t1: Math.min(b.t1, D) }));
@@ -227,7 +242,7 @@ const ntok = (t) => String(t).replace(/[\p{P}\p{S}\u00A0]/gu, "").replace(/[\u06
 const energy = (() => {
   try {
     const st = existsSync(`${CONTENT_DIR}/style.json`) ? JSON.parse(readFileSync(`${CONTENT_DIR}/style.json`, "utf8")) : {};
-    return String(process.env.ENERGY || st.energy || "high").toLowerCase();
+    return String(process.env.ENERGY || st.energy || T.energy || "high").toLowerCase();
   } catch { return "high"; }
 })();
 const EN = {
@@ -270,7 +285,7 @@ const pulses = (() => {
 const pulseExpr = (T, key, k) => pulses.map((e) => `if(gte(${T},${e.t.toFixed(3)}),${e[key].toFixed(3)}*exp(-${k}*(${T}-${e.t.toFixed(3)})),0)`).join("+") || "0";
 console.log(`Impulsions synchronisées : ${pulses.length} (zoom + lumière, énergie « ${energy} »)`);
 // 1) barre de progression
-const pbY = H - 8;
+const pbY = T.progress === "top" ? 0 : H - 8;
 ass.shape(2, 0, D, 0, pbY, `m 0 0 l ${W} 0 l ${W} 8 l 0 8`, c1(P.white, 0.3));
 ass.shape(3, 0, D, rtl ? W : 0, pbY, `m 0 0 l ${W} 0 l ${W} 8 l 0 8`,
   `${c1(P.gold)}${rtl ? "\\an9" : ""}\\fscx1\\t(0,${Math.round(D * 1000)},\\fscx100)`);
@@ -281,7 +296,7 @@ pulses.forEach((e, k) => {
   const seg = merged.find((m) => e.t >= m.t0 && e.t < m.t1);
   if (!seg) return;
   const w = winFor(seg.state);
-  ass.shape(5, e.t, e.t + 0.45, w.x, w.y, rrect(w.w, w.h, 26), `\\1a&HFF&${c3(e.idea ? P.gold : P.white, 0.7)}\\bord${e.idea ? 30 : 18}\\blur14\\fad(0,380)`);
+  ass.shape(5, e.t, e.t + 0.45, w.x, w.y, rrect(w.w, w.h, T.radius), `\\1a&HFF&${c3(e.idea ? P.gold : P.white, 0.7)}\\bord${Math.round((e.idea ? 30 : 18) * MV.flareScale)}\\blur14\\fad(0,380)`);
   if (k % E.sweepEvery === 0 && e.t + 0.9 < D) {
     // balayage de lumière douce sur toute l'image
     const x0 = rtl ? W + 220 : -220, x1 = rtl ? -220 : W + 220;
@@ -293,18 +308,30 @@ for (const s of merged) {
   const w = winFor(s.state);
   const glow = s.state === "punch" ? P.gold : P.cyan;
   const pulse = `\\t(0,500,\\bord24\\blur20)\\t(500,1000,\\bord14\\blur12)\\t(1000,1500,\\bord24\\blur20)\\t(1500,2000,\\bord14\\blur12)`;
-  ass.shape(1, s.t0, s.t1, w.x, w.y, rrect(w.w, w.h, 26), `\\1a&HFF&${c3(glow, 0.6)}\\bord14\\blur12\\fad(120,0)${pulse}`);
-  ass.shape(4, s.t0, s.t1, w.x, w.y, rrect(w.w, w.h, 26), `\\1a&HFF&${c3(P.white, 0.95)}\\bord4\\blur0.6\\fad(120,0)`);
+  ass.shape(1, s.t0, s.t1, w.x, w.y, rrect(w.w, w.h, T.radius), `\\1a&HFF&${c3(glow, 0.6)}\\bord14\\blur12\\fad(120,0)${pulse}`);
+  ass.shape(4, s.t0, s.t1, w.x, w.y, rrect(w.w, w.h, T.radius), `\\1a&HFF&${c3(T.frame === "accent" ? P.accent : T.frame === "gold" ? P.gold : P.white, 0.95)}\\bord4\\blur0.6\\fad(120,0)`);
 }
 
-// 3) transitions : flash + deux bandes de couleur qui balaient l'écran
+// 3) transitions (type selon le thème) : "bands" = flash + bandes ; "wipe" = rideau de couleur ; "flash2" = double flash
 merged.forEach((s, i) => {
   if (i === 0) return;
-  ass.shape(9, s.t0, s.t0 + 0.28, 0, 0, FULL, `${c1(P.white, 0.4)}\\t(0,260,\\1a&HFF&)`);
   const x0 = rtl ? W + 320 : -320, x1 = rtl ? -320 : W + 320;
   const band = (wd, sk) => `m 0 0 l ${dirX * wd} 0 l ${dirX * (wd - sk)} ${H} l ${dirX * -sk} ${H}`;
-  ass.add(9, s.t0, s.t0 + 0.46, `{\\an7\\move(${x0},0,${x1},0,0,440)\\bord0\\shad0${c1(P.accent, 0.9)}\\p1}${band(240, 220)}{\\p0}`);
-  ass.add(9, s.t0 + 0.07, s.t0 + 0.5, `{\\an7\\move(${x0},0,${x1},0,0,440)\\bord0\\shad0${c1(P.cyan, 0.85)}\\p1}${band(110, 220)}{\\p0}`);
+  if (T.transition === "wipe") {
+    // le rideau couvre l'écran pile à l'instant du changement de plan
+    const a = Math.max(0, s.t0 - 0.23);
+    const cw = W + 260;
+    const xs = rtl ? W + 60 : -cw - 60, xe = rtl ? -cw - 60 : W + 60;
+    ass.add(9, a, a + 0.5, `{\\an7\\move(${xs},0,${xe},0,0,460)\\bord0\\shad0${c1(P.accent, 0.96)}\\p1}m 0 0 l ${cw} 0 l ${cw} ${H} l 0 ${H}{\\p0}`);
+    ass.add(9, a + 0.06, a + 0.54, `{\\an7\\move(${xs},0,${xe},0,0,460)\\bord0\\shad0${c1(P.cyan, 0.9)}\\p1}m 0 0 l ${cw - 90} 0 l ${cw - 90} ${H} l 0 ${H}{\\p0}`);
+  } else if (T.transition === "flash2") {
+    ass.shape(9, s.t0, s.t0 + 0.26, 0, 0, FULL, `${c1(P.white, 0.45)}\\t(0,240,\\1a&HFF&)`);
+    ass.shape(9, s.t0 + 0.14, s.t0 + 0.42, 0, 0, FULL, `${c1(P.accent, 0.4)}\\t(0,260,\\1a&HFF&)`);
+  } else {
+    ass.shape(9, s.t0, s.t0 + 0.28, 0, 0, FULL, `${c1(P.white, 0.4)}\\t(0,260,\\1a&HFF&)`);
+    ass.add(9, s.t0, s.t0 + 0.46, `{\\an7\\move(${x0},0,${x1},0,0,440)\\bord0\\shad0${c1(P.accent, 0.9)}\\p1}${band(240, 220)}{\\p0}`);
+    ass.add(9, s.t0 + 0.07, s.t0 + 0.5, `{\\an7\\move(${x0},0,${x1},0,0,440)\\bord0\\shad0${c1(P.cyan, 0.85)}\\p1}${band(110, 220)}{\\p0}`);
+  }
 });
 
 // 4) logo (cadre accent)
@@ -350,7 +377,7 @@ merged.filter((s) => s.state === "split").forEach((s) => {
   const b = beats[s.beat];
   const p = panelR;
   const t0 = s.t0 + 0.12, t1 = s.t1;
-  const slide = rtl ? -90 : 90;
+  const slide = layoutRTL ? -90 : 90;
   const pad = 30;
   ass.add(1, t0, t1, `{\\an7\\move(${p.x + slide},${p.y},${p.x},${p.y},0,300)\\bord5${c3(P.cyan)}${c1(P.card, 0.94)}\\shad0\\fad(220,160)\\p1}${rrect(p.w, p.h, 28)}{\\p0}`);
   // liseré supérieur coloré qui grandit
@@ -367,7 +394,7 @@ merged.filter((s) => s.state === "split").forEach((s) => {
   const pillH = lh(kEm) * 0.72 + 16;
   const kW = Math.min(innerW - iconSize - 12, tw(kicker, kEm) + 44);
   const kx = rtl ? p.x + p.w - pad - kW : p.x + pad;
-  ass.add(2, t0, t1, `{\\an7\\move(${kx + slide},${y},${kx},${y},0,300)\\bord0\\shad0${c1(P.accent)}\\fad(220,160)\\p1}${rrect(kW, pillH, pillH / 2)}{\\p0}`);
+  ass.add(2, t0, t1, `{\\an7\\move(${kx + slide},${y},${kx},${y},0,300)\\bord0\\shad0${c1(P.accent)}\\fad(220,160)\\p1}${rrect(kW, pillH, T.pill === "square" ? 8 : pillH / 2)}{\\p0}`);
   ass.add(3, t0, t1, `{\\an5\\move(${kx + kW / 2 + slide},${y + pillH / 2},${kx + kW / 2},${y + pillH / 2},0,300)\\fs${fs(kEm)}\\bord0\\shad0${c1(P.white)}\\fad(220,160)}${kicker}`);
   y += pillH + 26;
 
@@ -385,6 +412,7 @@ merged.filter((s) => s.state === "split").forEach((s) => {
   const room = availBottom - y - titleH - sepH;
   const pts = b.points && b.points.length ? b.points : null;
   const bulletW = 46;
+  const BUL = { dot: "m 12 0 b 19 0 24 5 24 12 b 24 19 19 24 12 24 b 5 24 0 19 0 12 b 0 5 5 0 12 0", square: "m 3 3 l 21 3 l 21 21 l 3 21", arrow: "m 2 3 l 22 12 l 2 21" }[T.bullet] || "m 12 0 b 19 0 24 5 24 12 b 24 19 19 24 12 24 b 5 24 0 19 0 12 b 0 5 5 0 12 0";
   let bEm = vertical ? 54 : 46;
   const layout = (em) => (pts ? pts.map((pt) => wrapPx(pt, innerW - bulletW, em)) : [wrapPx(b.text, innerW, em)]);
   const heightOf = (gs, em) => gs.reduce((n, l) => n + l.length, 0) * lh(em) * 1.06 + (pts ? (gs.length - 1) * lh(em) * 0.5 : 0);
@@ -411,7 +439,7 @@ merged.filter((s) => s.state === "split").forEach((s) => {
     const gStart = t0 + 0.45 + gi * Math.min(0.6, Math.max(0.2, (t1 - t0 - 1.4) / groups.length));
     if (pts && gStart < t1 - 0.2) {
       const cx = rtl ? tx - 13 : tx + 13, cy = ly + lh(bEm) * 0.5;
-      ass.add(3, gStart, t1, `{\\an7\\pos(${cx - 12},${cy - 12})\\bord0\\shad0${c1(P.gold)}\\fscx0\\fscy0\\t(0,220,\\fscx100\\fscy100)\\fad(0,160)\\p1}m 12 0 b 19 0 24 5 24 12 b 24 19 19 24 12 24 b 5 24 0 19 0 12 b 0 5 5 0 12 0{\\p0}`);
+      ass.add(3, gStart, t1, `{\\an7\\pos(${cx - 12},${cy - 12})\\bord0\\shad0${c1(P.gold)}\\fscx0\\fscy0\\t(0,220,\\fscx100\\fscy100)\\fad(0,160)\\p1}${BUL}{\\p0}`);
     }
     lines.forEach((ln, k) => {
       const yy = ly + k * lineH;
@@ -424,9 +452,9 @@ merged.filter((s) => s.state === "split").forEach((s) => {
 
   // flèche pulsante qui relie la carte à la vidéo
   const w = winSplitFinal;
-  const ax = rtl ? w.x - 4 : w.x + w.w + 4;
+  const ax = layoutRTL ? w.x - 4 : w.x + w.w + 4;
   const ay = w.y + w.h / 2;
-  const dir = rtl ? 1 : -1; // pointe vers la vidéo
+  const dir = layoutRTL ? 1 : -1; // pointe vers la vidéo
   const arrow = `m 0 0 l ${-dir * 24} ${-27} l ${-dir * 24} ${-11} l ${-dir * 40} ${-11} l ${-dir * 40} ${11} l ${-dir * 24} ${11} l ${-dir * 24} ${27}`;
   ass.add(8, t0 + 0.2, t1, `{\\an7\\pos(${ax},${ay})\\bord2${c3(P.dark)}\\shad0${c1(P.accent)}\\fad(200,150)\\t(0,500,\\fscx125\\fscy125)\\t(500,1000,\\fscx100\\fscy100)\\t(1000,1500,\\fscx125\\fscy125)\\t(1500,2000,\\fscx100\\fscy100)\\p1}${arrow}{\\p0}`);
 });
@@ -455,7 +483,7 @@ merged.filter((s) => s.state !== "split").forEach((s) => {
   const size = vertical ? 130 : 140;
   emojiOverlays.push({
     file: emojiFile(b.emoji), kind: "sticker", t0: s.t0 + 0.2, t1: Math.min(s.t1, s.t0 + 3.6),
-    x: rtl ? w.x - size * 0.35 : w.x + w.w - size * 0.65, y: w.y - size * 0.45, size,
+    x: layoutRTL ? w.x - size * 0.35 : w.x + w.w - size * 0.65, y: w.y - size * 0.45, size,
   });
   [0, 1].forEach((k) => {
     emojiOverlays.push({
@@ -505,7 +533,7 @@ if (subMode === "keywords") {
     const nextStart = pi < phrases.length - 1 ? phrases[pi + 1][0].t0 - 0.05 : Infinity;
     const prevEnd = pi > 0 ? phrases[pi - 1][phrases[pi - 1].length - 1].t1 + 0.02 : 0;
     const hi = SUB_COLORS[pi % SUB_COLORS.length];
-    const tilt = pi % 2 ? 2 : -2;
+    const tilt = T.tilt ? (pi % 2 ? 2 : -2) : 0;
     ph.forEach((w, i) => {
       const t0 = i === 0 ? Math.max(prevEnd, w.t0 - 0.05) : w.t0;
       let t1 = i < ph.length - 1 ? ph[i + 1].t0 : Math.min(w.t1 + 0.18, nextStart);
@@ -524,16 +552,22 @@ if (subMode === "keywords") {
           xr -= w + gapPx(em);
           const act = j === i;
           const sc = act ? 114 : 100;
-          const popT = i === 0 ? `\\fscx70\\fscy70\\t(0,90,\\fscx118\\fscy118)\\t(90,170,\\fscx${sc}\\fscy${sc})` : `\\fscx${sc}\\fscy${sc}`;
-          return `{\\an5\\pos(${xc},${yc})\\fs${fs(em)}${popT}\\bord${vertical ? 8 : 7}${c3(P.black)}\\shad3${c4(P.black, 0.6)}${c1(act ? hi : P.white)}}${t}`;
+          let popT = i === 0 ? `\\fscx70\\fscy70\\t(0,90,\\fscx118\\fscy118)\\t(90,170,\\fscx${sc}\\fscy${sc})` : `\\fscx${sc}\\fscy${sc}`;
+          let posT = `\\pos(${xc},${yc})`;
+          if (i === 0 && T.subAnim === "drop") popT = `\\fscx140\\fscy140\\t(0,130,\\fscx${sc}\\fscy${sc})`;
+          if (i === 0 && T.subAnim === "slide") { popT = `\\fscx${sc}\\fscy${sc}`; posT = `\\move(${xc},${yc + 34},${xc},${yc},0,130)`; }
+          return `{\\an5${posT}\\fs${fs(em)}${popT}\\bord${vertical ? 8 : 7}${c3(P.black)}\\shad3${c4(P.black, 0.6)}${c1(act ? hi : P.white)}}${t}`;
         });
       } else {
         const line = ph.map((x, j) => {
           const wd = esc(x.w);
           return j === i ? `{${c1(hi)}\\fscx114\\fscy114}${wd}{${c1(P.white)}\\fscx100\\fscy100}` : wd;
         }).join(" ");
-        const pop = i === 0 ? "\\fscx70\\fscy70\\t(0,90,\\fscx116\\fscy116)\\t(90,170,\\fscx100\\fscy100)" : "";
-        texts = [`{\\an2\\pos(${cx},${L.subsY})\\frz${tilt}\\fs${fs(L.subsSize)}${pop}\\bord${vertical ? 8 : 7}${c3(P.black)}\\shad3${c4(P.black, 0.6)}${c1(P.white)}}${line}`];
+        let pop = i === 0 ? "\\fscx70\\fscy70\\t(0,90,\\fscx116\\fscy116)\\t(90,170,\\fscx100\\fscy100)" : "";
+        let posL = `\\pos(${cx},${L.subsY})`;
+        if (i === 0 && T.subAnim === "drop") pop = "\\fscx140\\fscy140\\t(0,130,\\fscx100\\fscy100)";
+        if (i === 0 && T.subAnim === "slide") posL = `\\move(${cx},${L.subsY + 34},${cx},${L.subsY},0,130)`;
+        texts = [`{\\an2${posL}\\frz${tilt}\\fs${fs(L.subsSize)}${pop}\\bord${vertical ? 8 : 7}${c3(P.black)}\\shad3${c4(P.black, 0.6)}${c1(P.white)}}${line}`];
       }
       evs.push({ t0, t1, texts });
     });
@@ -579,11 +613,18 @@ function synth(name, src) {
   execFileSync("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", src, "-ar", "48000", "-ac", "2", out]);
   return out;
 }
+const SV = [
+  { w: [500, 7000, 9], p: 880, d: 1320, i: 62 },
+  { w: [300, 5000, 6], p: 660, d: 988, i: 55 },
+  { w: [800, 9000, 14], p: 1046, d: 1568, i: 70 },
+  { w: [400, 4000, 4], p: 740, d: 1174, i: 48 },
+][Math.abs(T.sfx || 0) % 4];
+const vn = `v${Math.abs(T.sfx || 0) % 4}`;
 const SFX = {
-  whoosh: synth("whoosh", "anoisesrc=d=0.55:c=pink:r=48000:a=0.9,highpass=f=500,lowpass=f=7000,afade=t=in:d=0.22,afade=t=out:st=0.2:d=0.35,tremolo=f=9:d=0.5"),
-  pop: synth("pop", "sine=f=880:d=0.16:r=48000,afade=t=out:st=0.02:d=0.14,volume=1.2"),
-  ding: synth("ding", "sine=f=1320:d=0.55:r=48000,aecho=0.7:0.6:60:0.4,afade=t=out:st=0.05:d=0.5"),
-  impact: synth("impact", "sine=f=62:d=0.7:r=48000,afade=t=out:st=0.05:d=0.65,volume=2.2"),
+  whoosh: synth(`whoosh-${vn}`, `anoisesrc=d=0.55:c=pink:r=48000:a=0.9,highpass=f=${SV.w[0]},lowpass=f=${SV.w[1]},afade=t=in:d=0.22,afade=t=out:st=0.2:d=0.35,tremolo=f=${SV.w[2]}:d=0.5`),
+  pop: synth(`pop-${vn}`, `sine=f=${SV.p}:d=0.16:r=48000,afade=t=out:st=0.02:d=0.14,volume=1.2`),
+  ding: synth(`ding-${vn}`, `sine=f=${SV.d}:d=0.55:r=48000,aecho=0.7:0.6:60:0.4,afade=t=out:st=0.05:d=0.5`),
+  impact: synth(`impact-${vn}`, `sine=f=${SV.i}:d=0.7:r=48000,afade=t=out:st=0.05:d=0.65,volume=2.2`),
 };
 const sfxEvents = [{ type: "impact", t: 0.1, v: 0.9 }];
 beats.forEach((b, i) => { if (i > 0 || b.t0 + 0.2 >= HOOK_END) sfxEvents.push({ type: "ding", t: Math.max(b.t0, HOOK_END - 0.2), v: 0.35 }); });
@@ -593,7 +634,7 @@ if (E.tick) pulses.filter((e) => e.kw).slice(0, 120).forEach((e) => sfxEvents.pu
 
 // ---------- masques arrondis (une image fixe, générée par ffmpeg) ----------
 function mask(name, w, h, r) {
-  const out = `assets/mask-${name}-${w}x${h}.png`;
+  const out = `assets/mask-${name}-${w}x${h}-r${r}.png`;
   if (existsSync(out)) return out;
   const ix = `max(max(${r}-X,X-(${w - 1}-${r})),0)`;
   const iy = `max(max(${r}-Y,Y-(${h - 1}-${r})),0)`;
@@ -601,8 +642,8 @@ function mask(name, w, h, r) {
   execFileSync("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", `color=c=white:s=${w}x${h}:d=1,format=gray,geq=lum='${expr}'`, "-frames:v", "1", out]);
   return out;
 }
-const mNormal = mask("n", winNormal.w, winNormal.h, 26);
-const mSplit = mask("s", winSplitFinal.w, winSplitFinal.h, 26);
+const mNormal = mask("n", winNormal.w, winNormal.h, T.radius);
+const mSplit = mask("s", winSplitFinal.w, winSplitFinal.h, T.radius);
 const mLogo = mask("l", L.logo.w, L.logo.h, 26);
 
 // ---------- emojis disponibles ----------
@@ -633,8 +674,8 @@ const gw = even(W / 6), gh = even(H / 6);
 const hasPunch = merged.some((s) => s.state === "punch");
 f.push(`[${iSrc}:v]setpts=PTS-STARTPTS,fps=${FPS},setsar=1${padSec > 0.5 ? `,tpad=stop_mode=clone:stop_duration=${(padSec + 1).toFixed(2)}` : ""},split=${hasPunch ? 4 : 3}[bgs][nv0][sv0]${hasPunch ? "[pv0]" : ""}`);
 // fond : copie floutée + dérive de teinte + dégradé animé (basse résolution = rapide)
-f.push(`[bgs]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},gblur=sigma=5,eq=brightness='-0.2+${pulseExpr("t", "b", 6)}':saturation=1.6:eval=frame,hue=h='24*t':s=1.15,scale=${W}:${H}:flags=bicubic,format=yuv420p[bg0]`);
-f.push(`gradients=size=${gw}x${gh}:rate=${FPS}:duration=${D.toFixed(3)}:c0=0xFF2E63:c1=0x08D9D6:c2=0x7B2FF7:nb_colors=3:speed=0.03,scale=${W}:${H}:flags=bicubic,format=yuv420p[grad]`);
+f.push(`[bgs]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},gblur=sigma=5,eq=brightness='${MV.bgDark}+${pulseExpr("t", "b", 6)}':saturation=${T.sat}:eval=frame,hue=h='${T.hueSpeed}*t+${MV.hueOffset % 50}':s=1.15,scale=${W}:${H}:flags=bicubic,format=yuv420p[bg0]`);
+f.push(`gradients=size=${gw}x${gh}:rate=${FPS}:duration=${D.toFixed(3)}:${GRAD.map((c, i) => `c${i}=0x${c}`).join(":")}:nb_colors=${GRAD.length}:speed=${MV.gradSpeed},scale=${W}:${H}:flags=bicubic,format=yuv420p[grad]`);
 f.push(`[bg0][grad]blend=all_mode=overlay:all_opacity=0.5[bg]`);
 f.push(`[${iMN}:v]format=gray,split=${hasPunch ? 2 : 1}${hasPunch ? "[mn1][mn2]" : "[mn1]"}`);
 // travelling lent dans la fenêtre : la vidéo "vit" même quand le plan est fixe

@@ -137,12 +137,24 @@ jobs:
       - name: Emojis
         run: python3 scripts/make-emoji.py content/plan.json
 
+      - name: Choisir le style (varie d'une vidéo à l'autre, par chaîne)
+        continue-on-error: true   # protège le cœur : sans thème, le rendu d'origine est utilisé
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          mkdir -p state
+          git fetch --depth=1 origin "$DEFAULT_BRANCH" || true
+          git show "origin/$DEFAULT_BRANCH:state/style-history.json" > state/style-history.json 2>/dev/null || echo '{}' > state/style-history.json
+          node scripts/pick-style.mjs
+
       - name: Rendu vidéo
         run: node scripts/render-video.mjs
         timeout-minutes: 60
 
       - name: Garder le scénario avec la vidéo
-        run: cp content/plan.json output/plan.json
+        run: |
+          cp content/plan.json output/plan.json
+          cp content/theme.json output/theme.json 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         with:
@@ -161,3 +173,23 @@ jobs:
           cp output/final.mp4 "$NAME"
           gh release upload renders "$NAME" --repo "${{ github.repository }}" --clobber
           echo "### ✅ Vidéo prête : release « renders » → $NAME" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Mémoriser le style utilisé (pour ne pas le répéter trop vite)
+        continue-on-error: true
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          cp state/style-history.json /tmp/style-history.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$DEFAULT_BRANCH"
+          git checkout -f -B style-history "origin/$DEFAULT_BRANCH"
+          mkdir -p state
+          cp /tmp/style-history.json state/style-history.json
+          git add state/style-history.json
+          if git diff --cached --quiet; then
+            echo "Historique inchangé."
+          else
+            git commit -m "chore: historique des styles [skip ci]"
+            git push origin "HEAD:$DEFAULT_BRANCH" || (git pull --rebase origin "$DEFAULT_BRANCH" && git push origin "HEAD:$DEFAULT_BRANCH") || echo "⚠ historique non poussé (non bloquant)"
+          fi
