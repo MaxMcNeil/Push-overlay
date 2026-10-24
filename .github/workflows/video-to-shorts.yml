@@ -68,7 +68,8 @@ env:
 jobs:
   # ------------------------------------------------------------------ 1. source → transcription → sélection → découpe
   select:
-    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'shorts')
+    # tag qui commence par « short » ou titre qui contient « short » (majuscules ignorées)
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'short') || contains(github.event.release.name, 'short')
     runs-on: ubuntu-24.04   # figé : ubuntu-latest passe à Ubuntu 26 (oct. 2026), non testé
     timeout-minutes: 300
     outputs:
@@ -103,7 +104,10 @@ jobs:
           SOURCE: ${{ inputs.source }}
           EVENT_TAG: ${{ github.event.release.tag_name }}
           RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
-        run: bash scripts/shorts/fetch-source.sh
+        run: |
+          bash scripts/shorts/fetch-source.sh
+          T=$(grep -E '^tag=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2-)
+          bash scripts/release-status.sh "$T" run "Découpe en shorts en cours… [suivre](https://github.com/$REPO/actions/runs/${{ github.run_id }})"
 
       - name: Cache whisper.cpp (repli si Groq indisponible)
         id: whisper-cache
@@ -310,3 +314,17 @@ jobs:
             sleep $((i * 4))
           done
           echo "⚠ historique non poussé (non bloquant)"
+
+  # ------------------------------------------------------------------ état « ❌ ÉCHEC » sur la release déposée
+  signal-failure:
+    needs: [select, render, publish]
+    if: failure()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Signaler l'échec sur la release déposée
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          bash scripts/release-status.sh "${{ needs.select.outputs.src_tag || github.event.release.tag_name }}" fail "La découpe a échoué : [voir le détail](https://github.com/$REPO/actions/runs/${{ github.run_id }})."

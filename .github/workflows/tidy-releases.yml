@@ -1,0 +1,40 @@
+name: Ranger les releases
+
+# Un clic (Actions → Ranger les releases → Run workflow) : renomme clairement les releases de résultats,
+# supprime les anciennes sorties en double et affiche l'état du dépôt. Rien n'est supprimé parmi tes vidéos déposées.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  tidy:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Ranger
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -u
+          if gh release view renders --repo "$REPO" >/dev/null 2>&1; then
+            gh release edit renders --repo "$REPO" --title "🎬 RÉSULTAT — Vidéo montée" --prerelease && echo "renders → 🎬 RÉSULTAT — Vidéo montée"
+          fi
+          if gh release view out-shorts --repo "$REPO" >/dev/null 2>&1; then
+            gh release edit out-shorts --repo "$REPO" --title "✂️ RÉSULTAT — Shorts" --prerelease && echo "out-shorts → ✂️ RÉSULTAT — Shorts"
+          fi
+          for t in $(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tagName' | grep -E '^out-shorts-' || true); do
+            echo "Ancienne sortie supprimée : $t"; gh release delete "$t" --repo "$REPO" -y --cleanup-tag || true
+          done
+          {
+            echo "### Releases du dépôt"
+            echo "| Release | Rôle |"; echo "|---|---|"
+            gh release list --repo "$REPO" --limit 100 --json tagName,name -q '.[] | "\(.tagName)\t\(.name)"' | while IFS=$'\t' read -r t n; do
+              case "$t" in
+                renders) r="🎬 résultat Build Video";; out-shorts) r="✂️ résultat Shorts";;
+                [Ss]hort*) r="📥 vidéo déposée pour les Shorts";; *) r="📥 vidéo déposée pour Build Video";;
+              esac
+              echo "| \`$t\` — $n | $r |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

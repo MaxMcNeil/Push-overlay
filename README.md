@@ -1,5 +1,18 @@
 # Push-overlay — vidéo brute → vidéo finale montée (+ Shorts)
 
+## 📥 Déposer une vidéo (mémo)
+
+| Je veux… | Tag de la release (le titre est libre) | Le résultat arrive dans |
+|---|---|---|
+| **la vidéo entière montée** | `video-001`, `video-002`… (tout tag **sans** « short ») | release **🎬 RÉSULTAT — Vidéo montée** |
+| **des Shorts** à partir d'une vidéo longue | `shorts-001`, `shorts-002`… (commence par **shorts**) | release **✂️ RÉSULTAT — Shorts** |
+
+*Releases → Draft a new release → Choose a tag (taper le tag → Create new tag) → joindre la vidéo → Publish.*
+Vidéo de plus de 2 Go (shorts) : release sans pièce jointe, avec le **lien Google Drive** dans la description.
+Erreur de tag ? Pas grave : un tag **ou un titre** qui contient « short » part vers les Shorts, tout le reste vers le montage complet.
+Ta release affiche l'état dans son titre : **⏳ EN COURS** → **✅ TERMINÉ** (lien vers le résultat) ou **❌ ÉCHEC** (lien vers l'erreur).
+Chaque nouveau résultat remplace le précédent, et les anciennes vidéos déposées sont supprimées automatiquement.
+
 Deux workflows :
 - **Build Video** : une vidéo → la même vidéo montée (`final.mp4`). Release « normale » (tag libre, sauf `shorts…`).
 - **Video to Shorts** : une vidéo longue → plusieurs **Shorts verticaux** montés. Release dont le **tag commence par `shorts`**, ou lien Google Drive.

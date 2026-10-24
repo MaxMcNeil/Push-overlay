@@ -68,7 +68,7 @@ if [ -n "$SRC" ]; then
   fi
 elif [ -n "${EVENT_TAG:-}" ]; then from_release "$EVENT_TAG"
 else
-  T=$(gh release list --repo "$REPO" --limit 40 --json tagName -q '.[].tagName' | grep -E '^shorts' | head -n1 || true)
+  T=$(gh release list --repo "$REPO" --limit 40 --json tagName -q '.[].tagName' | grep -iE '^short' | head -n1 || true)
   [ -n "$T" ] || die "Aucune source : remplis le champ « source » (lien Drive) ou publie une release dont le tag commence par « shorts »."
   from_release "$T"
 fi

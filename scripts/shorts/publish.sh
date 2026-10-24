@@ -76,12 +76,15 @@ for t in $(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tag
   echo "Suppression de l'ancienne release de sortie : $t"; gh release delete "$t" --repo "$REPO" -y --cleanup-tag || true
 done
 # anciennes releases d'ENTRÉE shorts* (on garde seulement celle qui vient d'être traitée)
-for t in $(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tagName' | grep -E '^shorts' || true); do
+for t in $(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tagName' | grep -iE '^short' || true); do
   [ "$t" = "${SRC_TAG:-}" ] && continue
   echo "Suppression de l'ancienne vidéo déposée : $t"; gh release delete "$t" --repo "$REPO" -y --cleanup-tag || true
 done
 if [ ${#to_release[@]} -gt 0 ]; then
-  gh release create "$TAG" --repo "$REPO" --prerelease --title "Shorts — ${BASE:-video} (${STAMP})" --notes-file "$NOTES" \
+  { printf '%s\n' "✂️ **Tes derniers shorts** (vidéo source : ${BASE:-?}, $(date -u +%d/%m/%Y)) — remplacés à chaque nouvelle découpe." "" \
+      "**Pour découper une autre vidéo** : Releases → *Draft a new release* → tag \`shorts-001\` (doit commencer par « shorts ») → joins la vidéo, ou colle son lien Google Drive dans la description → *Publish*." \
+      "**Pour un montage complet (pas des shorts)** : tag SANS « short », ex. \`video-001\`." "" "---" ""; cat "$NOTES"; } > /tmp/out-notes.md
+  gh release create "$TAG" --repo "$REPO" --prerelease --title "✂️ RÉSULTAT — Shorts" --notes-file /tmp/out-notes.md \
     || { echo "::error::Création de la release impossible"; exit 1; }
   for f in "${to_release[@]}"; do
     for i in 1 2 3; do gh release upload "$TAG" "$f" --repo "$REPO" --clobber && break; echo "réessai $i…"; sleep 5; done
@@ -104,3 +107,4 @@ if [ ${#to_drive[@]} -gt 0 ]; then
   fi
 fi
 echo "" >> "$SUM"; cat "$NOTES" >> "$SUM"
+bash scripts/release-status.sh "${SRC_TAG:-}" ok "${#FILES[@]} short(s) prêts → release [✂️ RÉSULTAT — Shorts](https://github.com/$REPO/releases/tag/out-shorts)"
