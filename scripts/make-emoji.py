@@ -13,6 +13,7 @@ FONT_CANDIDATES = [
 plan = json.load(open(sys.argv[1], encoding="utf-8"))
 emojis = {b.get("emoji", "") for b in plan["beats"]} | {plan.get("hookEmoji", "")}
 emojis.discard("")
+emojis |= {"\U0001F446", "\U0001F514", "\U0001F44D"}  # 👆 🔔 👍 : écran de fin des shorts (main, cloche, j'aime)
 font_path = next((p for p in FONT_CANDIDATES if os.path.exists(p)), None)
 if not font_path:
     print("NotoColorEmoji introuvable : pas d'emojis incrustés (le montage continue).")

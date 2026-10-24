@@ -6,7 +6,8 @@ name: Video to Shorts
 #   • Release GitHub dont le TAG commence par "shorts" (ex. shorts-001) avec la vidéo en pièce jointe ;
 #   • la même Release SANS pièce jointe, avec le lien Google Drive dans sa description (vidéo trop lourde) ;
 #   • Actions → Video to Shorts → Run workflow → champ « source » : lien Google Drive, tag de release ou lien direct .mp4.
-# RÉSULTATS : chaque short < SHORTS_RELEASE_MAX_MB (1900 Mo) → Release « out-shorts-… » ; plus lourd → Google Drive
+# RÉSULTATS : chaque short < SHORTS_RELEASE_MAX_MB (1900 Mo) → Release « out-shorts » (remplacée à chaque lancement,
+# les anciennes vidéos déposées « shorts… » sont supprimées) ; plus lourd → Google Drive
 # (secret RCLONE_CONF requis). Réglable avec le champ « destination ».
 
 on:
@@ -73,6 +74,7 @@ jobs:
     outputs:
       matrix: ${{ steps.cut.outputs.matrix }}
       base: ${{ steps.src.outputs.base }}
+      src_tag: ${{ steps.src.outputs.tag }}
       lang: ${{ steps.cut.outputs.lang }}
     steps:
       - uses: actions/checkout@v4
@@ -158,14 +160,14 @@ jobs:
             shorts/selection.json
             shorts/source-transcript.json
             shorts/clip-*/meta.json
-          retention-days: 14
+          retention-days: 3
 
       - name: Envoyer chaque passage au rendu
         uses: actions/upload-artifact@v4
         with:
           name: clips
           path: shorts/clip-*/
-          retention-days: 3
+          retention-days: 1
           compression-level: 0
 
   # ------------------------------------------------------------------ 2. un job de rendu par short (en parallèle)
@@ -248,7 +250,7 @@ jobs:
         with:
           name: short-${{ matrix.id }}
           path: out/
-          retention-days: 14
+          retention-days: 3
           compression-level: 0
 
   # ------------------------------------------------------------------ 3. dépôt : Release ou Google Drive selon la taille
@@ -277,6 +279,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           BASE: ${{ needs.select.outputs.base }}
+          SRC_TAG: ${{ needs.select.outputs.src_tag }}
           DESTINATION: ${{ inputs.destination || 'auto' }}
           RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
           GDRIVE_FOLDER: ${{ vars.GDRIVE_FOLDER || 'Push-overlay/shorts' }}

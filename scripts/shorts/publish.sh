@@ -10,7 +10,7 @@ shopt -s nullglob
 MAX_MB="${SHORTS_RELEASE_MAX_MB:-1900}"
 DEST="${DESTINATION:-auto}"
 STAMP=$(date -u +%Y%m%d-%H%M)
-TAG="out-shorts-${STAMP}-${BASE:-video}"
+TAG="out-shorts"   # une seule release de sortie : chaque lancement remplace la précédente
 FILES=(out/short-*.mp4)
 SUM="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
@@ -27,7 +27,7 @@ if [ -n "${RCLONE_CONF:-}" ]; then
   REMOTE=$(grep -m1 -oE '^\[[^]]+\]' ~/.config/rclone/rclone.conf | tr -d '[]')
   [ -n "$REMOTE" ] && rclone about "$REMOTE:" >/dev/null 2>&1 && DRIVE_OK=1 || echo "::warning::RCLONE_CONF présent mais Google Drive injoignable (jeton expiré ?)."
 fi
-DRIVE_DIR="${GDRIVE_FOLDER:-Push-overlay/shorts}/${STAMP}-${BASE:-video}"
+DRIVE_DIR="${GDRIVE_FOLDER:-Push-overlay/shorts}/derniers"   # dossier unique, vidé à chaque dépôt
 
 to_release=(); to_drive=()
 for f in "${FILES[@]}"; do
@@ -71,6 +71,15 @@ for (const c of sel.clips) {
 JS
 
 # ---------- Release ----------
+# anciennes releases de sortie (out-shorts, out-shorts-<date>…) supprimées avant de publier les nouvelles
+for t in $(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tagName' | grep -E '^out-shorts' || true); do
+  echo "Suppression de l'ancienne release de sortie : $t"; gh release delete "$t" --repo "$REPO" -y --cleanup-tag || true
+done
+# anciennes releases d'ENTRÉE shorts* (on garde seulement celle qui vient d'être traitée)
+for t in $(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tagName' | grep -E '^shorts' || true); do
+  [ "$t" = "${SRC_TAG:-}" ] && continue
+  echo "Suppression de l'ancienne vidéo déposée : $t"; gh release delete "$t" --repo "$REPO" -y --cleanup-tag || true
+done
 if [ ${#to_release[@]} -gt 0 ]; then
   gh release create "$TAG" --repo "$REPO" --prerelease --title "Shorts — ${BASE:-video} (${STAMP})" --notes-file "$NOTES" \
     || { echo "::error::Création de la release impossible"; exit 1; }
@@ -88,6 +97,7 @@ if [ ${#to_drive[@]} -gt 0 ]; then
     echo "::error::${#to_drive[@]} fichier(s) trop lourd(s) pour une release, et Google Drive n'est pas configuré (secret RCLONE_CONF). Ils restent dans les Artifacts du run (14 jours)."
     echo "### ⚠ ${#to_drive[@]} fichier(s) seulement dans les Artifacts (Drive non configuré)" >> "$SUM"
   else
+    rclone delete "$REMOTE:$DRIVE_DIR" -q 2>/dev/null || true   # les anciens shorts partent à la corbeille Drive
     for f in "${to_drive[@]}"; do rclone copy "$f" "$REMOTE:$DRIVE_DIR" --retries 3 -q || echo "::error::Envoi Drive échoué : $f"; done
     rclone copy "$NOTES" "$REMOTE:$DRIVE_DIR" -q || true
     echo "### ✅ ${#to_drive[@]} short(s) sur Google Drive : $DRIVE_DIR" >> "$SUM"

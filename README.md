@@ -70,11 +70,12 @@ source, description, hashtags) ; plus lourd → **Google Drive** (`Push-overlay/
 **Identité visuelle des Shorts** (volontairement différente de Build Video, rendu par `scripts/render-short.mjs`) :
 vidéo **plein écran** avec jump-zoom à chaque idée, transitions glitch/secousse, **sous-titres karaoké** (police Anton / Lalezar,
 mot actif sur boîte, en couleur ou souligné), **étiquette de chapitre** inclinée façon tampon + emoji réaction, **puces** qui s'empilent,
-barre de progression **segmentée**, disclaimers en légende fixe qui alterne, sons propres. 6 styles qui tournent (`lib/short-styles.mjs`).
+barre de progression **segmentée**, sons propres (pas de bandeau de disclaimers dans les shorts). 6 styles qui tournent (`lib/short-styles.mjs`).
 **Jamais de texte sur le visage** ni sur des sous-titres déjà incrustés (détectés par `scripts/face-box.py` ; nos sous-titres se coupent
 alors tout seuls), ni dans les zones couvertes par l'interface YouTube/TikTok.
-**« Vidéo complète en lien »** : badge « EXTRAIT · VIDÉO COMPLÈTE EN LIEN » après le hook, puis carte de fin « VIDÉO COMPLÈTE — lien juste
-en dessous » avec flèches vers le bas. Le récapitulatif donne le texte à coller en description ; sur YouTube, relie la vidéo longue avec
+**« Vidéo complète en lien »** : badge « EXTRAIT · VIDÉO COMPLÈTE EN LIEN » après le hook. **Écran de fin** (≈ 4-5 s) : la vidéo se réduit
+en carte en haut (visage entier), une main clique « S'ABONNER » → « ABONNÉ ✓ » + cloche, le pouce « J'AIME » éclate (sons clic, ding, pop),
+et « VIDÉO COMPLÈTE — lien juste en dessous » s'affiche en grand en bas, au-dessus de la zone couverte par YouTube. Le récapitulatif donne le texte à coller en description ; sur YouTube, relie la vidéo longue avec
 « Vidéo associée » (c'est le lien cliquable affiché sous le short).
 Les coupes tombent toujours en fin de phrase, jamais sur le début de la phrase suivante (fondu audio de 0,2 s).
 
@@ -93,6 +94,11 @@ Les secrets **`GEMINI_API_KEYS`** et **`GROQ_API_KEYS`** acceptent plusieurs cl�
 Une clé saturée ou refusée est sautée automatiquement, et chaque short commence par une clé différente. Les anciens secrets
 `GEMINI_API_KEY` / `GROQ_API_KEY` restent valables. ⚠ Le quota gratuit est compté **par projet Google** : crée chaque clé Gemini avec
 « Create API key in new project ». Les secrets d'un autre dépôt (ex. Vid-o-presse-finder) ne sont pas visibles ici : il faut les recréer.
+
+### Pas de surcharge de GitHub
+Chaque nouveau résultat **remplace** le précédent : Build Video garde une seule vidéo dans la release « renders », Video to Shorts une seule
+release « out-shorts » (et un seul dossier Drive `…/derniers`). Les anciennes vidéos déposées sont supprimées après traitement (on garde
+la dernière). Les Artifacts des runs sont gardés 3 jours (1 jour pour les passages intermédiaires).
 
 ## Utilisation (Build Video)
 1. *Releases → Draft a new release* → joins ta vidéo (n'importe quel nom) → **Publish**.

@@ -44,6 +44,7 @@ from_drive() {
 from_release() {
   local tag="$1" body link
   NAME=$(gh release view "$tag" --repo "$REPO" --json assets -q '.assets[].name' 2>/dev/null | grep -Ei "$VIDEO_RE" | head -n1 || true)
+  out tag "$tag"
   if [ -n "$NAME" ]; then
     echo "Release $tag — vidéo : $NAME"
     gh release download "$tag" --repo "$REPO" --pattern "$NAME" --dir input --clobber

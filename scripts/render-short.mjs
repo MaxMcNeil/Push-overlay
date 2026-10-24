@@ -7,9 +7,11 @@
 //   • ÉTIQUETTE DE CHAPITRE inclinée façon tampon (au lieu du bandeau de headline) + emoji réaction ;
 //   • PUCES (chips) qui s'empilent (au lieu des cartes split-screen) ;
 //   • barre de progression SEGMENTÉE (une case par idée, façon stories) ;
-//   • disclaimers en légende fixe qui alterne (au lieu du ticker défilant) — toujours visibles ;
-//   • badge « extrait — vidéo complète en lien » puis carte de fin « VIDÉO COMPLÈTE ↓ lien juste en dessous » ;
-//   • sons propres (swish, clics, boom, montée finale).
+//   • badge « extrait — vidéo complète en lien » après le hook ;
+//   • ÉCRAN DE FIN : la vidéo se réduit en carte en haut (visage entier visible), en bas « S'ABONNER » cliqué par une
+//     main + cloche + « J'AIME » qui éclate, et « VIDÉO COMPLÈTE ↓ lien juste en dessous » en grand — dans la zone
+//     visible au-dessus de l'interface YouTube, sans rien poser sur le visage ;
+//   • sons propres (swish, clics, boom, montée, ding, pop).
 // Aucun texte sur le visage ni sur des sous-titres déjà incrustés (content/face.json, scripts/face-box.py), et rien
 // dans les zones couvertes par l'interface YouTube Shorts / TikTok / Reels.
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
@@ -48,6 +50,10 @@ const TXT = {
   it: { badge: "ESTRATTO · VIDEO COMPLETO NEL LINK", cta1: "VIDEO COMPLETO", cta2: "Link qui sotto" },
   ar: { badge: "مقتطف · الفيديو الكامل في الرابط", cta1: "الفيديو الكامل", cta2: "الرابط في الأسفل" },
 }[lang] || null;
+const LBL = {
+  fr: { sub: "S'ABONNER", subbed: "ABONNÉ", like: "J'AIME" }, en: { sub: "SUBSCRIBE", subbed: "SUBSCRIBED", like: "LIKE" },
+  it: { sub: "ISCRIVITI", subbed: "ISCRITTO", like: "MI PIACE" }, ar: { sub: "اشترك", subbed: "تم الاشتراك", like: "أعجبني" },
+}[lang] || { sub: "S'ABONNER", subbed: "ABONNÉ", like: "J'AIME" };
 const T_ = TXT || { badge: "EXTRAIT · VIDÉO COMPLÈTE EN LIEN", cta1: "VIDÉO COMPLÈTE", cta2: "Lien juste en dessous" };
 
 // ---------- police (condensée, très différente de Build Video) ----------
@@ -74,9 +80,8 @@ console.log(`Police : ${font.name}`);
 const up = (t) => (ST.upper && !rtl ? String(t).toLocaleUpperCase(lang) : String(t));
 const nb = (t) => t.replace(/ +([?!:;»؟])/g, " $1").replace(/(«) +/g, "$1 ");
 const tokensOf = (text) => nb(esc(text)).split(/ +/).filter(Boolean);
-const disclaimers = plan.disclaimers || [];
 const allTok = new Set(["●", "|"]);
-[plan.hook && up(plan.hook), T_.badge, up(T_.cta1), T_.cta2, ...disclaimers,
+[plan.hook && up(plan.hook), T_.badge, up(T_.cta1), T_.cta2, up(LBL.sub), up(LBL.subbed), up(LBL.like),
   ...plan.beats.flatMap((b) => [b.headline && up(b.headline), ...(b.points || [])]), ...tr.words.map((w) => up(w.w))]
   .filter(Boolean).forEach((t) => tokensOf(t).forEach((k) => allTok.add(k)));
 const TM = measureTokens({ tokens: [...allTok], font, dir: CONTENT_DIR });
@@ -120,8 +125,8 @@ try { const f = JSON.parse(readFileSync(`${CONTENT_DIR}/face.json`, "utf8")); if
 const bandOf = (b) => ({ y0: Math.min(fy(b.y0, Zmax), fy(b.y0, 1)) - 16, y1: Math.max(fy(b.y1, Zmax), fy(b.y1, 1)) + 16 });
 const autoSubsOff = !!caps && !process.env.SUBTITLES;
 const subsOn = !autoSubsOff && String(process.env.SUBTITLES || "full") !== "off";
-// place nécessaire : disclaimers (76) + sous-titres (150) + étiquette (120) + marges
-const NEED = 76 + 10 + (subsOn ? 160 : 0) + 130;
+// place nécessaire : sous-titres (150) + étiquette (120) + marges
+const NEED = (subsOn ? 160 : 0) + 140;
 let prot, gaps;
 function computeGaps() {
   prot = [{ what: "visage", ...bandOf(face) }];
@@ -145,12 +150,9 @@ const room = (g) => g.y1 - g.y0;
 const take = (g, h, fromBottom) => { const y = fromBottom ? g.y1 - h : g.y0; if (fromBottom) g.y1 -= h + 10; else g.y0 += h + 10; return y; };
 const lowest = (min) => gaps.filter((g) => room(g) >= min).sort((a, b) => b.y1 - a.y1)[0];
 const faceMid = (prot[0].y0 + prot[0].y1) / 2;
-// 1) disclaimers (toujours visibles)
-const gD = lowest(84);
-const DISC = { y: gD ? take(gD, 76, true) : SAFE_BOT - 76, h: 76 };
 // 2) sous-titres
 const CAP_H = 150;
-let CAP_Y = DISC.y - CAP_H / 2 - 10;
+let CAP_Y = SAFE_BOT - CAP_H / 2 - 10;
 if (subsOn) { const g = lowest(CAP_H); if (g) CAP_Y = take(g, CAP_H, true) + CAP_H / 2; }
 if (autoSubsOff) console.log("Sous-titres déjà incrustés dans la vidéo : nos sous-titres sont désactivés.");
 // 3) étiquette de chapitre
@@ -163,13 +165,14 @@ const CHIPS = gC ? { y0: gC.y0, y1: gC.y1 } : null;
 // 5) hook / badge / carte de fin : la plus grande zone disponible autour de l'étiquette
 const near = CHIPS && Math.abs(CHIPS.y0 - (TAG.y + TAG.h)) < 30;
 const BIG = near ? { y0: TAG.y, y1: CHIPS.y1 } : CHIPS && CHIPS.y1 - CHIPS.y0 > TAG.h ? CHIPS : { y0: TAG.y, y1: TAG.y + TAG.h };
-console.log(`Zones : étiquette y=${Math.round(TAG.y)} h=${Math.round(TAG.h)}, ${CHIPS ? `puces y=${Math.round(CHIPS.y0)}→${Math.round(CHIPS.y1)}` : "pas de puces (pas de place hors visage)"}, ${subsOn ? `sous-titres y≈${Math.round(CAP_Y)}` : "sans sous-titres"}, disclaimers y=${Math.round(DISC.y)}`);
+console.log(`Zones : étiquette y=${Math.round(TAG.y)} h=${Math.round(TAG.h)}, ${CHIPS ? `puces y=${Math.round(CHIPS.y0)}→${Math.round(CHIPS.y1)}` : "pas de puces (pas de place hors visage)"}, ${subsOn ? `sous-titres y≈${Math.round(CAP_Y)}` : "sans sous-titres"}`);
 
 // ---------- timeline ----------
 const beats = plan.beats.filter((b) => b.t0 < D - 0.3).map((b) => ({ ...b, t1: Math.min(b.t1, D) }));
 const HOOK_END = plan.hook ? Math.min(3.0, D * 0.3) : 0.2;
-const CTA_LEN = Math.min(3.6, Math.max(2.2, D * 0.12));
-const CTA_START = Math.max(HOOK_END + 2, D - CTA_LEN);
+// écran de fin (abonnement + j'aime + vidéo complète)
+const END_LEN = Math.min(5, Math.max(3.6, D * 0.1));
+const CTA_START = Math.max(HOOK_END + 2, D - END_LEN);
 // badge « extrait » : dans la zone des puces s'il y en a une, sinon à la place de la 1re étiquette (qui attend)
 const BADGE = { t0: HOOK_END + 0.1, t1: Math.min(HOOK_END + 3.2, CTA_START - 0.3) };
 const BADGE_IN_TAG = !CHIPS;
@@ -277,33 +280,10 @@ if (plan.hook) {
   }
 }
 
-// 6) carte de fin : VIDÉO COMPLÈTE + « lien juste en dessous » + flèches qui rebondissent vers le bas
-{
-  const t0 = CTA_START, t1 = D;
-  const zone = BIG, cy = (zone.y0 + zone.y1) / 2;
-  // taille calculée pour que le bloc (titre + ligne + flèches) remplisse la zone libre
-  const e1 = Math.round(Math.min(96, Math.max(34, ((zone.y1 - zone.y0) - 34) / (LF * 1.42)))), e2 = Math.round(e1 * 0.5);
-  const l1 = up(T_.cta1), w1 = lineW(l1, e1) + 70, h1 = lh(e1) * 0.9 + 20;
-  const y1 = cy - (h1 + lh(e2) * 0.95) / 2;
-  ass.add(30, t0, t1, `{\\an7\\pos(${Math.round((W - w1) / 2)},${Math.round(y1)})\\bord0\\shad8${c4("#000000", 0.5)}${c1(P.accent)}\\org(${W / 2},${Math.round(y1 + h1 / 2)})\\frz${ST.tagTilt}\\fscx0\\fscy0\\t(0,180,\\fscx110\\fscy110)\\t(180,300,\\fscx100\\fscy100)\\p1}${tagShape(w1, h1)}{\\p0}`);
-  for (const g of lineGeom(l1, e1, W / 2)) ass.add(31, t0 + 0.05, t1, `{\\an5\\pos(${Math.round(g.xc)},${Math.round(y1 + h1 / 2)})\\fs${fsz(e1)}\\bord0\\shad0${c1(P.accentText)}\\org(${W / 2},${Math.round(y1 + h1 / 2)})\\frz${ST.tagTilt}\\fscx0\\fscy0\\t(0,180,\\fscx110\\fscy110)\\t(180,300,\\fscx100\\fscy100)}${g.t}`);
-  const y2 = y1 + h1 + lh(e2) * 0.5;
-  const w2 = lineW(T_.cta2, e2);
-  ass.add(31, t0 + 0.25, t1, `{\\an5\\pos(${Math.round(W / 2 - 34)},${Math.round(y2)})\\fs${fsz(e2)}\\bord5${c3("#000000")}\\shad0${c1("#FFFFFF")}\\fad(200,0)}${T_.cta2}`);
-  const chev = (s) => `m 0 0 l ${s} ${s * 0.75} l ${s * 2} 0 l ${s * 2} ${s * 0.4} l ${s} ${s * 1.15} l 0 ${s * 0.4}`;
-  // flèches qui rebondissent vers le bas, à droite de la ligne (prennent peu de hauteur)
-  const ax = Math.round(W / 2 - 34 + w2 / 2 + 22), cs = Math.max(12, Math.round(e2 * 0.42));
-  [0, 1].forEach((k) => {
-    const yy = Math.round(y2 - cs * 0.9 + k * cs * 0.85);
-    const bounce = [0, 1, 2, 3, 4, 5].map((j) => `\\t(${j * 300},${j * 300 + 150},\\fry0\\1a&H${k ? "60" : "00"}&)\\t(${j * 300 + 150},${j * 300 + 300},\\1a&H${k ? "C0" : "90"}&)`).join("");
-    ass.add(31, t0 + 0.4 + k * 0.12, t1, `{\\an7\\move(${ax},${yy},${ax},${yy + Math.round(cs * 0.5)},0,600)\\bord3${c3("#000000")}\\shad0${c1(P.accent)}${bounce}\\p1}${chev(cs)}{\\p0}`);
-  });
-}
-
 // 7) sous-titres karaoké
 if (subsOn) {
   const em = rtl ? 74 : 84;
-  const words = tr.words.filter((w) => w.t0 < D);
+  const words = tr.words.filter((w) => w.t0 < CTA_START - 0.1); // écran de fin : sous-titres masqués
   const phrases = []; let cur = [];
   for (const w of words) {
     const gap = cur.length ? w.t0 - cur[cur.length - 1].t1 : 0;
@@ -321,7 +301,7 @@ if (subsOn) {
     const geo = lineGeom(line, em, W / 2);
     ph.forEach((w, i) => {
       const t0 = i === 0 ? Math.max(prevEnd, w.t0 - 0.04) : w.t0;
-      let t1 = i < ph.length - 1 ? ph[i + 1].t0 : Math.min(w.t1 + 0.2, next - 0.03);
+      let t1 = Math.min(CTA_START, i < ph.length - 1 ? ph[i + 1].t0 : Math.min(w.t1 + 0.2, next - 0.03));
       if (t1 - t0 < 0.1) t1 = t0 + 0.1;
       const ins = i === 0 ? `\\move(%X,${Math.round(CAP_Y + 26)},%X,${Math.round(CAP_Y)},0,110)\\fad(70,0)` : `\\pos(%X,${Math.round(CAP_Y)})`;
       const texts = [];
@@ -341,19 +321,68 @@ if (subsOn) {
   evs.forEach((e) => e.texts.forEach((x) => ass.add(x.layer, e.t0, e.t1, x.text)));
 }
 
-// 8) disclaimers : légende fixe qui alterne (toujours un disclaimer à l'écran)
-if (disclaimers.length) {
-  const per = 7;
-  let k = 0;
-  for (let t = 0; t < D; t += per, k++) {
-    const txt = disclaimers[k % disclaimers.length];
-    const { lines, em } = wrapFit(txt, 1000, 21, 3, 15);
-    const h = lines.length * lh(em) + 12;
-    const y = DISC.y + DISC.h - h;
-    const t1 = Math.min(D, t + per);
-    ass.add(34, t, t1, `{\\an7\\pos(0,${Math.round(y)})\\bord0\\shad0${c1("#000000", 0.55)}\\p1}m 0 0 l ${W} 0 l ${W} ${Math.round(h)} l 0 ${Math.round(h)}{\\p0}`);
-    ass.add(35, t, t1, `{\\an8\\pos(${W / 2},${Math.round(y + 6)})\\fs${fsz(em)}\\bord0\\shad0${c1("#FFFFFF", 0.92)}\\fad(${t ? 250 : 0},250)}${lines.join("\\N")}`);
+// 8) ÉCRAN DE FIN : carte vidéo en haut, abonnement + j'aime + vidéo complète en bas (zone visible au-dessus de
+//    l'interface YouTube : ni sous le titre/la chaîne en bas, ni sous la colonne de boutons à droite)
+const EK = 0.46; // taille de la carte vidéo
+const CARD = { w: Math.round((W * EK) / 2) * 2, h: Math.round((H * EK) / 2) * 2 };
+CARD.x = Math.round((W - CARD.w) / 2); CARD.y = 140;
+const ET = CTA_START;
+const END = (() => {
+  const top = CARD.y + CARD.h + 22, bot = SAFE_BOT;
+  const subH = 96;
+  return { subY: top, subH, ctaY0: top + subH + 18, ctaY1: bot };
+})();
+const TAP = ET + 1.15, LIKE = ET + 1.75;
+if (D - ET > 2) {
+  // cadre de la carte vidéo
+  ass.add(40, ET + 0.05, D, `{\\an7\\pos(${CARD.x - 6},${CARD.y - 6})\\1a&HFF&\\bord6${c3(P.accent)}\\shad0\\fad(250,0)\\p1}${rrect(CARD.w + 12, CARD.h + 12, 30)}{\\p0}`);
+  // bouton S'ABONNER → (main qui clique) → ABONNÉ ✓ + cloche
+  const em = rtl ? 40 : 44;
+  const sw = Math.max(lineW(up(LBL.sub), em), lineW(up(LBL.subbed), em) + 46) + 70, sh = END.subH;
+  const LOGO_E = logoFile ? 84 : 0;
+  const rowW = LOGO_E + (LOGO_E ? 18 : 0) + sw + 40 + 150;
+  const rx = Math.round((W - 120 - rowW) / 2) + 20; // un peu à gauche du centre : la colonne de boutons YouTube est à droite
+  const sx = rx + (LOGO_E ? LOGO_E + 18 : 0), sy = END.subY;
+  END.logo = LOGO_E ? { x: rx, y: Math.round(sy + (sh - LOGO_E) / 2), s: LOGO_E } : null;
+  const pop = `\\fscx0\\fscy0\\t(0,200,\\fscx108\\fscy108)\\t(200,300,\\fscx100\\fscy100)`;
+  const org = `\\org(${Math.round(sx + sw / 2)},${Math.round(sy + sh / 2)})`;
+  ass.add(41, ET + 0.3, TAP, `{\\an7\\pos(${sx},${sy})\\bord0\\shad6${c4("#000000", 0.4)}${c1("#E8192C")}${org}${pop}\\t(${Math.round((TAP - ET - 0.3) * 1000) - 120},${Math.round((TAP - ET - 0.3) * 1000)},\\fscx92\\fscy92)\\p1}${rrect(sw, sh, sh / 2)}{\\p0}`);
+  ass.add(42, ET + 0.35, TAP, `{\\an5\\pos(${Math.round(sx + sw / 2)},${Math.round(sy + sh / 2)})\\fs${fsz(em)}\\bord0\\shad0${c1("#FFFFFF")}${org}${pop}}${up(LBL.sub)}`);
+  ass.add(41, TAP, D, `{\\an7\\pos(${sx},${sy})\\bord0\\shad6${c4("#000000", 0.4)}${c1("#3A3A3A")}${org}\\fscx92\\fscy92\\t(0,160,\\fscx104\\fscy104)\\t(160,260,\\fscx100\\fscy100)\\p1}${rrect(sw, sh, sh / 2)}{\\p0}`);
+  const ck = `m 0 14 l 8 6 l 18 16 l 36 -2 l 44 6 l 18 32`;
+  ass.add(42, TAP, D, `{\\an7\\pos(${Math.round(sx + 30)},${Math.round(sy + sh / 2 - 15)})\\bord0\\shad0${c1(P.accent)}\\fscx0\\fscy0\\t(60,220,\\fscx70\\fscy70)\\p1}${ck}{\\p0}`);
+  ass.add(42, TAP, D, `{\\an5\\pos(${Math.round(sx + sw / 2 + 22)},${Math.round(sy + sh / 2)})\\fs${fsz(em)}\\bord0\\shad0${c1("#FFFFFF")}${org}}${up(LBL.subbed)}`);
+  // ondes du clic
+  [0, 1].forEach((k) => ass.add(43, TAP + k * 0.08, TAP + 0.6, `{\\an5\\pos(${Math.round(sx + sw * 0.62)},${Math.round(sy + sh * 0.62)})\\1a&HFF&\\bord4${c3("#FFFFFF")}\\shad0\\fscx20\\fscy20\\t(0,500,\\fscx${160 + k * 60}\\fscy${160 + k * 60}\\3a&HFF&)\\p1}m -30 0 b -30 -17 -17 -30 0 -30 b 17 -30 30 -17 30 0 b 30 17 17 30 0 30 b -17 30 -30 17 -30 0{\\p0}`));
+  // main qui vient cliquer, cloche qui sonne, pouce « j'aime » qui éclate
+  emojiOverlays.push({ file: "assets/emoji/1f446.png", kind: "hand", t0: ET + 0.55, t1: TAP + 0.45, x: sx + sw * 0.62 - 40, y: sy + sh * 0.62 - 10, size: 96, from: { dx: 240, dy: 260 }, arrive: TAP - 0.05 });
+  emojiOverlays.push({ file: "assets/emoji/1f514.png", kind: "bell", t0: TAP + 0.1, t1: D, x: sx + sw + 18, y: sy + (sh - 84) / 2, size: 84 });
+  const lx = sx + sw + 18 + 84 + 26, ly = sy - 8;
+  emojiOverlays.push({ file: "assets/emoji/1f44d.png", kind: "like", t0: LIKE, t1: D, x: lx, y: ly, size: 112 });
+  for (let k = 0; k < 10; k++) { // éclats autour du pouce
+    const a = (k / 10) * Math.PI * 2, cx = lx + 56, cy = ly + 56;
+    ass.add(43, LIKE + 0.05, LIKE + 0.75, `{\\an5\\move(${cx},${cy},${Math.round(cx + Math.cos(a) * 110)},${Math.round(cy + Math.sin(a) * 110)},0,450)\\bord0\\shad0${c1(k % 2 ? P.accent : "#FFFFFF")}\\fad(0,300)\\p1}m -7 0 b -7 -4 -4 -7 0 -7 b 4 -7 7 -4 7 0 b 7 4 4 7 0 7 b -4 7 -7 4 -7 0{\\p0}`);
   }
+  ass.add(43, LIKE + 0.1, D, `{\\an8\\pos(${Math.round(lx + 56)},${Math.round(ly + 112)})\\fs${fsz(24)}\\bord3${c3("#000000")}\\shad0${c1("#FFFFFF")}\\fad(150,0)}${up(LBL.like)}`);
+  // VIDÉO COMPLÈTE ↓ lien juste en dessous — en grand, en bas
+  const zone = END.ctaY1 - END.ctaY0;
+  const e1 = Math.round(Math.min(92, Math.max(40, (zone - 30) / (LF * 1.45)))), e2 = Math.round(e1 * 0.5);
+  const l1 = up(T_.cta1), w1 = Math.min(W - 160, lineW(l1, e1) + 80), h1 = lh(e1) * 0.9 + 22;
+  const cxC = W / 2 - 40;
+  const y1 = END.ctaY0 + (zone - (h1 + lh(e2) * 1.0)) / 2;
+  const orgC = `\\org(${Math.round(cxC)},${Math.round(y1 + h1 / 2)})`;
+  const stamp = `${orgC}\\frz${ST.tagTilt}\\fscx0\\fscy0\\t(0,180,\\fscx110\\fscy110)\\t(180,300,\\fscx100\\fscy100)`;
+  ass.add(44, ET + 0.5, D, `{\\an7\\pos(${Math.round(cxC - w1 / 2)},${Math.round(y1)})\\bord0\\shad8${c4("#000000", 0.5)}${c1(P.accent)}${stamp}\\p1}${tagShape(w1, h1)}{\\p0}`);
+  for (const g of lineGeom(l1, e1, cxC)) ass.add(45, ET + 0.55, D, `{\\an5\\pos(${Math.round(g.xc)},${Math.round(y1 + h1 / 2)})\\fs${fsz(e1)}\\bord0\\shad0${c1(P.accentText)}${stamp}}${g.t}`);
+  const y2 = y1 + h1 + lh(e2) * 0.55, w2 = lineW(T_.cta2, e2);
+  ass.add(45, ET + 0.8, D, `{\\an5\\pos(${Math.round(cxC - 24)},${Math.round(y2)})\\fs${fsz(e2)}\\bord5${c3("#000000")}\\shad0${c1("#FFFFFF")}\\fad(200,0)}${T_.cta2}`);
+  const cs = Math.max(14, Math.round(e2 * 0.45)), ax = Math.round(cxC - 24 + w2 / 2 + 20);
+  const chev = `m 0 0 l ${cs} ${cs * 0.75} l ${cs * 2} 0 l ${cs * 2} ${cs * 0.4} l ${cs} ${cs * 1.15} l 0 ${cs * 0.4}`;
+  [0, 1].forEach((k) => {
+    const yy = Math.round(y2 - cs * 0.9 + k * cs * 0.85);
+    const blink = [0, 1, 2, 3, 4, 5, 6, 7].map((j) => `\\t(${j * 300},${j * 300 + 150},\\1a&H${k ? "60" : "00"}&)\\t(${j * 300 + 150},${j * 300 + 300},\\1a&H${k ? "C0" : "90"}&)`).join("");
+    ass.add(45, ET + 0.95 + k * 0.12, D, `{\\an7\\pos(${ax},${yy})\\bord3${c3("#000000")}\\shad0${c1(P.accent)}${blink}\\p1}${chev}{\\p0}`);
+  });
 }
 
 // ---------- sons propres aux shorts ----------
@@ -369,11 +398,17 @@ const SFX = {
   swish: synth(`swish-${ST.sfx}`, `anoisesrc=d=0.32:c=white:r=48000:a=0.5,bandpass=f=${V.sw}:width_type=h:w=${V.sw * 0.7},afade=t=in:d=0.1,afade=t=out:st=0.1:d=0.22`),
   click: synth(`click-${ST.sfx}`, `sine=f=${V.ck}:d=0.045:r=48000,afade=t=out:st=0.004:d=0.04,volume=0.9`),
   boom: synth(`boom-${ST.sfx}`, `sine=f=${V.bm}:d=0.9:r=48000,afade=t=out:st=0.02:d=0.85,volume=2.4`),
+  ding: synth(`ding-${ST.sfx}`, `aevalsrc='0.5*exp(-4*t)*(sin(2*PI*${Math.round(V.ck * 0.6)}*t)+0.6*sin(2*PI*${Math.round(V.ck * 0.9)}*t))':d=0.9:s=48000`),
+  pop: synth(`pop-${ST.sfx}`, `aevalsrc='0.8*exp(-18*t)*sin(2*PI*(380+900*t)*t)':d=0.25:s=48000`),
+  sparkle: synth(`sparkle-${ST.sfx}`, `aevalsrc='0.25*exp(-5*t)*sin(2*PI*(1800+2600*mod(floor(t*16),4)/3)*t)':d=0.6:s=48000`),
   riser: synth(`riser-${ST.sfx}`, `aevalsrc='0.35*sin(2*PI*(${V.rs}+${V.rs * 2}*t)*t)':d=1.1:s=48000,afade=t=in:d=0.6,afade=t=out:st=0.95:d=0.15`),
 };
 const sfxEvents = [{ type: "boom", t: 0.05, v: 0.8 }];
 beats.forEach((b, i) => { if (i > 0 && b.t0 < CTA_START) sfxEvents.push({ type: "swish", t: b.t0 - 0.05, v: 0.5 }); if (b.headline && b.t0 < CTA_START) sfxEvents.push({ type: "click", t: Math.max(b.t0, HOOK_END), v: 0.45 }); });
-if (CTA_START > 1.2) sfxEvents.push({ type: "riser", t: CTA_START - 1.05, v: 0.5 }, { type: "click", t: CTA_START, v: 0.6 });
+if (D - CTA_START > 2) {
+  sfxEvents.push({ type: "riser", t: Math.max(0, CTA_START - 1.05), v: 0.45 }, { type: "swish", t: CTA_START, v: 0.6 });
+  sfxEvents.push({ type: "click", t: TAP - 0.02, v: 0.9 }, { type: "ding", t: TAP + 0.12, v: 0.6 }, { type: "pop", t: LIKE, v: 0.8 }, { type: "sparkle", t: LIKE + 0.06, v: 0.55 });
+}
 
 // ---------- caméra : plein écran, jump-zoom par idée, poussée lente, micro-zooms sur les mots-clés ----------
 const Tz = `(on/${FPS})`;
@@ -403,6 +438,13 @@ function circleMask(s) {
   return out;
 }
 if (logoFile) { iLogo = addInput(["-loop", "1", "-framerate", String(FPS), "-i", logoFile]); iLM = addInput(["-loop", "1", "-framerate", String(FPS), "-i", circleMask(LOGO)]); }
+function roundMask(w, h, r) {
+  const out = `assets/mask-short-${w}x${h}-r${r}.png`;
+  const ix = `max(max(${r}-X,X-(${w - 1}-${r})),0)`, iy = `max(max(${r}-Y,Y-(${h - 1}-${r})),0)`;
+  if (!existsSync(out)) execFileSync("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", `color=c=white:s=${w}x${h}:d=1,format=gray,geq=lum='clip(255*(${r}-sqrt(pow(${ix},2)+pow(${iy},2)))+128,0,255)'`, "-frames:v", "1", out]);
+  return out;
+}
+const iCM = D - CTA_START > 2 ? addInput(["-loop", "1", "-framerate", String(FPS), "-i", roundMask(CARD.w, CARD.h, 28)]) : -1;
 const sfxIdx = {};
 for (const [k, f] of Object.entries(SFX)) sfxIdx[k] = addInput(["-i", f]);
 const usable = SAFE ? [] : emojiOverlays.filter((e) => existsSync(e.file));
@@ -420,18 +462,39 @@ if (SHIFT > 0) {
   f.push(`[bgsrc]scale=${Math.round(W / 6 / 2) * 2}:${Math.round(H / 6 / 2) * 2},gblur=sigma=6,eq=brightness=-0.28:saturation=1.3,scale=${W}:${H}[bgb]`);
   f.push(`[bgb][fg]overlay=0:${SHIFT}:shortest=1,format=yuv420p[base]`);
 } else f.push(`${v},format=yuv420p[base]`);
-let last = "base";
-f.push(`[${last}]ass=${CONTENT_DIR}/short.ass:fontsdir=fonts[oa]`); last = "oa";
+if (D - CTA_START > 2) {
+  // écran de fin : la vidéo devient une carte arrondie en haut, sur un fond flou assombri
+  const em = 0.35; // durée de la mise en place (s)
+  f.push(`[base]split=3[bm][bb][bc]`);
+  f.push(`[bb]scale=${Math.round(W / 8 / 2) * 2}:${Math.round(H / 8 / 2) * 2},gblur=sigma=4,eq=brightness=-0.32:saturation=1.2,scale=${W}:${H}[eb]`);
+  f.push(`[bc]scale=${CARD.w}:${CARD.h},format=yuva420p[cc0]`, `[${iCM}:v]format=gray[cm]`, `[cc0][cm]alphamerge[cc]`);
+  f.push(`[eb][cc]overlay=x=${CARD.x}:y='${CARD.y}+60*max(0,1-(t-${ET.toFixed(3)})/${em})'[endc]`);
+  f.push(`[bm][endc]overlay=0:0:enable='gte(t,${ET.toFixed(3)})'[base2]`);
+} else f.push(`[base]null[base2]`);
+let last = "base2";
+f.push(`[base2]ass=${CONTENT_DIR}/short.ass:fontsdir=fonts[oa]`); last = "oa";
 if (logoFile) {
   const lx = rtl ? W - 40 - LOGO : 40, ly = Math.round(TAG.y + (TAG.h - LOGO) / 2);
   f.push(`[${iLogo}:v]scale=${LOGO}:${LOGO},format=yuva420p[lg0]`, `[${iLM}:v]format=gray[lm]`, `[lg0][lm]alphamerge[lg]`);
-  f.push(`[${last}][lg]overlay=${lx}:${ly}:enable='gte(t,${HOOK_END.toFixed(2)})'[ol]`); last = "ol";
+  f.push(`[lg]split=2[lg1][lg2]`);
+  f.push(`[${last}][lg1]overlay=${lx}:${ly}:enable='between(t,${HOOK_END.toFixed(2)},${CTA_START.toFixed(2)})'[ol]`); last = "ol";
+  if (END.logo && D - CTA_START > 2) { f.push(`[lg2]scale=${END.logo.s}:${END.logo.s}[lg3]`, `[${last}][lg3]overlay=${END.logo.x}:${END.logo.y}:enable='gte(t,${(ET + 0.3).toFixed(2)})'[ol2]`); last = "ol2"; }
+  else f.push(`[lg2]nullsink`);
 }
 usable.forEach((e, k) => {
   const len = Math.max(0.2, e.t1 - e.t0);
   f.push(`[${emoIdx[k]}:v]scale=${e.size}:${e.size},format=rgba,fade=in:st=0:d=0.12:alpha=1,fade=out:st=${Math.max(0, len - 0.2).toFixed(3)}:d=0.2:alpha=1,setpts=PTS-STARTPTS+${e.t0.toFixed(3)}/TB[e${k}]`);
   const T0 = e.t0.toFixed(3);
-  f.push(`[${last}][e${k}]overlay=x='${Math.round(e.x)}':y='${Math.round(e.y)}-26*abs(sin(6*(t-${T0})))*exp(-1.5*(t-${T0}))':eof_action=pass:enable='between(t,${T0},${e.t1.toFixed(3)})'[oe${k}]`);
+  let ex = `${Math.round(e.x)}`, ey = `${Math.round(e.y)}-26*abs(sin(6*(t-${T0})))*exp(-1.5*(t-${T0}))`;
+  if (e.kind === "hand") { // la main arrive en glissant puis « appuie »
+    const A = e.arrive.toFixed(3), dur = Math.max(0.2, e.arrive - e.t0).toFixed(3);
+    const p = `min(1,(t-${T0})/${dur})`;
+    ex = `${Math.round(e.x)}+${e.from.dx}*(1-${p})*(1-${p})`;
+    ey = `${Math.round(e.y)}+${e.from.dy}*(1-${p})*(1-${p})+if(between(t,${A},${A}+0.18),10,0)`;
+  }
+  if (e.kind === "bell") ex = `${Math.round(e.x)}+7*sin(28*(t-${T0}))*exp(-2.2*(t-${T0}))`;
+  if (e.kind === "like") ey = `${Math.round(e.y)}-40*abs(sin(7*(t-${T0})))*exp(-3*(t-${T0}))`;
+  f.push(`[${last}][e${k}]overlay=x='${ex}':y='${ey}':eof_action=pass:enable='between(t,${T0},${e.t1.toFixed(3)})'[oe${k}]`);
   last = `oe${k}`;
 });
 f.push(`[${last}]format=yuv420p[vout]`);
