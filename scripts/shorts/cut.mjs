@@ -9,7 +9,8 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { execFileSync } from "child_process";
 import { findVideo, probeVideo } from "../lib/util.mjs";
-import { PRESETS, channelOf, pickStyle } from "../lib/styles.mjs";
+import { channelOf } from "../lib/styles.mjs";
+import { SHORT_STYLES, pickShortStyles } from "../lib/short-styles.mjs";
 
 const sel = JSON.parse(readFileSync("shorts/selection.json", "utf8"));
 const tr = JSON.parse(readFileSync("content/transcript.json", "utf8"));
@@ -34,12 +35,13 @@ if (ratio && mode !== "none") {
 }
 console.log(`Source ${info.width}x${info.height}, ${info.duration.toFixed(0)} s — recadrage : ${vf ? `${ratio.join(":")} (${pos})` : "aucun"}`);
 
-// thèmes : un thème différent par short, en évitant les derniers utilisés sur la chaîne
+// styles SHORTS (lib/short-styles.mjs, distincts de Build Video) : un style différent par short, en évitant les
+// derniers utilisés (historique "<chaîne>-shorts" dans state/style-history.json)
 const channel = channelOf(sel.lang);
 let history = {};
 try { history = existsSync("state/style-history.json") ? JSON.parse(readFileSync("state/style-history.json", "utf8")) : {}; } catch {}
-const forced = process.env.STYLE_ID && PRESETS.some((p) => p.id === process.env.STYLE_ID) ? process.env.STYLE_ID : null;
-const h = { ...history, [channel]: [...(history[channel] || [])] };
+const forced = process.env.SHORT_STYLE && SHORT_STYLES.some((p) => p.id === process.env.SHORT_STYLE) ? process.env.SHORT_STYLE : null;
+const styles = pickShortStyles(sel.clips.length, history[`${channel}-shorts`] || []);
 
 const ids = [];
 for (const c of sel.clips) {
@@ -49,13 +51,14 @@ for (const c of sel.clips) {
   // -ss avant -i + ré-encodage = coupe précise et rapide même sur une vidéo de plusieurs heures
   execFileSync("ffmpeg", ["-y", "-v", "error", "-ss", c.start.toFixed(3), "-i", src, "-t", dur.toFixed(3),
     ...(vf ? ["-vf", vf] : []), "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p",
+    "-af", `afade=t=in:d=0.08,afade=t=out:st=${Math.max(0, dur - 0.22).toFixed(3)}:d=0.22`, // fin douce, pas de « clic »
     "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", `${dir}/video.mp4`], { stdio: "inherit" });
-  const words = tr.words.filter((w) => w.t0 >= c.start - 0.05 && w.t1 <= c.end + 0.3)
+  // seulement les mots ENTIÈREMENT dans le passage (pas de mot à moitié coupé dans les sous-titres)
+  const words = tr.words.filter((w) => w.t0 >= c.start - 0.05 && w.t1 <= c.end + 0.12)
     .map((w) => ({ t0: +Math.max(0, w.t0 - c.start).toFixed(3), t1: +Math.min(dur, Math.max(w.t0 - c.start + 0.05, w.t1 - c.start)).toFixed(3), w: w.w }));
   if (!words.length) { console.log(`  #${c.id} : aucun mot dans le passage, ignoré.`); continue; }
   writeFileSync(`${dir}/transcript.json`, JSON.stringify({ lang: tr.lang, duration: +dur.toFixed(3), words }, null, 1));
-  const theme = forced || pickStyle({ channel, history: h, avoid: Math.min(PRESETS.length - 1, 3 + ids.length) }).id;
-  h[channel].push(theme);
+  const theme = forced || styles[sel.clips.indexOf(c)];
   writeFileSync(`${dir}/meta.json`, JSON.stringify({ ...c, theme, channel, crop: vf ? ratio.join(":") : "none" }, null, 2));
   console.log(`  #${c.id} : ${dur.toFixed(1)} s, ${words.length} mots, thème ${theme}`);
   ids.push(c.id);

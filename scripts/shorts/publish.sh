@@ -59,6 +59,10 @@ for (const c of sel.clips) {
   if (plan.hook) console.log(`- Hook à l'écran : ${plan.hook}`);
   if (c.description) console.log(`- Description : ${c.description}`);
   if (c.hashtags?.length) console.log(`- Hashtags : ${c.hashtags.join(" ")}`);
+  // texte prêt à coller en description du short (le short annonce « vidéo complète : lien juste en dessous »)
+  const cta = { ar: "🎬 الفيديو الكامل:", en: "🎬 Full video:", it: "🎬 Video completo:" }[sel.lang] || "🎬 Vidéo complète :";
+  console.log(`- À coller en description : ${[c.description, `${cta} [lien de ta vidéo longue]`, (c.hashtags || []).join(" ")].filter(Boolean).join(" — ")}`);
+  console.log(`  (sur YouTube, relie aussi la vidéo longue avec « Vidéo associée » : c'est le lien cliquable qui s'affiche sous le short)`);
   if (c.why) console.log(`- Pourquoi : ${c.why}`);
   if (c.quality) console.log(`- Relecture IA : autonome ${c.quality.autonome}/10 · accroche ${c.quality.accroche}/10 · chute ${c.quality.chute}/10`);
   if (c.text) console.log(`- Début : « ${c.text.slice(0, 180)}… »`);

@@ -207,7 +207,7 @@ jobs:
           # où est le visage, et la vidéo a-t-elle déjà des sous-titres incrustés ? (aucun texte ne doit passer dessus)
           python3 scripts/face-box.py input/video.mp4 60 > content/face.json 2>/dev/null || echo '{"found":false}' > content/face.json
           echo "Visage / sous-titres incrustés : $(cat content/face.json)"
-          echo "STYLE_ID=$(node -p "require('./$D/meta.json').theme")" >> "$GITHUB_ENV"
+          echo "SHORT_STYLE=$(node -p "require('./$D/meta.json').theme")" >> "$GITHUB_ENV"
           echo "KEY_OFFSET=$((10#${{ matrix.id }} - 1))" >> "$GITHUB_ENV"
 
       - name: Scénario du short (hook, headlines, cartes)
@@ -219,21 +219,15 @@ jobs:
       - name: Emojis
         run: python3 scripts/make-emoji.py content/plan.json
 
-      - name: Thème attribué
+      - name: Rendu du short (identité Shorts, 2e essai en mode sûr si besoin)
         env:
-          NO_STYLE_HISTORY: "1"
-        run: node scripts/pick-style.mjs
-
-      - name: Rendu vertical (2e essai en mode sûr si besoin)
-        env:
-          LAYOUT: shorts
           ID: ${{ matrix.id }}
         run: |
           set -o pipefail
           mkdir -p out
-          if node scripts/render-video.mjs 2>&1 | tee render.log; then exit 0; fi
+          if node scripts/render-short.mjs 2>&1 | tee render.log; then exit 0; fi
           echo "::warning title=Short $ID::1er rendu échoué : $(grep -v '^\s*$' render.log | tail -3 | tr '\n' ' ' | cut -c1-400)"
-          if SAFE_MODE=1 node scripts/render-video.mjs 2>&1 | tee render-safe.log; then exit 0; fi
+          if SAFE_MODE=1 node scripts/render-short.mjs 2>&1 | tee render-safe.log; then exit 0; fi
           { echo "1er essai :"; tail -25 render.log; echo; echo "Mode sûr :"; tail -25 render-safe.log; } > "out/short-$ID.error.txt"
           echo "::error title=Short $ID — rendu impossible::$(grep -v '^\s*$' render-safe.log | tail -4 | tr '\n' ' ' | cut -c1-600)"
           exit 1
@@ -303,7 +297,7 @@ jobs:
             node -e '
               const fs=require("fs"),p="state/style-history.json";fs.mkdirSync("state",{recursive:true});
               let h={};try{h=JSON.parse(fs.readFileSync(p,"utf8"))}catch{}
-              const ch=process.env.LANG_CH==="ar"?"ar":"fr";
+              const ch=(process.env.LANG_CH==="ar"?"ar":"fr")+"-shorts";
               const used=fs.readdirSync("out").filter(f=>f.endsWith(".meta.json")).sort().map(f=>JSON.parse(fs.readFileSync("out/"+f,"utf8")).theme).filter(Boolean);
               h[ch]=[...(h[ch]||[]),...used].slice(-12);fs.writeFileSync(p,JSON.stringify(h,null,2)+"\n");console.log(ch,"→",h[ch].join(" → "));'
             git add state/style-history.json

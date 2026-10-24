@@ -41,13 +41,15 @@ runs:
         ffmpeg -hide_banner -filters 2>/dev/null | grep -qw ass || { echo "::error::ffmpeg sans libass"; exit 1; }
         ffmpeg -version | head -1
 
-    - name: Polices (Poppins ExtraBold + Tajawal ExtraBold pour l'arabe)
+    - name: Polices (Poppins/Tajawal pour Build Video, Anton/Lalezar pour les Shorts)
       shell: bash
       run: |
         mkdir -p fonts
-        for f in poppins/Poppins-ExtraBold tajawal/Tajawal-ExtraBold; do
+        for f in poppins/Poppins-ExtraBold tajawal/Tajawal-ExtraBold anton/Anton-Regular lalezar/Lalezar-Regular; do
           n="fonts/$(basename $f).ttf"
-          [ -s "$n" ] || curl -sSL --fail --retry 3 -o "$n" "https://github.com/google/fonts/raw/main/ofl/$f.ttf" || echo "::warning::$(basename $f) indisponible : repli police système"
+          [ -s "$n" ] || curl -sSL --fail --retry 3 -o "$n" "https://raw.githubusercontent.com/google/fonts/main/ofl/$f.ttf" \
+            || curl -sSL --fail --retry 2 -o "$n" "https://github.com/google/fonts/raw/main/ofl/$f.ttf" \
+            || echo "::warning::$(basename $f) indisponible : repli police système"
         done
         fc-scan --format "%{family} | %{file}\n" fonts/*.ttf || true
 

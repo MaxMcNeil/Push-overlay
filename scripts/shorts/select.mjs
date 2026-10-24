@@ -97,6 +97,17 @@ function fitRange(a, b) {
     while (e > a && !ENDS.test(S[e].text)) e--;
     if (e > a && len(a, e) >= MIN) b = e;
   }
+  // toujours FINIR sur une phrase terminée (jamais sur un bout de phrase) : on recule si possible, sinon on avance
+  if (!ENDS.test(S[b].text)) {
+    let e = b;
+    while (e > a && !ENDS.test(S[e].text)) e--;
+    if (ENDS.test(S[e].text) && len(a, e) >= MIN * 0.85) b = e;
+    else {
+      e = b;
+      while (e < S.length - 1 && !ENDS.test(S[e].text) && len(a, e + 1) <= MAX + 8) e++;
+      if (ENDS.test(S[e].text)) b = e;
+    }
+  }
   return { a, b, t0: S[a].t0, t1: S[b].t1, extended };
 }
 const overlap = (x, y) => Math.max(0, Math.min(x.t1, y.t1) - Math.max(x.t0, y.t0));
@@ -276,10 +287,20 @@ if (DUR < MIN + 2) {
 }
 if (!res.clips.length) { console.error(`Aucun passage de ${MIN}-${MAX} s trouvé. Essaie une durée minimale plus courte ou une durée maximale plus longue.`); process.exit(1); }
 if (res.clips.length < COUNT) console.log(`ℹ ${res.clips.length} short(s) au lieu de ${COUNT} : seuls ces passages tiennent debout seuls (mieux vaut moins mais bons).`);
+// bornes de coupe : une petite marge, mais JAMAIS jusqu'au premier mot de la phrase suivante (ni depuis le dernier
+// mot de la précédente) — sinon le short finit sur une syllabe amputée.
+const wordsAll = tr.words || [];
+function cutBounds(t0, t1) {
+  const prev = [...wordsAll].reverse().find((w) => w.t1 <= t0 + 0.01 && w.t0 < t0 - 0.01);
+  const next = wordsAll.find((w) => w.t0 >= t1 - 0.01 && w.t1 > t1 + 0.01);
+  const start = Math.max(0, t0 - 0.15, prev ? prev.t1 + 0.04 : 0);
+  let end = Math.min(DUR, t1 + 0.4);
+  if (next) end = Math.min(end, Math.max(t1 + 0.04, next.t0 - 0.1));
+  return { start: +Math.min(start, t0).toFixed(3), end: +Math.max(end, t1).toFixed(3) };
+}
 const clips = res.clips.map((c, k) => ({
   id: String(k + 1).padStart(2, "0"),
-  start: +Math.max(0, c.t0 - 0.15).toFixed(3),
-  end: +Math.min(DUR, c.t1 + 0.45).toFixed(3),
+  ...cutBounds(c.t0, c.t1),
   title: c.title, hook: c.hook, description: c.description, hashtags: c.hashtags, why: c.why,
   score: c.score, source: c.source, quality: c.q || null, text: textOf(c.a, c.b).slice(0, 3000),
 })).map((c) => ({ ...c, duration: +(c.end - c.start).toFixed(2) }));

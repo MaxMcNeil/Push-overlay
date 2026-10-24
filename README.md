@@ -67,7 +67,16 @@ sous-titres, ticker des disclaimers) avec **un thème différent par short** →
 **Résultats** : chaque short < 1 900 Mo → Release **`out-shorts-<date>-<nom>`** (avec un récapitulatif : titre proposé, passage dans la
 source, description, hashtags) ; plus lourd → **Google Drive** (`Push-overlay/shorts/…`). Champ *destination* : `auto` (selon la taille),
 `release`, `drive`, `both`. Les shorts sont aussi dans les *Artifacts* du run pendant 14 jours.
-Mise en page « shorts » : textes et sous-titres remontés hors des zones couvertes par l'interface YouTube/TikTok.
+**Identité visuelle des Shorts** (volontairement différente de Build Video, rendu par `scripts/render-short.mjs`) :
+vidéo **plein écran** avec jump-zoom à chaque idée, transitions glitch/secousse, **sous-titres karaoké** (police Anton / Lalezar,
+mot actif sur boîte, en couleur ou souligné), **étiquette de chapitre** inclinée façon tampon + emoji réaction, **puces** qui s'empilent,
+barre de progression **segmentée**, disclaimers en légende fixe qui alterne, sons propres. 6 styles qui tournent (`lib/short-styles.mjs`).
+**Jamais de texte sur le visage** ni sur des sous-titres déjà incrustés (détectés par `scripts/face-box.py` ; nos sous-titres se coupent
+alors tout seuls), ni dans les zones couvertes par l'interface YouTube/TikTok.
+**« Vidéo complète en lien »** : badge « EXTRAIT · VIDÉO COMPLÈTE EN LIEN » après le hook, puis carte de fin « VIDÉO COMPLÈTE — lien juste
+en dessous » avec flèches vers le bas. Le récapitulatif donne le texte à coller en description ; sur YouTube, relie la vidéo longue avec
+« Vidéo associée » (c'est le lien cliquable affiché sous le short).
+Les coupes tombent toujours en fin de phrase, jamais sur le début de la phrase suivante (fondu audio de 0,2 s).
 
 **Google Drive** :
 - *Lire* une vidéo : le fichier doit être partagé « Tous les utilisateurs disposant du lien → Lecteur » (téléchargé avec gdown).
