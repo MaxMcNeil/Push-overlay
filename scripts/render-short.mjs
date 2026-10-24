@@ -113,15 +113,34 @@ function lineGeom(line, em, cx) {
 const SAFE_TOP = 150, SAFE_BOT = 1500;
 const srcH = Math.max(H, (W * info.height) / info.width); // hauteur de la vidéo une fois "cover" plein écran
 const Zmax = 1 + ST.jump + ST.push + 0.03;
-const fy = (v, z) => H / 2 + (v - 0.5) * srcH * z;
+let SHIFT = 0; // descente de la vidéo (px) quand il n'y a pas assez de place hors visage pour les textes
+const fy = (v, z) => SHIFT + H / 2 + (v - 0.5) * srcH * z;
 let face = { found: false, y0: 0.08, y1: 0.56 }, caps = null;
 try { const f = JSON.parse(readFileSync(`${CONTENT_DIR}/face.json`, "utf8")); if (f.found) face = f; caps = f.captions || null; } catch {}
 const bandOf = (b) => ({ y0: Math.min(fy(b.y0, Zmax), fy(b.y0, 1)) - 16, y1: Math.max(fy(b.y1, Zmax), fy(b.y1, 1)) + 16 });
-const prot = [{ what: "visage", ...bandOf(face) }];
-if (caps) prot.push({ what: "sous-titres incrustés", ...bandOf(caps) });
+const autoSubsOff = !!caps && !process.env.SUBTITLES;
+const subsOn = !autoSubsOff && String(process.env.SUBTITLES || "full") !== "off";
+// place nécessaire : disclaimers (76) + sous-titres (150) + étiquette (120) + marges
+const NEED = 76 + 10 + (subsOn ? 160 : 0) + 130;
+let prot, gaps;
+function computeGaps() {
+  prot = [{ what: "visage", ...bandOf(face) }];
+  if (caps) prot.push({ what: "sous-titres incrustés", ...bandOf(caps) });
+  gaps = [{ y0: SAFE_TOP, y1: SAFE_BOT }];
+  for (const p of prot) gaps = gaps.flatMap((g) => [{ y0: g.y0, y1: Math.min(g.y1, p.y0) }, { y0: Math.max(g.y0, p.y1), y1: g.y1 }]).filter((g) => g.y1 - g.y0 > 40);
+}
+computeGaps();
+{
+  // chaque élément a besoin d'une bande d'un seul tenant : on regarde la place réellement utilisable
+  const usable = gaps.reduce((n, g) => n + (g.y1 - g.y0 >= 86 ? g.y1 - g.y0 : 0), 0);
+  if (usable < NEED) {
+    const top = gaps.find((g) => g.y0 <= SAFE_TOP + 1);
+    const topRoom = top ? top.y1 - top.y0 : 0;
+    SHIFT = Math.round(Math.min(440, Math.max(0, NEED - topRoom + 24)));
+    if (SHIFT > 0) { computeGaps(); console.log(`Peu de place hors visage : la vidéo descend de ${SHIFT} px (bandeau flou en haut) pour loger les textes sans toucher le visage.`); }
+  }
+}
 prot.forEach((p) => console.log(`Zone protégée (${p.what}${p.what === "visage" && !face.found ? ", position par défaut" : ""}) : y ${Math.round(p.y0)}→${Math.round(p.y1)}`));
-let gaps = [{ y0: SAFE_TOP, y1: SAFE_BOT }];
-for (const p of prot) gaps = gaps.flatMap((g) => [{ y0: g.y0, y1: Math.min(g.y1, p.y0) }, { y0: Math.max(g.y0, p.y1), y1: g.y1 }]).filter((g) => g.y1 - g.y0 > 40);
 const room = (g) => g.y1 - g.y0;
 const take = (g, h, fromBottom) => { const y = fromBottom ? g.y1 - h : g.y0; if (fromBottom) g.y1 -= h + 10; else g.y0 += h + 10; return y; };
 const lowest = (min) => gaps.filter((g) => room(g) >= min).sort((a, b) => b.y1 - a.y1)[0];
@@ -130,8 +149,6 @@ const faceMid = (prot[0].y0 + prot[0].y1) / 2;
 const gD = lowest(84);
 const DISC = { y: gD ? take(gD, 76, true) : SAFE_BOT - 76, h: 76 };
 // 2) sous-titres
-const autoSubsOff = !!caps && !process.env.SUBTITLES;
-const subsOn = !autoSubsOff && String(process.env.SUBTITLES || "full") !== "off";
 const CAP_H = 150;
 let CAP_Y = DISC.y - CAP_H / 2 - 10;
 if (subsOn) { const g = lowest(CAP_H); if (g) CAP_Y = take(g, CAP_H, true) + CAP_H / 2; }
@@ -397,7 +414,12 @@ v += `,scale=${iw2}:${ih2}:force_original_aspect_ratio=increase,crop=${iw2}:${ih
 v += `,zoompan=z='1+${beatTerm}+${kwTerm}':x='iw/2-iw/zoom/2+(${shakeTerm})':y='ih/2-ih/zoom/2+(${shakeTerm})*0.5':d=1:s=${W}x${H}:fps=${FPS}`;
 if (ST.vignette) v += `,vignette=angle=PI/6`;
 if (ST.glitch === "rgb" && trans.length && !SAFE) v += `,rgbashift=rh=14:bh=-14:gv=4:enable='${trans.map((t) => `between(t,${t.toFixed(3)},${(t + 0.14).toFixed(3)})`).join("+")}'`;
-f.push(`${v},format=yuv420p[base]`);
+if (SHIFT > 0) {
+  f.push(`${v},format=yuv420p,split=2[fg][bgsrc]`);
+  // bandeau du haut : copie très floutée et assombrie de la vidéo (la vidéo nette commence en dessous)
+  f.push(`[bgsrc]scale=${Math.round(W / 6 / 2) * 2}:${Math.round(H / 6 / 2) * 2},gblur=sigma=6,eq=brightness=-0.28:saturation=1.3,scale=${W}:${H}[bgb]`);
+  f.push(`[bgb][fg]overlay=0:${SHIFT}:shortest=1,format=yuv420p[base]`);
+} else f.push(`${v},format=yuv420p[base]`);
 let last = "base";
 f.push(`[${last}]ass=${CONTENT_DIR}/short.ass:fontsdir=fonts[oa]`); last = "oa";
 if (logoFile) {
