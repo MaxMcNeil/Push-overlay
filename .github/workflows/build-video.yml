@@ -49,7 +49,7 @@ jobs:
         github.event.release.tag_name != 'renders' &&
         !startsWith(github.event.release.tag_name, 'shorts') &&
         !startsWith(github.event.release.tag_name, 'out-'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # figé : ubuntu-latest passe à Ubuntu 26 (oct. 2026), non testé
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4

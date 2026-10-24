@@ -68,7 +68,7 @@ jobs:
   # ------------------------------------------------------------------ 1. source → transcription → sélection → découpe
   select:
     if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'shorts')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # figé : ubuntu-latest passe à Ubuntu 26 (oct. 2026), non testé
     timeout-minutes: 300
     outputs:
       matrix: ${{ steps.cut.outputs.matrix }}
@@ -168,7 +168,7 @@ jobs:
   # ------------------------------------------------------------------ 2. un job de rendu par short (en parallèle)
   render:
     needs: select
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # figé : ubuntu-latest passe à Ubuntu 26 (oct. 2026), non testé
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -243,7 +243,7 @@ jobs:
   publish:
     needs: [select, render]
     if: always() && needs.select.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # figé : ubuntu-latest passe à Ubuntu 26 (oct. 2026), non testé
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
