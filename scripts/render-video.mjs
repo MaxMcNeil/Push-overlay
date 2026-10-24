@@ -184,8 +184,8 @@ if (SHORTS) {
   // zoom permanent (×1.12) et zooms "punch" (×1.34) : ce qui est loin du centre s'en éloigne encore → marges
   const fy = (v, z = 1.34) => win.y + win.h * (0.5 + (v - 0.5) * z);
   const band = (b, z) => ({ y0: Math.min(fy(b.y0, z), fy(b.y0, 1)) - 14, y1: Math.max(fy(b.y1, z), fy(b.y1, 1)) + 14 });
-  const prot = [{ what: "visage", ...band(face, 1.34) }];
-  if (caps) prot.push({ what: "sous-titres incrustés", ...band(caps, 1.34) });
+  const prot = [{ what: "visage", ...band(face, 1.2) }];
+  if (caps) prot.push({ what: "sous-titres incrustés", ...band(caps, 1.2) });
   prot.forEach((p) => console.log(`Zone protégée (${p.what}${p.what === "visage" && !face.found ? ", position par défaut" : ""}) : y ${Math.round(p.y0)}→${Math.round(p.y1)} px — aucun texte dessus`));
   if (caps && !process.env.SUBTITLES) { AUTO_SUBS_OFF = true; console.log("La vidéo a déjà des sous-titres incrustés : nos sous-titres sont désactivés (SUBTITLES=full pour forcer)."); }
   // bandes libres = zone sûre moins les zones protégées
@@ -344,7 +344,7 @@ const pulses = (() => {
     }
     out.length = 0; out.push(...filled);
   }
-  return out.slice(0, 320);
+  return out.slice(0, process.env.SAFE_MODE ? 80 : 320);
 })();
 const pulseExpr = (T, key, k) => pulses.map((e) => `if(gte(${T},${e.t.toFixed(3)}),${e[key].toFixed(3)}*exp(-${k}*(${T}-${e.t.toFixed(3)})),0)`).join("+") || "0";
 console.log(`Impulsions synchronisées : ${pulses.length} (zoom + lumière, énergie « ${energy} »)`);
@@ -720,7 +720,9 @@ const mSplit = mask("s", winSplitFinal.w, winSplitFinal.h, T.radius);
 const mLogo = mask("l", L.logo.w, L.logo.h, 26);
 
 // ---------- emojis disponibles ----------
-const usableEmoji = emojiOverlays.filter((e) => existsSync(e.file));
+// SAFE_MODE (2e essai après un échec) : pas d'emojis incrustés, moins d'impulsions → graphe ffmpeg minimal
+const usableEmoji = process.env.SAFE_MODE ? [] : emojiOverlays.filter((e) => existsSync(e.file));
+if (process.env.SAFE_MODE) console.log("Mode sûr : emojis désactivés, impulsions limitées.");
 
 // ---------- fichiers de sortie intermédiaires ----------
 writeFileSync(`${CONTENT_DIR}/video.ass`, ass.toString());

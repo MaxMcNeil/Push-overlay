@@ -54,6 +54,7 @@ for (const c of sel.clips) {
   let plan = {}; try { plan = JSON.parse(fs.readFileSync(`out/short-${c.id}.plan.json`, "utf8")); } catch {}
   console.log(`### #${c.id} ${c.title || plan.hook || "(sans titre)"}`);
   console.log(`- Fichier : ${f ? "`" + f + "`" : "❌ rendu échoué"}`);
+  if (!f) { try { const err = fs.readFileSync(`out/short-${c.id}.error.txt`, "utf8").trim().split("\n").slice(-8).join("\n"); console.log("```\n" + err + "\n```"); } catch {} }
   console.log(`- Passage dans la source : ${fmt(c.start)} → ${fmt(c.end)} (${Math.round(c.duration)} s)`);
   if (plan.hook) console.log(`- Hook à l'écran : ${plan.hook}`);
   if (c.description) console.log(`- Description : ${c.description}`);

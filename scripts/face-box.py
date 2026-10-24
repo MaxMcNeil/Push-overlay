@@ -42,7 +42,17 @@ def caption_band(cv2, np, gray):
     xs = np.where(cols)[0]
     if len(xs) == 0 or (xs[-1] - xs[0]) < w * 0.25:
         return None
-    return ((top + y0) / h, (top + y1) / h)
+    # des LETTRES = beaucoup de petits traits clairs séparés sur une même ligne (un col de chemise ou un mur clair
+    # donne 1 à 4 grandes plages) : on compte les petits traits par ligne dans la bande.
+    band = txt[y0:y1, :]
+    runs = []
+    for row in band:
+        d = np.diff(np.concatenate(([0], row, [0])).astype(np.int8))
+        widths = np.where(d == -1)[0] - np.where(d == 1)[0]
+        runs.append(int((widths <= max(2, w * 0.04)).sum()))
+    if np.median(runs) < 6:
+        return None
+    return ((top + y0) / h, (top + y1) / h, band)
 
 
 def main():
@@ -61,7 +71,7 @@ def main():
     front = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
     prof = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_profileface.xml")
     idx = sorted({int(n * (k + 0.5) / samples) for k in range(samples)})
-    boxes, seen, bands = [], 0, []
+    boxes, seen, bands, sigs = [], 0, [], []
     import numpy as np
     for i in idx:
         cap.set(cv2.CAP_PROP_POS_FRAMES, i)
@@ -76,7 +86,9 @@ def main():
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         b = caption_band(cv2, np, gray)
         if b:
-            bands.append(b)
+            bands.append(b[:2])
+            # des sous-titres CHANGENT d'une image à l'autre ; un décor ou un vêtement non
+            sigs.append(cv2.resize(b[2].astype(np.float32), (64, 8), interpolation=cv2.INTER_AREA))
         g = cv2.equalizeHist(gray)
         mn = int(min(sw, sh) * 0.08)
         found = list(front.detectMultiScale(g, 1.1, 6, minSize=(mn, mn)))
@@ -90,20 +102,21 @@ def main():
         v = sorted(vals)
         return v[min(len(v) - 1, max(0, int(round(p * (len(v) - 1)))))]
     caps = None
-    if len(bands) >= max(3, seen * 0.35):
+    changing = sum(1 for a, b2 in zip(sigs, sigs[1:]) if float(np.abs(a - b2).mean()) > 0.06)
+    if len(bands) >= max(3, seen * 0.35) and changing >= max(2, (len(sigs) - 1) * 0.4):
         c0, c1 = pct([b[0] for b in bands], 0.1), pct([b[1] for b in bands], 0.9)
         if c1 - c0 < 0.3:
             caps = {"y0": round(max(0, c0 - 0.015), 3), "y1": round(min(1, c1 + 0.015), 3), "ratio": round(len(bands) / max(1, seen), 2)}
     if not boxes or len(boxes) < max(2, seen * 0.15):
         print(json.dumps({"found": False, "ratio": round(len(boxes) / max(1, seen), 2), "captions": caps}))
         return
-    x0 = pct([b[0] for b in boxes], 0.1); y0 = pct([b[1] for b in boxes], 0.1)
-    x1 = pct([b[2] for b in boxes], 0.9); y1 = pct([b[3] for b in boxes], 0.9)
-    # la boîte Haar s'arrête aux sourcils et au menton : on ajoute cheveux et cou
-    hgt = y1 - y0
-    y0 = max(0.0, y0 - hgt * 0.35); y1 = min(1.0, y1 + hgt * 0.25)
-    wid = x1 - x0
-    x0 = max(0.0, x0 - wid * 0.12); x1 = min(1.0, x1 + wid * 0.12)
+    # zone = déplacements du CENTRE du visage (percentiles 10/90) + taille MÉDIANE du visage : robuste aux
+    # détections parasites (un gros faux visage isolé ne gonfle plus la zone)
+    cxs = [(b[0] + b[2]) / 2 for b in boxes]; cys = [(b[1] + b[3]) / 2 for b in boxes]
+    mw = pct([b[2] - b[0] for b in boxes], 0.5); mh = pct([b[3] - b[1] for b in boxes], 0.5)
+    # la boîte Haar va des sourcils au menton : on ajoute cheveux (au-dessus) et cou (en dessous)
+    y0 = max(0.0, pct(cys, 0.1) - mh * 0.5 - mh * 0.45); y1 = min(1.0, pct(cys, 0.9) + mh * 0.5 + mh * 0.3)
+    x0 = max(0.0, pct(cxs, 0.1) - mw * 0.65); x1 = min(1.0, pct(cxs, 0.9) + mw * 0.65)
     cx = pct([(b[0] + b[2]) / 2 for b in boxes], 0.5); cy = pct([(b[1] + b[3]) / 2 for b in boxes], 0.5)
     print(json.dumps({"found": True, "x0": round(x0, 3), "y0": round(y0, 3), "x1": round(x1, 3), "y1": round(y1, 3),
                       "cx": round(cx, 3), "cy": round(cy, 3), "ratio": round(len(boxes) / max(1, seen), 2), "captions": caps}))

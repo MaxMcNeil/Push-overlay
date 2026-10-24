@@ -172,7 +172,7 @@ jobs:
   render:
     needs: select
     runs-on: ubuntu-24.04   # figé : ubuntu-latest passe à Ubuntu 26 (oct. 2026), non testé
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       max-parallel: 5
@@ -224,11 +224,20 @@ jobs:
           NO_STYLE_HISTORY: "1"
         run: node scripts/pick-style.mjs
 
-      - name: Rendu vertical
+      - name: Rendu vertical (2e essai en mode sûr si besoin)
         env:
           LAYOUT: shorts
-        run: node scripts/render-video.mjs
-        timeout-minutes: 60
+          ID: ${{ matrix.id }}
+        run: |
+          set -o pipefail
+          mkdir -p out
+          if node scripts/render-video.mjs 2>&1 | tee render.log; then exit 0; fi
+          echo "::warning title=Short $ID::1er rendu échoué : $(grep -v '^\s*$' render.log | tail -3 | tr '\n' ' ' | cut -c1-400)"
+          if SAFE_MODE=1 node scripts/render-video.mjs 2>&1 | tee render-safe.log; then exit 0; fi
+          { echo "1er essai :"; tail -25 render.log; echo; echo "Mode sûr :"; tail -25 render-safe.log; } > "out/short-$ID.error.txt"
+          echo "::error title=Short $ID — rendu impossible::$(grep -v '^\s*$' render-safe.log | tail -4 | tr '\n' ' ' | cut -c1-600)"
+          exit 1
+        timeout-minutes: 80
 
       - name: Nommer le short
         run: |
@@ -241,6 +250,7 @@ jobs:
           ls -la out
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: short-${{ matrix.id }}
           path: out/
