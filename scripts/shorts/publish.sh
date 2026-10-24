@@ -58,6 +58,8 @@ for (const c of sel.clips) {
   if (c.description) console.log(`- Description : ${c.description}`);
   if (c.hashtags?.length) console.log(`- Hashtags : ${c.hashtags.join(" ")}`);
   if (c.why) console.log(`- Pourquoi : ${c.why}`);
+  if (c.quality) console.log(`- Relecture IA : autonome ${c.quality.autonome}/10 · accroche ${c.quality.accroche}/10 · chute ${c.quality.chute}/10`);
+  if (c.text) console.log(`- Début : « ${c.text.slice(0, 180)}… »`);
   console.log("");
 }
 JS

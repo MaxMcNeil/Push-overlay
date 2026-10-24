@@ -25,11 +25,11 @@ on:
       duree_min:
         description: "Durée minimale d'un short (s)"
         required: false
-        default: "20"
+        default: "30"
       duree_max:
-        description: "Durée maximale d'un short (s)"
+        description: "Durée maximale d'un short (s, YouTube accepte jusqu'à 180)"
         required: false
-        default: "60"
+        default: "90"
       recadrage:
         description: "Recadrage d'une vidéo horizontale"
         type: choice
@@ -130,8 +130,8 @@ jobs:
       - name: Choisir les meilleurs passages
         env:
           SHORTS_COUNT: ${{ inputs.nombre || '5' }}
-          SHORTS_MIN: ${{ inputs.duree_min || '20' }}
-          SHORTS_MAX: ${{ inputs.duree_max || '60' }}
+          SHORTS_MIN: ${{ inputs.duree_min || '30' }}
+          SHORTS_MAX: ${{ inputs.duree_max || '90' }}
           SHORTS_FOCUS: ${{ inputs.consigne }}
         run: node scripts/shorts/select.mjs
         timeout-minutes: 30

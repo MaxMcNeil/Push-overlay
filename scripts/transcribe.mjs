@@ -38,6 +38,7 @@ async function groqFile(mp3) {
       fd.append("model", process.env.GROQ_ASR_MODEL || "whisper-large-v3");
       fd.append("response_format", "verbose_json");
       fd.append("timestamp_granularities[]", "word");
+      fd.append("timestamp_granularities[]", "segment"); // les segments portent la ponctuation (les mots Groq n'en ont pas)
       fd.append("temperature", "0");
       if (process.env.ASR_LANGUAGE) fd.append("language", process.env.ASR_LANGUAGE);
       const res = await fetch(`${GROQ_BASE}/openai/v1/audio/transcriptions`, { method: "POST", headers: { authorization: `Bearer ${keys[ki]}` }, body: fd, signal: AbortSignal.timeout(5 * 60 * 1000) });
@@ -51,7 +52,7 @@ async function groqFile(mp3) {
       const j = await res.json();
       const words = (j.words || []).map((w) => ({ t0: Number(w.start), t1: Number(w.end), w: String(w.word || "").trim() })).filter((w) => w.w && isFinite(w.t0));
       const l = String(j.language || "").toLowerCase();
-      return { lang: LANG_MAP[l] || l, words };
+      return { lang: LANG_MAP[l] || l, words: punctuate(words, j.segments || []) };
     }
     // quota horaire épuisé (attente longue) : inutile d'attendre, on passe au local pour la suite
     if (minWait > 75) { groqDeadUntil = Date.now() + minWait * 1000; throw new Error(`quota Groq épuisé pour ${Math.round(minWait / 60)} min`); }
@@ -59,6 +60,33 @@ async function groqFile(mp3) {
     await new Promise((r) => setTimeout(r, minWait * 1000));
   }
   throw new Error("limite de débit persistante");
+}
+
+// Recopie la ponctuation des segments sur les mots (« dit » → « dit, » / « fin » → « fin. ») : indispensable pour
+// découper en vraies phrases (choix des shorts, sous-titres, beats). Alignement mot à mot tolérant.
+const normW = (t) => String(t).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f\u064B-\u065F\u0640]/g, "").replace(/[^\p{L}\p{N}]/gu, "");
+export function punctuate(words, segments) {
+  if (!segments.length || !words.length) return words;
+  const out = words.map((w) => ({ ...w }));
+  let wi = 0, fixed = 0;
+  for (const seg of segments) {
+    const toks = String(seg.text || "").trim().split(/\s+/).filter(Boolean);
+    let last = -1;
+    for (const tok of toks) {
+      const nt = normW(tok);
+      const punct = (tok.match(/[.!?؟…,;:،]+["»”]?$/) || [""])[0];
+      const put = (k) => { if (punct && !out[k].w.endsWith(punct)) { out[k].w = out[k].w.replace(/[.!?؟…,;:،]+$/, "") + punct; fixed++; } };
+      if (!nt) { if (punct && last >= 0) put(last); continue; } // « ? » isolé (français) : rattaché au mot précédent
+      // cherche le mot correspondant dans une petite fenêtre (Groq fusionne/sépare parfois des mots : « aujourd » + « hui »)
+      for (let k = wi; k < Math.min(out.length, wi + 4); k++) {
+        if (normW(out[k].w) === nt) { put(k); wi = k + 1; last = k; break; }
+        if (k + 1 < out.length && normW(out[k].w + out[k + 1].w) === nt) { put(k + 1); wi = k + 2; last = k + 1; break; }
+      }
+    }
+    // fin de segment Whisper = fin d'énoncé : si le dernier mot du segment n'a rien, on ne force pas (évite les faux points)
+  }
+  if (fixed) console.log(`  ponctuation recopiée sur ${fixed} mots`);
+  return out;
 }
 
 function localWhisper(wav, label = "") {
