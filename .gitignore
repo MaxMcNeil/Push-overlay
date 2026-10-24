@@ -24,3 +24,7 @@ content/lf.txt
 content/source-cfr.mp4
 content/audio-*.mp3
 content/theme.json
+/shorts/
+/out/
+content/audio-*.wav
+content/*-whisper.json

@@ -53,6 +53,7 @@ if (existsSync(`${CONTENT_DIR}/orientation.txt`)) {
   const f = readFileSync(`${CONTENT_DIR}/orientation.txt`, "utf8").trim().toLowerCase();
   if (f === "vertical") vertical = true;
   if (f === "horizontal") vertical = false;
+  if (f === "vertical" || f === "horizontal") console.log(`Orientation imposée par content/orientation.txt : ${f} (supprime ce fichier pour suivre la vidéo)`);
 }
 const W = vertical ? 1080 : 1920;
 const H = vertical ? 1920 : 1080;
@@ -162,6 +163,16 @@ const L = vertical
       panel: { x: 1210, y: 185, w: 660, h: 640 }, subsY: 1000, subsSize: 78, subsPx: 1560, subsWords: 5,
       ticker: { y: 1020, h: 54, size: 30 }, bannerMaxLines: 2, bannerSizes: [76, 66, 58, 52, 46, 40, 34], titleSize: 50, bodySize: 33, hookSize: 88,
     };
+// Mise en page "shorts" (LAYOUT=shorts, vertical) : tout remonte pour rester HORS des zones couvertes par
+// l'interface YouTube Shorts / TikTok / Reels (titre + description en bas ≈ 400 px, barre de recherche en haut).
+if (vertical && process.env.LAYOUT === "shorts") {
+  Object.assign(L, {
+    logo: { x: 40, y: 150, w: 110, h: 110 }, banner: { x: 166, y: 135, w: 874, h: 190 },
+    normalBox: { x: 40, y: 350, w: 1000, h: 1040 }, splitBox: { x: 40, y: 350, w: 520, h: 860 },
+    panel: { x: 580, y: 350, w: 460, h: 860 }, subsY: 1360, ticker: { y: 1440, h: 50, size: 26 },
+  });
+  console.log("Mise en page : shorts (zones de sécurité des applis respectées)");
+}
 const logoR = mirror(L.logo);
 const bannerR = (() => {
   // la bannière occupe la place restante à côté du logo
@@ -493,7 +504,10 @@ merged.filter((s) => s.state !== "split").forEach((s) => {
   });
 });
 
-const style = existsSync(`${CONTENT_DIR}/style.json`) ? JSON.parse(readFileSync(`${CONTENT_DIR}/style.json`, "utf8")) : {};
+const style = (() => {
+  try { return existsSync(`${CONTENT_DIR}/style.json`) ? JSON.parse(readFileSync(`${CONTENT_DIR}/style.json`, "utf8")) : {}; }
+  catch (e) { console.log(`⚠ content/style.json illisible (${e.message}) : réglages par défaut.`); return {}; }
+})();
 const subMode = String(process.env.SUBTITLES || style.subtitles || "full").toLowerCase(); // full | keywords | off
 const normTok = (t) => String(t).replace(/[\p{P}\p{S}\u00A0]/gu, "").replace(/[\u064B-\u065F\u0670\u0640]/g, "").trim();
 console.log(`Sous-titres : mode « ${subMode} »`);
@@ -666,7 +680,9 @@ const iMS = addInput(["-loop", "1", "-framerate", String(FPS), "-i", mSplit]);
 const iML = addInput(["-loop", "1", "-framerate", String(FPS), "-i", mLogo]);
 const sfxIdx = {};
 for (const [k, f] of Object.entries(SFX)) sfxIdx[k] = addInput(["-i", f]);
-const emojiIdx = usableEmoji.map((e) => addInput(["-loop", "1", "-framerate", String(FPS), "-i", e.file]));
+// chaque emoji n'est décodé QUE pendant sa fenêtre d'affichage (-t + décalage des timestamps) : bien plus rapide
+// que des images en boucle sur toute la durée de la vidéo.
+const emojiIdx = usableEmoji.map((e) => addInput(["-loop", "1", "-framerate", String(FPS), "-t", Math.max(0.2, e.t1 - e.t0 + 0.1).toFixed(3), "-i", e.file]));
 
 const f = [];
 const bw = even(W / 8), bh = even(H / 8);
@@ -708,13 +724,14 @@ if (logoFile) {
 f.push(`[${last}]ass=${CONTENT_DIR}/video.ass:fontsdir=fonts[oass]`); last = "oass";
 usableEmoji.forEach((e, k) => {
   const ix = emojiIdx[k];
-  const fade = `fade=in:st=${e.t0.toFixed(3)}:d=0.18:alpha=1,fade=out:st=${Math.max(e.t0, e.t1 - 0.2).toFixed(3)}:d=0.2:alpha=1`;
-  f.push(`[${ix}:v]scale=${e.size}:${e.size},format=rgba,${fade}[e${k}]`);
+  const len = Math.max(0.2, e.t1 - e.t0);
+  const fade = `fade=in:st=0:d=0.18:alpha=1,fade=out:st=${Math.max(0, len - 0.2).toFixed(3)}:d=0.2:alpha=1`;
+  f.push(`[${ix}:v]scale=${e.size}:${e.size},format=rgba,${fade},setpts=PTS-STARTPTS+${e.t0.toFixed(3)}/TB[e${k}]`);
   const T0 = e.t0.toFixed(3);
   let ex = `${Math.round(e.x)}`, ey = `${Math.round(e.y)}`;
   if (e.kind === "sticker" || e.kind === "hook") ey = `${Math.round(e.y)}-14*abs(sin(5*(t-${T0})))`;
   if (e.kind === "float") { ey = `${Math.round(e.y)}-150*(t-${T0})`; ex = `${Math.round(e.x)}+22*sin(4*(t-${T0}))`; }
-  f.push(`[${last}][e${k}]overlay=x='${ex}':y='${ey}':enable='between(t,${T0},${e.t1.toFixed(3)})'[oe${k}]`);
+  f.push(`[${last}][e${k}]overlay=x='${ex}':y='${ey}':eof_action=pass:enable='between(t,${T0},${e.t1.toFixed(3)})'[oe${k}]`);
   last = `oe${k}`;
 });
 f.push(`[${last}]format=yuv420p[vout]`);

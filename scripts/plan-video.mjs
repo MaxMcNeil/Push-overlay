@@ -14,6 +14,7 @@ import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
 import { spawn, execFileSync } from "child_process";
 import { cpus } from "os";
 import { CONTENT_DIR, wordCount, findVideo } from "./lib/util.mjs";
+import { providers as llmProviders, parseJson } from "./lib/llm.mjs";
 
 const TR = `${CONTENT_DIR}/transcript.json`;
 const OUT = `${CONTENT_DIR}/plan.json`;
@@ -202,15 +203,8 @@ function hookUser(lang, headlines) {
   ].join("\n");
 }
 
-function parseJson(raw) {
-  if (!raw) return null;
-  const m = raw.replace(/```json|```/g, "").match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  try { return JSON.parse(m[0]); } catch { return null; }
-}
-
 // ---------- moteur 1 : IA en ligne (GRATUITES : Gemini, Groq ; optionnelle payante : Claude) ----------
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Les appels (plusieurs clés, rotation, repli) sont dans lib/llm.mjs.
 const DIACRITICS = /[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g; // tashkeel + tatweel : illisibles en sous-titre
 export const tidy = (t, lang) => {
   if (typeof t !== "string") return t;
@@ -218,104 +212,6 @@ export const tidy = (t, lang) => {
   if (lang === "ar") o = o.replace(DIACRITICS, "");
   return o;
 };
-
-const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
-const GROQ_BASE = process.env.GROQ_BASE_URL || "https://api.groq.com";
-async function callGemini(sys, user, ctx = {}) {
-  const key = process.env.GEMINI_API_KEY;
-  const H = { "content-type": "application/json", "x-goog-api-key": key };
-  let candidates = [];
-  if (process.env.GEMINI_MODEL) candidates = [process.env.GEMINI_MODEL];
-  else {
-    // "gemini-flash-latest" suit automatiquement le dernier modèle Flash ; on garde en secours les Flash trouvés
-    // via l'API (les modèles anciens sont retirés régulièrement, on ne code donc aucun nom en dur).
-    candidates = ["gemini-flash-latest"];
-    try {
-      const r = await fetch(`${GEMINI_BASE}/v1beta/models?pageSize=200`, { headers: H });
-      if (r.ok) {
-        const found = ((await r.json()).models || [])
-          .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
-          .map((m) => m.name.replace(/^models\//, ""))
-          .filter((n) => /flash/.test(n) && !/(lite|image|tts|live|audio|embedding|robotics|computer|thinking-exp)/.test(n))
-          .sort((x, y) => {
-            const vx = parseFloat((x.match(/(\d+(?:\.\d+)?)/) || [0])[0]), vy = parseFloat((y.match(/(\d+(?:\.\d+)?)/) || [0])[0]);
-            return vy - vx || (/preview/.test(x) ? 1 : 0) - (/preview/.test(y) ? 1 : 0);
-          });
-        candidates.push(...found.slice(0, 4));
-      }
-    } catch {}
-  }
-  let lastErr = new Error("aucun modèle Gemini disponible");
-  for (const m of [...new Set(candidates)]) {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const res = await fetch(`${GEMINI_BASE}/v1beta/models/${m}:generateContent`, {
-          method: "POST", headers: H,
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: sys }] },
-            contents: [{ role: "user", parts: [...(ctx.audio ? [ctx.audio] : []), { text: user }] }],
-            generationConfig: { temperature: 0.7, responseMimeType: "application/json", maxOutputTokens: 8192 },
-          }),
-          signal: AbortSignal.timeout(3 * 60 * 1000),
-        });
-        if (res.status === 429 || res.status === 503) { console.log(`  Gemini ${m} : saturé (${res.status}), pause...`); await sleep(20000 * (attempt + 1)); continue; }
-        if (!res.ok) {
-          const body = (await res.text()).replace(/\s+/g, " ").slice(0, 700);
-          const hint = res.status === 403 || res.status === 400
-            ? " → CLÉ REFUSÉE (clé restreinte à d'autres API, API non activée, ou clé invalide). Crée une NOUVELLE clé sur https://aistudio.google.com/apikey (« Create API key in new project », sans aucune restriction) puis remets le secret GEMINI_API_KEY."
-            : "";
-          throw new Error(`Gemini ${m} : HTTP ${res.status} ${body}${hint}`);
-        }
-        const d = await res.json();
-        const txt = (d.candidates?.[0]?.content?.parts || []).map((x) => x.text || "").join("");
-        if (!txt) throw new Error(`Gemini ${m} : réponse vide`);
-        console.log(`  Gemini : modèle utilisé = ${m}`);
-        return txt;
-      } catch (e) { lastErr = e; console.log(`  ${e.message}`); break; }
-    }
-  }
-  throw lastErr;
-}
-
-async function callGroq(sys, user, ctx = {}) {
-  const model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-  let lastErr;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(`${GROQ_BASE}/openai/v1/chat/completions`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${process.env.GROQ_API_KEY}` },
-      body: JSON.stringify({
-        model, temperature: 0.6, max_tokens: 4096, response_format: { type: "json_object" },
-        messages: [{ role: "system", content: sys }, { role: "user", content: user }],
-      }),
-      signal: AbortSignal.timeout(3 * 60 * 1000),
-    });
-    if (res.status === 429) {
-      const wait = Math.min(60, Number(res.headers.get("retry-after")) || 15 * (attempt + 1));
-      console.log(`  Groq : limite atteinte, pause ${wait}s...`);
-      await sleep(wait * 1000);
-      lastErr = new Error("Groq : limite de débit (429)");
-      continue;
-    }
-    if (!res.ok) throw new Error(`Groq ${model} : HTTP ${res.status} ${(await res.text()).slice(0, 180)}`);
-    const d = await res.json();
-    console.log(`  Groq : modèle utilisé = ${model}`);
-    return d.choices?.[0]?.message?.content || "";
-  }
-  throw lastErr;
-}
-
-async function callClaude(sys, user, ctx = {}) {
-  const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
-  const res = await fetch(process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model, max_tokens: 6000, system: sys, messages: [{ role: "user", content: user }] }),
-  });
-  if (!res.ok) throw new Error(`Claude : HTTP ${res.status} ${(await res.text()).slice(0, 180)}`);
-  const data = await res.json();
-  return data.content.map((c) => c.text || "").join("");
-}
 
 function audioPart() {
   const v = findVideo();
@@ -330,11 +226,7 @@ function audioPart() {
 
 // Un seul appel avec TOUTE la vidéo : le modèle comprend l'histoire d'ensemble (bien meilleur qu'extrait par extrait).
 async function viaApi(chunks, lang) {
-  const providers = [
-    ["gemini", process.env.GEMINI_API_KEY, callGemini],
-    ["groq", process.env.GROQ_API_KEY, callGroq],
-    ["claude", process.env.ANTHROPIC_API_KEY, callClaude],
-  ].filter((x) => x[1]);
+  const providers = llmProviders();
   if (!providers.length) return null;
   const sys = systemPrompt(lang);
   const audio = providers.some((x) => x[0] === "gemini") ? audioPart() : null;
@@ -346,7 +238,7 @@ async function viaApi(chunks, lang) {
     `Étape 1 : comprends de quoi parle la vidéo dans son ensemble (champ "summary" : 2 phrases fidèles, en ${LANG_NAME[lang]}).`,
     `Étape 2 : produis le scénario. Réponds UNIQUEMENT par un objet JSON : {"summary":"...","hook":"...","hook_emoji":"...","keywords":["..."],"beats":[{"headline":"...","emoji":"...","kicker":"...","title":"...","points":["...","...","..."]}]} avec EXACTEMENT ${chunks.length} beats (un par extrait, dans l'ordre), tout en ${LANG_NAME[lang]}. Le hook est une question percutante ou une affirmation choc de 4 à 7 mots. "keywords" : 12 à 25 mots-clés IMPORTANTS, recopiés EXACTEMENT comme ils apparaissent dans la transcription ci-dessus (même graphie), utilisés pour les faire apparaître à l'écran quand le locuteur les prononce.`,
   ].filter(Boolean).join("\n");
-  for (const [name, , fn] of providers) {
+  for (const [name, fn] of providers) {
     try {
       console.log(`Écriture du scénario via ${name}...`);
       const j = parseJson(await fn(sys, user, { audio }));
@@ -466,6 +358,8 @@ function heuristicBeat(chunk, i, lang) {
 // ---------- main ----------
 async function main() {
   const tr = JSON.parse(readFileSync(TR, "utf8"));
+  if (!Array.isArray(tr.words) || !tr.words.length) throw new Error("transcript.json ne contient aucun mot : rien à scénariser.");
+  if (!(tr.duration > 0)) tr.duration = tr.words[tr.words.length - 1].t1;
   const lang = tr.lang || "fr";
   const chunks = makeChunks(tr.words, tr.duration);
   const kwAll = keywords(chunks.map((c) => c.text).join(" "));
@@ -477,7 +371,8 @@ async function main() {
 
   // Headlines manuelles (content/manual-headlines.txt) : prioritaires, une par beat dans l'ordre.
   let manual = [];
-  if (existsSync(MANUAL)) manual = readFileSync(MANUAL, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+  if (existsSync(MANUAL) && !process.env.NO_MANUAL_HEADLINES) manual = readFileSync(MANUAL, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+  if (manual.length) console.log(`⚠ ${manual.length} headline(s) manuelle(s) de content/manual-headlines.txt utilisée(s) : vide ce fichier après usage, sinon elles s'appliquent aussi aux prochaines vidéos.`);
 
   const degraded = engine === "heuristique";
   const norm = (t) => String(t).replace(/[\p{P}\p{S}\u00A0]/gu, "").replace(DIACRITICS, "").trim();
@@ -539,4 +434,4 @@ async function main() {
   beats.forEach((x, i) => console.log(`  ${i + 1}. [${x.t0.toFixed(0)}s] ${x.headline || "(pas de headline)"}${x.points.length ? `  | ${x.points.length} points` : ""}`));
 }
 
-main();
+main().catch((e) => { console.error(e); process.exit(1); });

@@ -4,24 +4,29 @@ name: Build Video
 # headlines + cartes d'analyse, puis rend la vidéo finale (output/final.mp4).
 # Résultat : onglet Actions -> run -> Artifacts, ET Release "renders" (téléchargeable direct).
 
+# Les Releases dont le tag commence par "shorts" sont pour le workflow « Video to Shorts » (ignorées ici).
 on:
   release:
-    types: [published, edited]
+    types: [published]          # (plus "edited" : modifier le titre d'une release relançait un rendu complet)
   push:
     branches: [main]
-    paths:
+    paths:                      # (plus "scripts/**" : chaque mise à jour du code relançait — et annulait — un rendu)
       - "content/manual-headlines.txt"
-      - "scripts/**"
       - "input/logo*.png"
-      - ".github/workflows/build-video.yml"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Tag de la release à monter (vide = la plus récente qui contient une vidéo)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
 
 concurrency:
-  group: build-video
-  cancel-in-progress: true
+  # une file par release : deux vidéos publiées coup sur coup sont TOUTES LES DEUX rendues (avant : la 1re était annulée)
+  group: build-video-${{ github.event.release.tag_name || inputs.release || github.ref }}
+  cancel-in-progress: false
 
 env:
   # IA GRATUITE (recommandé) : crée une clé gratuite et ajoute-la comme secret du dépôt.
@@ -29,14 +34,21 @@ env:
   #   - GROQ_API_KEY   : clé gratuite console.groq.com (Llama 3.3 70B, très rapide)
   #   - ANTHROPIC_API_KEY : (payant, optionnel)
   # Ordre d'essai : Gemini -> Groq -> Claude -> LLM local Qwen (gratuit mais bien plus faible, surtout en arabe).
+  # Plusieurs clés possibles : secrets GEMINI_API_KEYS / GROQ_API_KEYS (séparées par virgule ou retour à la ligne).
   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
   GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+  GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
 jobs:
   build:
     # évite la boucle : la Release "renders" qui reçoit le résultat ne relance pas le workflow
-    if: github.event_name != 'release' || github.event.release.tag_name != 'renders'
+    if: >-
+      github.event_name != 'release' || (
+        github.event.release.tag_name != 'renders' &&
+        !startsWith(github.event.release.tag_name, 'shorts') &&
+        !startsWith(github.event.release.tag_name, 'out-'))
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -46,31 +58,36 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Outils (ffmpeg, cmake, emoji couleur, Pillow)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg cmake build-essential fonts-noto-color-emoji python3-pil fontconfig
+      - name: Outils (ffmpeg, emoji couleur, Pillow, polices) — avec cache
+        uses: ./.github/actions/setup-media
+        with:
+          build-tools: "true"
 
-      - name: Polices (Poppins ExtraBold + Tajawal ExtraBold pour l'arabe)
-        run: |
-          mkdir -p fonts
-          curl -L --fail -o fonts/Poppins-ExtraBold.ttf "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-ExtraBold.ttf" || echo "Poppins indisponible : repli police système"
-          curl -L --fail -o fonts/Tajawal-ExtraBold.ttf "https://github.com/google/fonts/raw/main/ofl/tajawal/Tajawal-ExtraBold.ttf" || echo "Tajawal indisponible : repli police système"
-          fc-scan --format "%{family} | %{file}\n" fonts/*.ttf || true
-
-      - name: Télécharger la vidéo de la dernière Release
+      - name: Télécharger la vidéo de la Release
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # la release qui a déclenché le workflow (avant : toujours « la dernière », même en modifiant une ancienne)
+          WANT_TAG: ${{ github.event.release.tag_name || inputs.release }}
         run: |
           mkdir -p input
-          ASSET_NAME=$(gh release view --repo "${{ github.repository }}" --json assets \
-            -q '.assets[].name' 2>/dev/null | grep -Ei '\.(mp4|mov|mkv|webm|avi|m4v)$' | head -n1 || true)
+          pick_asset() { gh release view "$1" --repo "$REPO" --json assets -q '.assets[].name' 2>/dev/null | grep -Ei '\.(mp4|mov|mkv|webm|avi|m4v)$' | head -n1 || true; }
+          TAG="$WANT_TAG"; ASSET_NAME=""
+          if [ -n "$TAG" ]; then
+            ASSET_NAME=$(pick_asset "$TAG")
+          else
+            # la plus récente release « normale » qui contient une vidéo (on ignore renders, shorts*, out-*)
+            for t in $(gh release list --repo "$REPO" --limit 40 --json tagName -q '.[].tagName'); do
+              case "$t" in renders|shorts*|out-*) continue;; esac
+              ASSET_NAME=$(pick_asset "$t"); [ -n "$ASSET_NAME" ] && { TAG="$t"; break; }
+            done
+          fi
           if [ -z "$ASSET_NAME" ]; then
-            echo "::error::Aucune vidéo dans la dernière Release. Publie une Release avec ta vidéo en pièce jointe."
+            echo "::error::Aucune vidéo trouvée${TAG:+ dans la release $TAG}. Publie une Release avec ta vidéo en pièce jointe."
             exit 1
           fi
-          echo "Vidéo détectée : $ASSET_NAME"
-          gh release download --repo "${{ github.repository }}" --pattern "$ASSET_NAME" --dir input --clobber
+          echo "Release $TAG — vidéo : $ASSET_NAME"
+          gh release download "$TAG" --repo "$REPO" --pattern "$ASSET_NAME" --dir input --clobber
           EXT="${ASSET_NAME##*.}"
           mv "input/$ASSET_NAME" "input/video.$EXT"
           echo "ASSET_BASE=$(basename "$ASSET_NAME" ".$EXT" | tr -c 'A-Za-z0-9._-' '_')" >> "$GITHUB_ENV"
@@ -105,7 +122,7 @@ jobs:
 
       # ---------- llama.cpp + Qwen2.5-7B : uniquement si pas de clé Anthropic ----------
       - name: Cache llama.cpp
-        if: env.GEMINI_API_KEY == '' && env.GROQ_API_KEY == '' && env.ANTHROPIC_API_KEY == ''
+        if: env.GEMINI_API_KEY == '' && env.GEMINI_API_KEYS == '' && env.GROQ_API_KEY == '' && env.GROQ_API_KEYS == '' && env.ANTHROPIC_API_KEY == ''
         id: llama-cache
         uses: actions/cache@v4
         with:
@@ -113,7 +130,7 @@ jobs:
           key: llamacpp-qwen25-7b-v1-${{ runner.os }}
 
       - name: Compiler llama.cpp + télécharger Qwen2.5-7B (si pas en cache)
-        if: env.GEMINI_API_KEY == '' && env.GROQ_API_KEY == '' && env.ANTHROPIC_API_KEY == '' && steps.llama-cache.outputs.cache-hit != 'true'
+        if: env.GEMINI_API_KEY == '' && env.GEMINI_API_KEYS == '' && env.GROQ_API_KEY == '' && env.GROQ_API_KEYS == '' && env.ANTHROPIC_API_KEY == '' && steps.llama-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         run: |
           git clone --depth 1 https://github.com/ggml-org/llama.cpp.git

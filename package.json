@@ -8,6 +8,8 @@
     "plan": "node scripts/plan-video.mjs",
     "emoji": "python3 scripts/make-emoji.py content/plan.json",
     "render": "node scripts/render-video.mjs",
-    "all": "node scripts/transcribe.mjs && node scripts/plan-video.mjs && python3 scripts/make-emoji.py content/plan.json && node scripts/render-video.mjs"
+    "all": "node scripts/transcribe.mjs && node scripts/plan-video.mjs && python3 scripts/make-emoji.py content/plan.json && node scripts/render-video.mjs",
+    "shorts:select": "node scripts/shorts/select.mjs",
+    "shorts:cut": "node scripts/shorts/cut.mjs"
   }
 }

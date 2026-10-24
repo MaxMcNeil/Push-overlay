@@ -1,0 +1,49 @@
+name: "Outils média (ffmpeg, emoji, Pillow, polices)"
+description: "Installe ffmpeg + libass, emoji couleur, Pillow et les polices, avec cache des paquets (évite les miroirs apt lents)."
+inputs:
+  build-tools:
+    description: "true = ajoute cmake/build-essential (compilation de whisper.cpp)"
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Cache des paquets apt
+      uses: actions/cache@v4
+      with:
+        path: ~/apt-archives
+        key: apt-media-v2-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Paquets (ffmpeg, emoji couleur, Pillow)
+      shell: bash
+      run: |
+        set -euo pipefail
+        PKGS="ffmpeg fonts-noto-color-emoji python3-pil fontconfig"
+        [ "${{ inputs.build-tools }}" = "true" ] && PKGS="$PKGS cmake build-essential"
+        need=""
+        for p in $PKGS; do dpkg -s "$p" >/dev/null 2>&1 || need="$need $p"; done
+        if [ -z "$need" ]; then echo "Déjà installés : $PKGS"; else
+          echo "À installer :$need"
+          mkdir -p ~/apt-archives/partial
+          APT="-o Dir::Cache::Archives=$HOME/apt-archives -o Acquire::Retries=4 -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25"
+          # un miroir lent a déjà coûté 25 min (66 ko/s) : on borne chaque tentative et on réessaie
+          for i in 1 2 3; do
+            sudo timeout 300 apt-get update -qq $APT || true
+            if sudo timeout 900 apt-get install -y -qq --no-install-recommends $APT $need; then ok=1; break; fi
+            echo "::warning::apt : tentative $i échouée, nouvel essai..."; ok=0; sleep 5
+          done
+          sudo chown -R "$USER" ~/apt-archives || true
+          sudo rm -f ~/apt-archives/lock || true
+          [ "$ok" = 1 ] || { echo "::error::Installation de ffmpeg impossible (miroir apt indisponible)"; exit 1; }
+        fi
+        ffmpeg -hide_banner -filters 2>/dev/null | grep -qw ass || { echo "::error::ffmpeg sans libass"; exit 1; }
+        ffmpeg -version | head -1
+
+    - name: Polices (Poppins ExtraBold + Tajawal ExtraBold pour l'arabe)
+      shell: bash
+      run: |
+        mkdir -p fonts
+        for f in poppins/Poppins-ExtraBold tajawal/Tajawal-ExtraBold; do
+          n="fonts/$(basename $f).ttf"
+          [ -s "$n" ] || curl -sSL --fail --retry 3 -o "$n" "https://github.com/google/fonts/raw/main/ofl/$f.ttf" || echo "::warning::$(basename $f) indisponible : repli police système"
+        done
+        fc-scan --format "%{family} | %{file}\n" fonts/*.ttf || true

@@ -10,8 +10,14 @@ mkdirSync("state", { recursive: true });
 const plan = existsSync(PLAN) ? JSON.parse(readFileSync(PLAN, "utf8")) : { lang: "fr" };
 const channel = channelOf(plan.lang);
 const history = existsSync(HIST) ? JSON.parse(readFileSync(HIST, "utf8")) : {};
-const st = existsSync("content/style.json") ? JSON.parse(readFileSync("content/style.json", "utf8")) : {};
-const force = process.env.STYLE_ID || st.style || null;
+let st = {};
+try { st = existsSync("content/style.json") ? JSON.parse(readFileSync("content/style.json", "utf8")) : {}; }
+catch (e) { console.log(`⚠ content/style.json illisible (${e.message}) : ignoré.`); }
+let force = process.env.STYLE_ID || st.style || null;
+if (force && force !== "default" && force !== "off" && !PRESETS.some((p) => p.id === force)) {
+  console.log(`⚠ Thème « ${force} » inconnu (thèmes : ${PRESETS.map((p) => p.id).join(", ")}) : choix automatique.`);
+  force = null;
+}
 
 let theme;
 if (force === "default" || force === "off") {
@@ -22,7 +28,7 @@ if (force === "default" || force === "off") {
   theme = { ...theme, micro: microVariation() };
 }
 writeFileSync("content/theme.json", JSON.stringify(theme, null, 2));
-if (!force || force === "default") {
+if (!force && !process.env.NO_STYLE_HISTORY) {
   history[channel] = [...(history[channel] || []), theme.id].slice(-12);
   writeFileSync(HIST, JSON.stringify(history, null, 2) + "\n");
 }

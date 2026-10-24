@@ -1,0 +1,297 @@
+name: Video to Shorts
+
+# Vidéo longue → plusieurs Shorts verticaux montés (hook, headlines, cartes, sous-titres, thèmes variés).
+#
+# SOURCE de la vidéo, au choix :
+#   • Release GitHub dont le TAG commence par "shorts" (ex. shorts-001) avec la vidéo en pièce jointe ;
+#   • la même Release SANS pièce jointe, avec le lien Google Drive dans sa description (vidéo trop lourde) ;
+#   • Actions → Video to Shorts → Run workflow → champ « source » : lien Google Drive, tag de release ou lien direct .mp4.
+# RÉSULTATS : chaque short < SHORTS_RELEASE_MAX_MB (1900 Mo) → Release « out-shorts-… » ; plus lourd → Google Drive
+# (secret RCLONE_CONF requis). Réglable avec le champ « destination ».
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Lien Google Drive, tag de release, ou lien direct .mp4 (vide = dernière release « shorts… »)"
+        required: false
+        default: ""
+      nombre:
+        description: "Nombre de shorts"
+        required: false
+        default: "5"
+      duree_min:
+        description: "Durée minimale d'un short (s)"
+        required: false
+        default: "20"
+      duree_max:
+        description: "Durée maximale d'un short (s)"
+        required: false
+        default: "60"
+      recadrage:
+        description: "Recadrage d'une vidéo horizontale"
+        type: choice
+        options: [auto, "4:5", "1:1", "9:16", none]
+        default: auto
+      position:
+        description: "Partie gardée au recadrage"
+        type: choice
+        options: [center, left, right]
+        default: center
+      consigne:
+        description: "Consigne pour le choix des passages (facultatif, ex. « les moments sur l'économie »)"
+        required: false
+        default: ""
+      destination:
+        description: "Où déposer les shorts"
+        type: choice
+        options: [auto, release, drive, both]
+        default: auto
+
+permissions:
+  contents: write
+
+concurrency:
+  group: shorts-${{ github.event.release.tag_name || github.run_id }}
+  cancel-in-progress: false
+
+env:
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+  GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+  GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+jobs:
+  # ------------------------------------------------------------------ 1. source → transcription → sélection → découpe
+  select:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'shorts')
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    outputs:
+      matrix: ${{ steps.cut.outputs.matrix }}
+      base: ${{ steps.src.outputs.base }}
+      lang: ${{ steps.cut.outputs.lang }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Libérer de l'espace disque (vidéos de plusieurs Go)
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+          df -h / | tail -1
+
+      - name: Outils (ffmpeg…) — avec cache
+        uses: ./.github/actions/setup-media
+        with:
+          build-tools: "true"
+
+      - name: Récupérer la vidéo source (Release, Google Drive ou lien)
+        id: src
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SOURCE: ${{ inputs.source }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
+        run: bash scripts/shorts/fetch-source.sh
+
+      - name: Cache whisper.cpp (repli si Groq indisponible)
+        id: whisper-cache
+        uses: actions/cache@v4
+        with:
+          path: whisper.cpp
+          key: whispercpp-build-v4-${{ runner.os }}
+
+      - name: Compiler whisper.cpp (si pas en cache)
+        if: steps.whisper-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
+          cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+            -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
+          cmake --build whisper.cpp/build -j"$(nproc)" --config Release
+          cd whisper.cpp
+          bash models/download-ggml-model.sh small
+          bash models/download-ggml-model.sh large-v3-turbo-q5_0 || echo "modèle turbo indisponible : whisper small sera utilisé"
+
+      - name: Transcription (Groq par morceaux de 10 min, repli whisper local)
+        run: |
+          rm -f content/script.txt
+          node scripts/transcribe.mjs
+        timeout-minutes: 240
+
+      - name: Choisir les meilleurs passages
+        env:
+          SHORTS_COUNT: ${{ inputs.nombre || '5' }}
+          SHORTS_MIN: ${{ inputs.duree_min || '20' }}
+          SHORTS_MAX: ${{ inputs.duree_max || '60' }}
+          SHORTS_FOCUS: ${{ inputs.consigne }}
+        run: node scripts/shorts/select.mjs
+        timeout-minutes: 30
+
+      - name: Découper les passages
+        id: cut
+        env:
+          SHORTS_CROP: ${{ inputs.recadrage || 'auto' }}
+          SHORTS_CROP_POS: ${{ inputs.position || 'center' }}
+        run: |
+          node scripts/shorts/cut.mjs
+          echo "matrix=$(cat shorts/matrix.json)" >> "$GITHUB_OUTPUT"
+          echo "lang=$(node -p "require('./shorts/selection.json').lang")" >> "$GITHUB_OUTPUT"
+          cp content/transcript.json shorts/source-transcript.json
+
+      - name: Garder la sélection et la transcription
+        uses: actions/upload-artifact@v4
+        with:
+          name: shorts-selection
+          path: |
+            shorts/selection.json
+            shorts/source-transcript.json
+            shorts/clip-*/meta.json
+          retention-days: 14
+
+      - name: Envoyer chaque passage au rendu
+        uses: actions/upload-artifact@v4
+        with:
+          name: clips
+          path: shorts/clip-*/
+          retention-days: 3
+          compression-level: 0
+
+  # ------------------------------------------------------------------ 2. un job de rendu par short (en parallèle)
+  render:
+    needs: select
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        id: ${{ fromJSON(needs.select.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Outils (ffmpeg…) — avec cache
+        uses: ./.github/actions/setup-media
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: clips
+          path: shorts
+
+      - name: Préparer le passage ${{ matrix.id }}
+        run: |
+          D="shorts/clip-${{ matrix.id }}"
+          ls -la "$D"
+          mkdir -p input content
+          rm -f input/video.* content/script.txt content/style.json
+          cp "$D/video.mp4" input/video.mp4
+          cp "$D/transcript.json" content/transcript.json
+          echo vertical > content/orientation.txt
+          echo "STYLE_ID=$(node -p "require('./$D/meta.json').theme")" >> "$GITHUB_ENV"
+          echo "KEY_OFFSET=$((10#${{ matrix.id }} - 1))" >> "$GITHUB_ENV"
+
+      - name: Scénario du short (hook, headlines, cartes)
+        env:
+          NO_MANUAL_HEADLINES: "1"
+        run: node scripts/plan-video.mjs
+        timeout-minutes: 20
+
+      - name: Emojis
+        run: python3 scripts/make-emoji.py content/plan.json
+
+      - name: Thème attribué
+        env:
+          NO_STYLE_HISTORY: "1"
+        run: node scripts/pick-style.mjs
+
+      - name: Rendu vertical
+        env:
+          LAYOUT: shorts
+        run: node scripts/render-video.mjs
+        timeout-minutes: 60
+
+      - name: Nommer le short
+        run: |
+          D="shorts/clip-${{ matrix.id }}"
+          SLUG=$(node -e "const m=require('./$D/meta.json');const t=(m.title||m.hook||'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,40);process.stdout.write(t||'short')")
+          mkdir -p out
+          cp output/final.mp4 "out/short-${{ matrix.id }}-${SLUG}.mp4"
+          cp content/plan.json "out/short-${{ matrix.id }}.plan.json"
+          cp "$D/meta.json" "out/short-${{ matrix.id }}.meta.json"
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: short-${{ matrix.id }}
+          path: out/
+          retention-days: 14
+          compression-level: 0
+
+  # ------------------------------------------------------------------ 3. dépôt : Release ou Google Drive selon la taille
+  publish:
+    needs: [select, render]
+    if: always() && needs.select.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        continue-on-error: true   # aucun short rendu : publish.sh le signale clairement
+        with:
+          pattern: short-*
+          path: out
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: shorts-selection
+          path: shorts
+
+      - name: Déposer les shorts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ needs.select.outputs.base }}
+          DESTINATION: ${{ inputs.destination || 'auto' }}
+          RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
+          GDRIVE_FOLDER: ${{ vars.GDRIVE_FOLDER || 'Push-overlay/shorts' }}
+          SHORTS_RELEASE_MAX_MB: ${{ vars.SHORTS_RELEASE_MAX_MB || '1900' }}
+          RENDER_RESULT: ${{ needs.render.result }}
+        run: bash scripts/shorts/publish.sh
+
+      - name: Mémoriser les thèmes utilisés
+        continue-on-error: true
+        env:
+          LANG_CH: ${{ needs.select.outputs.lang }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for i in 1 2 3 4; do
+            git fetch -q origin "$DEFAULT_BRANCH" && git checkout -q -f -B style-history "origin/$DEFAULT_BRANCH"
+            node -e '
+              const fs=require("fs"),p="state/style-history.json";fs.mkdirSync("state",{recursive:true});
+              let h={};try{h=JSON.parse(fs.readFileSync(p,"utf8"))}catch{}
+              const ch=process.env.LANG_CH==="ar"?"ar":"fr";
+              const used=fs.readdirSync("out").filter(f=>f.endsWith(".meta.json")).sort().map(f=>JSON.parse(fs.readFileSync("out/"+f,"utf8")).theme).filter(Boolean);
+              h[ch]=[...(h[ch]||[]),...used].slice(-12);fs.writeFileSync(p,JSON.stringify(h,null,2)+"\n");console.log(ch,"→",h[ch].join(" → "));'
+            git add state/style-history.json
+            git diff --cached --quiet && { echo "Historique inchangé."; exit 0; }
+            git commit -q -m "chore: historique des styles (shorts) [skip ci]"
+            git push -q origin "HEAD:$DEFAULT_BRANCH" && exit 0
+            sleep $((i * 4))
+          done
+          echo "⚠ historique non poussé (non bloquant)"

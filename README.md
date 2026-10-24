@@ -1,4 +1,8 @@
-# Push-overlay — vidéo brute → vidéo finale montée
+# Push-overlay — vidéo brute → vidéo finale montée (+ Shorts)
+
+Deux workflows :
+- **Build Video** : une vidéo → la même vidéo montée (`final.mp4`). Release « normale » (tag libre, sauf `shorts…`).
+- **Video to Shorts** : une vidéo longue → plusieurs **Shorts verticaux** montés. Release dont le **tag commence par `shorts`**, ou lien Google Drive.
 
 Tu déposes une vidéo dans une **Release GitHub**. Le workflow la transcrit, écrit un scénario
 (hook + headlines choc + cartes d'analyse) et **rend `final.mp4`** : horizontal si ta vidéo est
@@ -47,7 +51,41 @@ Chaque vidéo reçoit automatiquement un **thème** différent parmi 8 (palette 
 - Le logo et la place de la headline ne changent jamais (identité de chaîne). Le thème utilisé est noté dans `theme.json` (Artifacts).
 - À toi de varier aussi le fond (commentaire, angles, durée) : la politique de YouTube vise surtout les contenus produits en série sans valeur ajoutée propre.
 
-## Utilisation
+## Video to Shorts (vidéo longue → Shorts)
+
+**Déposer la vidéo**, au choix :
+1. *Releases → Draft a new release* → tag **`shorts-001`** (tout tag qui commence par `shorts`) → joins la vidéo → **Publish** ;
+2. vidéo trop lourde (> 2 Go) : même release **sans pièce jointe**, avec le **lien Google Drive** dans la description ;
+3. ou *Actions → Video to Shorts → Run workflow* → champ **source** = lien Google Drive (ou tag de release, ou lien direct .mp4).
+   Les autres champs : nombre de shorts (5), durée min/max (20–60 s), recadrage (auto = vidéo horizontale → 4:5 centré), consigne libre (« les passages sur l'économie »), destination.
+
+**Ce que fait le workflow** : transcription (Groq par morceaux de 10 min, repli whisper local) → l'IA choisit les meilleurs passages
+(idée complète, accroche forte, chute nette, sans chevauchement ; elle répond par numéros de phrases, donc les coupes tombent
+toujours entre deux phrases) → chaque passage est découpé, recadré en vertical et monté **en parallèle** (hook, headlines, cartes,
+sous-titres, ticker des disclaimers) avec **un thème différent par short** → dépôt.
+
+**Résultats** : chaque short < 1 900 Mo → Release **`out-shorts-<date>-<nom>`** (avec un récapitulatif : titre proposé, passage dans la
+source, description, hashtags) ; plus lourd → **Google Drive** (`Push-overlay/shorts/…`). Champ *destination* : `auto` (selon la taille),
+`release`, `drive`, `both`. Les shorts sont aussi dans les *Artifacts* du run pendant 14 jours.
+Mise en page « shorts » : textes et sous-titres remontés hors des zones couvertes par l'interface YouTube/TikTok.
+
+**Google Drive** :
+- *Lire* une vidéo : le fichier doit être partagé « Tous les utilisateurs disposant du lien → Lecteur » (téléchargé avec gdown).
+- *Écrire* sur ton Drive (ou lire un fichier privé / contourner « quota de téléchargement dépassé ») : secret **`RCLONE_CONF`**.
+  Dans Termux : `pkg install rclone` → `rclone config` → `n` → nom `gdrive` → type `drive` → client_id/secret vides → scope `1` (accès complet)
+  → laisser le reste par défaut → navigateur automatique `y` (copie le lien `http://127.0.0.1:53682/…` affiché dans le navigateur du téléphone et connecte ton compte Google) → Shared Drive `n` → `q`.
+  Puis : `gh secret set RCLONE_CONF --repo MaxMcNeil/Push-overlay < ~/.config/rclone/rclone.conf`.
+  Dossier de dépôt modifiable avec la variable de dépôt `GDRIVE_FOLDER` (*Settings → Secrets and variables → Actions → Variables*).
+
+**Durées indicatives** (runner gratuit) : vidéo de 1 h ≈ 5–10 min de transcription Groq (≈ 30–60 min en local), puis ≈ 4 min de rendu par short de 60 s, 5 shorts en parallèle.
+
+### Plusieurs clés IA (recommandé pour les Shorts)
+Les secrets **`GEMINI_API_KEYS`** et **`GROQ_API_KEYS`** acceptent plusieurs clés (séparées par une virgule ou un retour à la ligne).
+Une clé saturée ou refusée est sautée automatiquement, et chaque short commence par une clé différente. Les anciens secrets
+`GEMINI_API_KEY` / `GROQ_API_KEY` restent valables. ⚠ Le quota gratuit est compté **par projet Google** : crée chaque clé Gemini avec
+« Create API key in new project ». Les secrets d'un autre dépôt (ex. Vid-o-presse-finder) ne sont pas visibles ici : il faut les recréer.
+
+## Utilisation (Build Video)
 1. *Releases → Draft a new release* → joins ta vidéo (n'importe quel nom) → **Publish**.
 2. Attends la fin du workflow (onglet Actions).
 3. Récupère `final.mp4` dans la Release **« renders »** (ou dans *Artifacts* du run, avec `plan.json`).
@@ -65,4 +103,5 @@ Prérequis : `ffmpeg` (avec libass), Node 20, Python 3 + Pillow, polices Poppins
 - Les cartes d'analyse sont écrites à partir de **ce qui est dit** + du contexte général ; le LLM peut se tromper : relis `plan.json` pour les sujets sensibles (c'est aussi pour ça que les disclaimers restent affichés).
 - Repli sans LLM : phrases propres tirées de la vidéo, cartes = extrait de la parole (pas d'analyse inédite).
 - Pas de b-roll ni de cartes géographiques automatiques (aucune banque d'images embarquée) : zoom, split-screen, flèches, emojis et graphismes sont générés.
+- `content/orientation.txt` contient « Vertical » : il **force la sortie verticale** même pour une vidéo horizontale (Build Video). Supprime-le pour suivre l'orientation de la vidéo.
 - Les anciens scripts d'overlay OBS (`generate-overlay.mjs`, `templates/`, `docs/`) sont conservés mais ne sont plus lancés par le workflow.

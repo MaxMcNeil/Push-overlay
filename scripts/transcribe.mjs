@@ -1,6 +1,6 @@
 // scripts/transcribe.mjs
-// Transcrit input/video.* en texte AVEC horodatage mot à mot, 100 % local
-// (whisper.cpp compilé par le workflow). Produit :
+// Transcrit input/video.* en texte AVEC horodatage mot à mot : Groq Whisper (gratuit, en ligne) si une clé
+// existe, sinon whisper.cpp local (compilé par le workflow). Vidéos longues : découpage en morceaux de 10 min. Produit :
 //   content/transcript.json  -> { lang, duration, words:[{t0,t1,w}] }  (sert au montage)
 //   content/script.txt       -> texte brut (sert à l'écriture des headlines)
 // Si content/script.txt existe déjà (texte fourni par toi), il est conservé :
@@ -11,6 +11,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { execFileSync } from "child_process";
 import path from "path";
 import { CONTENT_DIR, findVideo, probeVideo, detectLanguage, normLang } from "./lib/util.mjs";
+import { groqKeys } from "./lib/llm.mjs";
 
 const OUT_TXT = path.join(CONTENT_DIR, "script.txt");
 const OUT_JSON = path.join(CONTENT_DIR, "transcript.json");
@@ -20,16 +21,18 @@ const WHISPER_MODELS = ["ggml-large-v3-turbo-q5_0.bin", "ggml-large-v3-turbo.bin
 const GROQ_BASE = process.env.GROQ_BASE_URL || "https://api.groq.com";
 const LANG_MAP = { arabic: "ar", french: "fr", english: "en", italian: "it" };
 
-// Transcription en ligne GRATUITE via Groq (Whisper large-v3, mots horodatés) si GROQ_API_KEY existe.
-async function viaGroq(video) {
-  const key = process.env.GROQ_API_KEY;
-  if (!key) return null;
-  try {
-    const mp3 = path.join(CONTENT_DIR, "audio-asr.mp3");
-    execFileSync("ffmpeg", ["-y", "-v", "error", "-i", video, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", mp3], { stdio: ["ignore", "ignore", "ignore"] });
-    const buf = readFileSync(mp3);
-    if (buf.length > 24 * 1024 * 1024) throw new Error("audio trop gros pour l'envoi (> 24 Mo)");
-    for (let attempt = 0; attempt < 3; attempt++) {
+// Transcription en ligne GRATUITE via Groq (Whisper large-v3, mots horodatés) si GROQ_API_KEY(S) existe.
+// Plusieurs clés acceptées (rotation). Vidéo longue : l'audio est découpé en morceaux de 10 min (limite d'envoi
+// gratuite ≈ 25 Mo), chaque morceau est transcrit puis recalé ; un morceau refusé par Groq passe au whisper local.
+let groqDeadUntil = 0;
+async function groqFile(mp3) {
+  const keys = groqKeys();
+  if (!keys.length || Date.now() < groqDeadUntil) return null;
+  const buf = readFileSync(mp3);
+  if (buf.length > 24 * 1024 * 1024) throw new Error("audio trop gros pour l'envoi (> 24 Mo)");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let minWait = Infinity;
+    for (let ki = 0; ki < keys.length; ki++) {
       const fd = new FormData();
       fd.append("file", new Blob([buf], { type: "audio/mpeg" }), "audio.mp3");
       fd.append("model", process.env.GROQ_ASR_MODEL || "whisper-large-v3");
@@ -37,25 +40,79 @@ async function viaGroq(video) {
       fd.append("timestamp_granularities[]", "word");
       fd.append("temperature", "0");
       if (process.env.ASR_LANGUAGE) fd.append("language", process.env.ASR_LANGUAGE);
-      const res = await fetch(`${GROQ_BASE}/openai/v1/audio/transcriptions`, { method: "POST", headers: { authorization: `Bearer ${key}` }, body: fd, signal: AbortSignal.timeout(5 * 60 * 1000) });
+      const res = await fetch(`${GROQ_BASE}/openai/v1/audio/transcriptions`, { method: "POST", headers: { authorization: `Bearer ${keys[ki]}` }, body: fd, signal: AbortSignal.timeout(5 * 60 * 1000) });
       if (res.status === 429) {
-        const wait = Math.min(60, Number(res.headers.get("retry-after")) || 20 * (attempt + 1));
-        console.log(`  Groq (transcription) : limite atteinte, pause ${wait}s...`);
-        await new Promise((r) => setTimeout(r, wait * 1000));
+        const ra = Number(res.headers.get("retry-after")) || 20;
+        minWait = Math.min(minWait, ra);
+        console.log(`  Groq (transcription, clé ${ki + 1}/${keys.length}) : limite atteinte (réessai dans ${ra}s)`);
         continue;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status} ${(await res.text()).replace(/\s+/g, " ").slice(0, 300)}`);
       const j = await res.json();
       const words = (j.words || []).map((w) => ({ t0: Number(w.start), t1: Number(w.end), w: String(w.word || "").trim() })).filter((w) => w.w && isFinite(w.t0));
-      if (!words.length) throw new Error("aucun mot horodaté dans la réponse");
       const l = String(j.language || "").toLowerCase();
-      return { lang: normLang(LANG_MAP[l] || l), words };
+      return { lang: LANG_MAP[l] || l, words };
     }
-    throw new Error("limite de débit persistante");
-  } catch (e) {
-    console.log(`Transcription Groq indisponible (${e.message}) — repli sur whisper local.`);
-    return null;
+    // quota horaire épuisé (attente longue) : inutile d'attendre, on passe au local pour la suite
+    if (minWait > 75) { groqDeadUntil = Date.now() + minWait * 1000; throw new Error(`quota Groq épuisé pour ${Math.round(minWait / 60)} min`); }
+    console.log(`  pause ${minWait}s...`);
+    await new Promise((r) => setTimeout(r, minWait * 1000));
   }
+  throw new Error("limite de débit persistante");
+}
+
+function localWhisper(wav, label = "") {
+  const model = WHISPER_MODELS.find((m) => existsSync(m));
+  if (!existsSync(WHISPER_BIN) || !model) throw new Error("whisper.cpp ou son modèle est introuvable (voir le workflow).");
+  console.log(`Whisper local${label} : ${path.basename(model)}`);
+  const outBase = path.resolve(wav.replace(/\.wav$/, "") + "-whisper");
+  execFileSync(WHISPER_BIN, ["-m", model, "-f", path.resolve(wav), "-l", process.env.ASR_LANGUAGE || "auto", "-ml", "1", "-sow", "-oj", "-of", outBase], { stdio: "inherit" });
+  const j = JSON.parse(readFileSync(outBase + ".json", "utf8"));
+  const words = [];
+  for (const seg of j.transcription || []) {
+    const w = (seg.text || "").trim();
+    if (!w || /^\[.*\]$/.test(w) || /^\(.*\)$/.test(w)) continue; // [MUSIC], (rires)...
+    words.push({ t0: parseOffsetMs(seg, "from") / 1000, t1: parseOffsetMs(seg, "to") / 1000, w });
+  }
+  return { lang: j.result && j.result.language, words };
+}
+
+const CHUNK = Number(process.env.ASR_CHUNK_SEC || 600);
+async function transcribeAll(video, duration) {
+  const n = duration > CHUNK * 1.5 ? Math.ceil(duration / CHUNK) : 1;
+  const words = [];
+  const langs = {};
+  let engines = new Set();
+  for (let i = 0; i < n; i++) {
+    const off = i * CHUNK;
+    const cut = n > 1 ? ["-ss", String(off), "-t", String(CHUNK)] : [];
+    const label = n > 1 ? ` [morceau ${i + 1}/${n}]` : "";
+    let r = null;
+    if (groqKeys().length && Date.now() >= groqDeadUntil) {
+      try {
+        const mp3 = path.join(CONTENT_DIR, `audio-asr-${i}.mp3`);
+        execFileSync("ffmpeg", ["-y", "-v", "error", ...cut, "-i", video, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", mp3], { stdio: ["ignore", "ignore", "inherit"] });
+        r = await groqFile(mp3);
+        if (r && !r.words.length && n === 1) { console.log("Groq : aucun mot horodaté — repli sur whisper local."); r = null; }
+        if (r) engines.add("Groq Whisper large-v3");
+      } catch (e) {
+        console.log(`Transcription Groq indisponible${label} (${e.message}) — repli sur whisper local.`);
+        r = null;
+      }
+    }
+    if (!r) {
+      const wav = path.join(CONTENT_DIR, n > 1 ? `audio-${i}.wav` : "audio.wav");
+      execFileSync("ffmpeg", ["-y", "-v", "error", ...cut, "-i", video, "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav], { stdio: "inherit" });
+      r = localWhisper(wav, label);
+      engines.add("whisper local");
+    }
+    for (const w of r.words) words.push({ t0: +(w.t0 + off).toFixed(3), t1: +(w.t1 + off).toFixed(3), w: w.w });
+    const lg = normLang(r.lang);
+    langs[lg] = (langs[lg] || 0) + r.words.length;
+    if (n > 1) console.log(`  morceau ${i + 1}/${n} : ${r.words.length} mots`);
+  }
+  const lang = Object.entries(langs).sort((a, b) => b[1] - a[1])[0]?.[0] || "fr";
+  return { lang, words, engine: [...engines].join(" + ") };
 }
 
 function hasUsableScript() {
@@ -92,42 +149,11 @@ async function main() {
   }
 
   if (!info.hasAudio) throw new Error("La vidéo n'a pas de piste audio : rien à transcrire. Fournis content/script.txt.");
-  const groq = await viaGroq(video);
-  if (groq) {
-    writeFileSync(OUT_JSON, JSON.stringify({ lang: groq.lang, duration: info.duration, words: groq.words }, null, 1));
-    writeFileSync(OUT_TXT, groq.words.map((x) => x.w).join(" ").replace(/\s+([,.;:!?؟،])/g, "$1") + "\n");
-    console.log(`Transcription Groq (Whisper large-v3) : ${groq.words.length} mots, langue ${groq.lang}.`);
-    return;
-  }
-  const WHISPER_MODEL = WHISPER_MODELS.find((m) => existsSync(m));
-  if (!existsSync(WHISPER_BIN) || !WHISPER_MODEL) {
-    throw new Error("whisper.cpp ou son modèle est introuvable (voir le workflow).");
-  }
-  console.log(`Modèle whisper local : ${path.basename(WHISPER_MODEL)}`);
-
-  const wav = path.join(CONTENT_DIR, "audio.wav");
-  console.log("Extraction audio (mono 16 kHz)...");
-  execFileSync("ffmpeg", ["-y", "-v", "error", "-i", video, "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav], { stdio: "inherit" });
-
-  console.log("Transcription whisper.cpp (langue auto, mot à mot)...");
-  const outBase = path.resolve(CONTENT_DIR, "whisper-output");
-  execFileSync(
-    WHISPER_BIN,
-    ["-m", WHISPER_MODEL, "-f", path.resolve(wav), "-l", "auto", "-ml", "1", "-sow", "-oj", "-of", outBase],
-    { stdio: "inherit" }
-  );
-  const j = JSON.parse(readFileSync(outBase + ".json", "utf8"));
-  const lang = normLang(j.result && j.result.language);
-  const words = [];
-  for (const seg of j.transcription || []) {
-    const w = (seg.text || "").trim();
-    if (!w || /^\[.*\]$/.test(w) || /^\(.*\)$/.test(w)) continue; // [MUSIC], (rires)...
-    words.push({ t0: parseOffsetMs(seg, "from") / 1000, t1: parseOffsetMs(seg, "to") / 1000, w });
-  }
-  if (words.length === 0) throw new Error("Aucune parole détectée dans la vidéo.");
-  writeFileSync(OUT_JSON, JSON.stringify({ lang, duration: info.duration, words }, null, 1));
-  writeFileSync(OUT_TXT, words.map((x) => x.w).join(" ").replace(/\s+([,.;:!?؟،])/g, "$1") + "\n");
-  console.log(`${words.length} mots, langue détectée : ${lang}.`);
+  const r = await transcribeAll(video, info.duration);
+  if (r.words.length === 0) throw new Error("Aucune parole détectée dans la vidéo.");
+  writeFileSync(OUT_JSON, JSON.stringify({ lang: r.lang, duration: info.duration, words: r.words }, null, 1));
+  writeFileSync(OUT_TXT, r.words.map((x) => x.w).join(" ").replace(/\s+([,.;:!?؟،])/g, "$1") + "\n");
+  console.log(`Transcription ${r.engine} : ${r.words.length} mots, langue ${r.lang}.`);
 }
 
 await main();
