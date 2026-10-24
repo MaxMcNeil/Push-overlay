@@ -18,12 +18,18 @@ if (!src) throw new Error("Aucune vidéo source dans input/.");
 const info = probeVideo(src);
 const mode = String(process.env.SHORTS_CROP || "auto").toLowerCase();
 const pos = String(process.env.SHORTS_CROP_POS || "center").toLowerCase();
-const ratio = { "4:5": [4, 5], "1:1": [1, 1], "9:16": [9, 16] }[mode] || (mode === "auto" && info.width > info.height * 1.05 ? [4, 5] : null);
+// auto : une vidéo horizontale est recadrée en 9:16 (la vidéo remplit alors ≈ 90 % de l'écran du short),
+// centrée sur le visage du locuteur s'il a été détecté (shorts/source-face.json), sinon au centre.
+const ratio = { "4:5": [4, 5], "1:1": [1, 1], "9:16": [9, 16] }[mode] || (mode === "auto" && info.width > info.height * 1.05 ? [9, 16] : null);
+let faceCx = null;
+try { const f = JSON.parse(readFileSync("shorts/source-face.json", "utf8")); if (f.found && f.cx > 0 && f.cx < 1) faceCx = f.cx; } catch {}
 let vf = "";
 if (ratio && mode !== "none") {
   const [rw, rh] = ratio;
   const cw = `trunc(min(iw\\,ih*${rw}/${rh})/2)*2`, ch = `trunc(min(ih\\,iw*${rh}/${rw})/2)*2`;
-  const x = pos === "left" ? "0" : pos === "right" ? "iw-ow" : "(iw-ow)/2";
+  const x = pos === "left" ? "0" : pos === "right" ? "iw-ow"
+    : faceCx !== null ? `max(0\\,min(iw-ow\\,iw*${faceCx.toFixed(3)}-ow/2))` : "(iw-ow)/2";
+  if (pos === "center" && faceCx !== null) console.log(`Recadrage centré sur le visage (x = ${Math.round(faceCx * 100)} % de la largeur)`);
   vf = `crop=${cw}:${ch}:${x}:(ih-oh)/2`;
 }
 console.log(`Source ${info.width}x${info.height}, ${info.duration.toFixed(0)} s — recadrage : ${vf ? `${ratio.join(":")} (${pos})` : "aucun"}`);

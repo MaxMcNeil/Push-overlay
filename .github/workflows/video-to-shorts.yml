@@ -31,12 +31,12 @@ on:
         required: false
         default: "90"
       recadrage:
-        description: "Recadrage d'une vidéo horizontale"
+        description: "Recadrage d'une vidéo horizontale (auto = 9:16 centré sur le visage)"
         type: choice
-        options: [auto, "4:5", "1:1", "9:16", none]
+        options: [auto, "9:16", "4:5", "1:1", none]
         default: auto
       position:
-        description: "Partie gardée au recadrage"
+        description: "Partie gardée au recadrage (center = suit le visage s'il est détecté)"
         type: choice
         options: [center, left, right]
         default: center
@@ -91,6 +91,7 @@ jobs:
         uses: ./.github/actions/setup-media
         with:
           build-tools: "true"
+          opencv: "true"
 
       - name: Récupérer la vidéo source (Release, Google Drive ou lien)
         id: src
@@ -142,6 +143,8 @@ jobs:
           SHORTS_CROP: ${{ inputs.recadrage || 'auto' }}
           SHORTS_CROP_POS: ${{ inputs.position || 'center' }}
         run: |
+          python3 scripts/face-box.py input/video.* 80 > shorts/source-face.json 2>/dev/null || echo '{"found":false}' > shorts/source-face.json
+          echo "Visage dans la source : $(cat shorts/source-face.json)"
           node scripts/shorts/cut.mjs
           echo "matrix=$(cat shorts/matrix.json)" >> "$GITHUB_OUTPUT"
           echo "lang=$(node -p "require('./shorts/selection.json').lang")" >> "$GITHUB_OUTPUT"
@@ -184,6 +187,8 @@ jobs:
 
       - name: Outils (ffmpeg…) — avec cache
         uses: ./.github/actions/setup-media
+        with:
+          opencv: "true"
 
       - uses: actions/download-artifact@v4
         with:
@@ -199,6 +204,9 @@ jobs:
           cp "$D/video.mp4" input/video.mp4
           cp "$D/transcript.json" content/transcript.json
           echo vertical > content/orientation.txt
+          # où est le visage, et la vidéo a-t-elle déjà des sous-titres incrustés ? (aucun texte ne doit passer dessus)
+          python3 scripts/face-box.py input/video.mp4 60 > content/face.json 2>/dev/null || echo '{"found":false}' > content/face.json
+          echo "Visage / sous-titres incrustés : $(cat content/face.json)"
           echo "STYLE_ID=$(node -p "require('./$D/meta.json').theme")" >> "$GITHUB_ENV"
           echo "KEY_OFFSET=$((10#${{ matrix.id }} - 1))" >> "$GITHUB_ENV"
 

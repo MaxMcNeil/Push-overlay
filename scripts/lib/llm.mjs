@@ -95,7 +95,13 @@ export async function callGemini(sys, user, ctx = {}) {
             throw new Error(`${tag} : HTTP ${res.status} ${body}`);
           }
           const d = await res.json();
-          const txt = (d.candidates?.[0]?.content?.parts || []).map((x) => x.text || "").join("");
+          const fin = d.candidates?.[0]?.finishReason;
+          const txt = (d.candidates?.[0]?.content?.parts || []).filter((x) => !x.thought).map((x) => x.text || "").join("");
+          if (fin === "MAX_TOKENS") {
+            // les modèles "qui réfléchissent" consomment le budget de sortie : réponse coupée → on redemande avec plus de place
+            if ((ctx.maxTokens || 8192) < 60000) { console.log(`  ${tag} : réponse coupée (MAX_TOKENS) → nouvel essai avec plus de place`); ctx = { ...ctx, maxTokens: 65536 }; ki--; continue; }
+            console.log(`  ${tag} : réponse coupée même avec 65 536 jetons`);
+          }
           if (!txt) { lastErr = new Error(`${tag} : réponse vide (${d.candidates?.[0]?.finishReason || d.promptFeedback?.blockReason || "?"})`); console.log(`  ${lastErr.message}`); continue; }
           console.log(`  Gemini : modèle utilisé = ${m} (clé ${ki + 1}/${keys.length})`);
           return txt;
@@ -122,7 +128,8 @@ export async function callGroq(sys, user, ctx = {}) {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${keys[ki]}` },
         body: JSON.stringify({
-          model, temperature: ctx.temperature ?? 0.6, max_tokens: ctx.maxTokens || 4096,
+          // l'offre gratuite compte max_tokens dans la limite par minute (≈ 12 000) : on plafonne la réponse
+          model, temperature: ctx.temperature ?? 0.6, max_tokens: Math.min(ctx.maxTokens || 4096, Number(process.env.GROQ_MAX_TOKENS || 4096)),
           ...(ctx.json === false ? {} : { response_format: { type: "json_object" } }),
           messages: [{ role: "system", content: sys }, { role: "user", content: user }],
         }),

@@ -48,6 +48,7 @@ const sel = (() => { try { return JSON.parse(fs.readFileSync("shorts/selection.j
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const files = fs.readdirSync("out").filter((f) => /^short-\d+.*\.mp4$/.test(f));
 console.log(`Shorts générés automatiquement (moteur de sélection : ${sel.engine || "?"}).\n`);
+if (sel.errors?.length) console.log(`⚠ Incidents IA pendant la sélection :\n${sel.errors.map((e) => "- " + e).join("\n")}\n`);
 for (const c of sel.clips) {
   const f = files.find((x) => x.startsWith(`short-${c.id}-`));
   let plan = {}; try { plan = JSON.parse(fs.readFileSync(`out/short-${c.id}.plan.json`, "utf8")); } catch {}

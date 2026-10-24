@@ -163,15 +163,68 @@ const L = vertical
       panel: { x: 1210, y: 185, w: 660, h: 640 }, subsY: 1000, subsSize: 78, subsPx: 1560, subsWords: 5,
       ticker: { y: 1020, h: 54, size: 30 }, bannerMaxLines: 2, bannerSizes: [76, 66, 58, 52, 46, 40, 34], titleSize: 50, bodySize: 33, hookSize: 88,
     };
-// Mise en page "shorts" (LAYOUT=shorts, vertical) : tout remonte pour rester HORS des zones couvertes par
-// l'interface YouTube Shorts / TikTok / Reels (titre + description en bas ≈ 400 px, barre de recherche en haut).
-if (vertical && process.env.LAYOUT === "shorts") {
+// Mise en page "shorts" (LAYOUT=shorts, vertical) : la vidéo occupe ≈ 90 % de l'écran et AUCUN texte ne passe sur
+// le visage. La position du visage vient de content/face.json (scripts/face-box.py) ; les textes se rangent dans les
+// bandes libres au-dessus / au-dessous du visage, sans descendre dans la zone couverte par l'interface des applis
+// (titre + description en bas ≈ 420 px, en-tête en haut ≈ 140 px).
+const SHORTS = vertical && process.env.LAYOUT === "shorts";
+let NO_CARD = false, HOOK_ZONE = null, STICKER_AT = null, AUTO_SUBS_OFF = false;
+if (SHORTS) {
+  const SAFE_TOP = 140, SAFE_BOT = 1500;
+  const box = { x: 40, y: 60, w: 1000, h: 1800 };
+  const win = fit(box, srcAspect);
+  let face = { found: false, y0: 0.08, y1: 0.56 }, caps = null; // défaut : visage d'un selfie (haut/milieu)
+  try {
+    if (existsSync(`${CONTENT_DIR}/face.json`)) {
+      const f = JSON.parse(readFileSync(`${CONTENT_DIR}/face.json`, "utf8"));
+      if (f.found) face = f;
+      caps = f.captions || null;
+    }
+  } catch {}
+  // zoom permanent (×1.12) et zooms "punch" (×1.34) : ce qui est loin du centre s'en éloigne encore → marges
+  const fy = (v, z = 1.34) => win.y + win.h * (0.5 + (v - 0.5) * z);
+  const band = (b, z) => ({ y0: Math.min(fy(b.y0, z), fy(b.y0, 1)) - 14, y1: Math.max(fy(b.y1, z), fy(b.y1, 1)) + 14 });
+  const prot = [{ what: "visage", ...band(face, 1.34) }];
+  if (caps) prot.push({ what: "sous-titres incrustés", ...band(caps, 1.34) });
+  prot.forEach((p) => console.log(`Zone protégée (${p.what}${p.what === "visage" && !face.found ? ", position par défaut" : ""}) : y ${Math.round(p.y0)}→${Math.round(p.y1)} px — aucun texte dessus`));
+  if (caps && !process.env.SUBTITLES) { AUTO_SUBS_OFF = true; console.log("La vidéo a déjà des sous-titres incrustés : nos sous-titres sont désactivés (SUBTITLES=full pour forcer)."); }
+  // bandes libres = zone sûre moins les zones protégées
+  let gaps = [{ y0: SAFE_TOP, y1: SAFE_BOT }];
+  for (const p of prot) gaps = gaps.flatMap((g) => [{ y0: g.y0, y1: Math.min(g.y1, p.y0) }, { y0: Math.max(g.y0, p.y1), y1: g.y1 }]).filter((g) => g.y1 - g.y0 > 40);
+  const faceMid = (prot[0].y0 + prot[0].y1) / 2;
+  const room = (g) => g.y1 - g.y0;
+  const take = (g, h, fromBottom) => { const y = fromBottom ? g.y1 - h : g.y0; if (fromBottom) g.y1 -= h + 10; else g.y0 += h + 10; return y; };
+  const lowest = (min) => gaps.filter((g) => room(g) >= min).sort((x, y) => y.y1 - x.y1)[0];
+  // 1) ticker des disclaimers (toujours visible) : en bas de la bande libre la plus basse
+  const gT = lowest(54);
+  const tick = { y: gT ? take(gT, 46, true) : SAFE_BOT - 50, h: 46, size: 24 };
+  if (!gT) console.log("⚠ Pas de place libre pour le ticker : placé en bas de la zone sûre.");
+  // 2) sous-titres (≈ 125 px) : la bande libre la plus basse
+  const subsOn = !AUTO_SUBS_OFF && String(process.env.SUBTITLES || "full") !== "off";
+  let subsY = tick.y - 10;
+  if (subsOn) { const gS = lowest(125); if (gS) subsY = take(gS, 125, true) + 119; }
+  // 3) bandeau de headline (logo à sa gauche) : au-dessus du visage si la place existe, sinon la plus grande bande libre
+  const above = gaps.filter((g) => g.y1 <= faceMid && room(g) >= 120).sort((x, y) => room(y) - room(x))[0];
+  const gB = above || gaps.filter((g) => room(g) >= 100).sort((x, y) => room(y) - room(x))[0];
+  let ban;
+  if (gB) { const h = Math.min(170, room(gB)); ban = { y: take(gB, h, gB !== above), h }; }
+  else { ban = { y: SAFE_TOP, h: 100 }; console.log("⚠ Visage très grand : bandeau réduit en haut de l'écran."); }
+  const logo = Math.min(110, ban.h - 10);
+  // 4) carte d'analyse : seulement s'il reste une vraie place libre (sinon pas de carte : la vidéo reste dégagée)
+  const gC = gaps.filter((g) => room(g) >= 250).sort((x, y) => room(y) - room(x))[0];
+  NO_CARD = !gC;
+  const panel = gC ? { x: 60, y: gC.y0, w: 960, h: Math.min(520, room(gC)) } : { x: 60, y: 0, w: 960, h: 300 };
+  // 5) hook (3 premières s, le bandeau n'est pas encore là) : zone du bandeau, + la carte si elles se touchent
+  const touch = gC && Math.abs(panel.y - (ban.y + ban.h)) < 30;
+  HOOK_ZONE = touch ? { y0: ban.y, y1: panel.y + panel.h } : { y0: ban.y, y1: ban.y + ban.h };
+  STICKER_AT = { x: 1040 - 120, y: ban.y + ban.h - 70 };
   Object.assign(L, {
-    logo: { x: 40, y: 150, w: 110, h: 110 }, banner: { x: 166, y: 135, w: 874, h: 190 },
-    normalBox: { x: 40, y: 350, w: 1000, h: 1040 }, splitBox: { x: 40, y: 350, w: 520, h: 860 },
-    panel: { x: 580, y: 350, w: 460, h: 860 }, subsY: 1360, ticker: { y: 1440, h: 50, size: 26 },
+    logo: { x: 50, y: Math.round(ban.y + (ban.h - logo) / 2), w: logo, h: logo },
+    banner: { x: 50 + logo + 14, y: Math.round(ban.y), w: 1030 - (50 + logo + 14), h: Math.round(ban.h) },
+    normalBox: box, splitBox: box, panel, subsY: Math.round(subsY), ticker: tick,
+    bannerMaxLines: ban.h >= 150 ? 3 : 2, subsSize: 66,
   });
-  console.log("Mise en page : shorts (zones de sécurité des applis respectées)");
+  console.log(`Mise en page : shorts — vidéo ${win.w}x${win.h} (${Math.round((win.w * win.h * 100) / (W * H))} % de l'écran), bandeau y=${Math.round(ban.y)}, ${subsOn ? `sous-titres y=${Math.round(subsY)}` : "sans sous-titres"}, ticker y=${Math.round(tick.y)}, carte ${NO_CARD ? "désactivée (pas de place hors visage)" : `y=${Math.round(panel.y)} h=${Math.round(panel.h)}`}`);
 }
 const logoR = mirror(L.logo);
 const bannerR = (() => {
@@ -191,7 +244,7 @@ const beats = plan.beats.filter((b) => b.t0 < D).map((b) => ({ ...b, t1: Math.mi
 const segs = [];
 beats.forEach((b, i) => {
   const len = b.t1 - b.t0;
-  const canSplit = len >= 7 && ((b.points && b.points.length) || (b.text && b.text.length > 10));
+  const canSplit = !NO_CARD && len >= 7 && ((b.points && b.points.length) || (b.text && b.text.length > 10));
   const punch = i > 0 && i % 2 === 1 && len >= 4;
   let t = b.t0;
   if (punch) { segs.push({ t0: t, t1: t + 1.9, state: "punch", beat: i }); t += 1.9; }
@@ -461,7 +514,8 @@ merged.filter((s) => s.state === "split").forEach((s) => {
     ly += lines.length * lineH + (pts ? lh(bEm) * 0.5 : 0);
   });
 
-  // flèche pulsante qui relie la carte à la vidéo
+  // flèche pulsante qui relie la carte à la vidéo (inutile en shorts : la carte est posée sur la vidéo)
+  if (SHORTS) return;
   const w = winSplitFinal;
   const ax = layoutRTL ? w.x - 4 : w.x + w.w + 4;
   const ay = w.y + w.h / 2;
@@ -478,12 +532,17 @@ if (plan.hook) {
   let em = L.hookSize;
   let lines = wrapPx(plan.hook, hw - 90, em, 4);
   if (!lines) { em = Math.round(em * 0.8); lines = wrapClamp(plan.hook, hw - 90, em, 4); }
-  const hh = lines.length * lh(em) + 64;
-  const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+  let hh = lines.length * lh(em) + 64;
+  if (HOOK_ZONE) { // shorts : le hook tient dans la bande libre, jamais sur le visage
+    const avail = HOOK_ZONE.y1 - HOOK_ZONE.y0;
+    while (hh > avail && em > 34) { em -= 4; lines = wrapClamp(plan.hook, hw - 90, em, 3); hh = lines.length * lh(em) + 40; }
+  }
+  const cx = box.x + box.w / 2, cy = HOOK_ZONE ? (HOOK_ZONE.y0 + HOOK_ZONE.y1) / 2 : box.y + box.h / 2;
   ass.add(7, t0, t1, `{\\an7\\pos(${cx - hw / 2},${cy - hh / 2})\\bord6${c3(P.gold)}${c1(P.dark, 0.92)}\\shad0\\fad(150,260)\\t(0,300,\\bord10)\\t(300,600,\\bord6)\\p1}${rrect(hw, hh, 34)}{\\p0}`);
   const keys = keyWords(plan.hook, 1);
   lines.forEach((ln, k) => placeWords({ layer: 8, t0, t1, line: ln, em, edge: rtl ? cx + lineW(ln, em) / 2 : cx - lineW(ln, em) / 2, yc: cy + (k - (lines.length - 1) / 2) * lh(em), keys, hi: P.gold, base: P.white, tags: `\\fs${fs(em)}\\bord0\\shad3${c4(P.black, 0.7)}`, stagger: 0.09, fadeOut: 260 }));
-  emojiOverlays.push({ file: emojiFile(plan.hookEmoji), kind: "hook", t0, t1, x: cx - 80, y: cy - hh / 2 - 150, size: 160 });
+  if (HOOK_ZONE) emojiOverlays.push({ file: emojiFile(plan.hookEmoji), kind: "hook", t0, t1, x: cx + hw / 2 - 70, y: cy + hh / 2 - 70, size: 110 });
+  else emojiOverlays.push({ file: emojiFile(plan.hookEmoji), kind: "hook", t0, t1, x: cx - 80, y: cy - hh / 2 - 150, size: 160 });
 }
 
 // stickers emoji (coin de la fenêtre) + petits emojis qui montent
@@ -494,9 +553,9 @@ merged.filter((s) => s.state !== "split").forEach((s) => {
   const size = vertical ? 130 : 140;
   emojiOverlays.push({
     file: emojiFile(b.emoji), kind: "sticker", t0: s.t0 + 0.2, t1: Math.min(s.t1, s.t0 + 3.6),
-    x: layoutRTL ? w.x - size * 0.35 : w.x + w.w - size * 0.65, y: w.y - size * 0.45, size,
+    ...(STICKER_AT ? { x: STICKER_AT.x, y: STICKER_AT.y, size: 110 } : { x: layoutRTL ? w.x - size * 0.35 : w.x + w.w - size * 0.65, y: w.y - size * 0.45, size }),
   });
-  [0, 1].forEach((k) => {
+  if (!SHORTS) [0, 1].forEach((k) => { // (shorts : pas d'emojis volants, ils traverseraient les zones protégées)
     emojiOverlays.push({
       file: emojiFile(b.emoji), kind: "float", t0: s.t0 + 0.5 + k * 0.45, t1: Math.min(s.t1, s.t0 + 0.5 + k * 0.45 + 2.2),
       x: (k ? w.x + w.w * 0.18 : w.x + w.w * 0.78), y: w.y + w.h - 150, size: 78,
@@ -508,7 +567,7 @@ const style = (() => {
   try { return existsSync(`${CONTENT_DIR}/style.json`) ? JSON.parse(readFileSync(`${CONTENT_DIR}/style.json`, "utf8")) : {}; }
   catch (e) { console.log(`⚠ content/style.json illisible (${e.message}) : réglages par défaut.`); return {}; }
 })();
-const subMode = String(process.env.SUBTITLES || style.subtitles || "full").toLowerCase(); // full | keywords | off
+const subMode = AUTO_SUBS_OFF ? "off" : String(process.env.SUBTITLES || style.subtitles || "full").toLowerCase(); // full | keywords | off
 const normTok = (t) => String(t).replace(/[\p{P}\p{S}\u00A0]/gu, "").replace(/[\u064B-\u065F\u0670\u0640]/g, "").trim();
 console.log(`Sous-titres : mode « ${subMode} »`);
 // 8) sous-titres dynamiques mot à mot : pop, légère inclinaison, couleur qui change à chaque phrase

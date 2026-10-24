@@ -4,6 +4,9 @@ inputs:
   build-tools:
     description: "true = ajoute cmake/build-essential (compilation de whisper.cpp)"
     default: "false"
+  opencv:
+    description: "true = installe OpenCV (détection du visage et des sous-titres incrustés)"
+    default: "false"
 runs:
   using: composite
   steps:
@@ -47,3 +50,12 @@ runs:
           [ -s "$n" ] || curl -sSL --fail --retry 3 -o "$n" "https://github.com/google/fonts/raw/main/ofl/$f.ttf" || echo "::warning::$(basename $f) indisponible : repli police système"
         done
         fc-scan --format "%{family} | %{file}\n" fonts/*.ttf || true
+
+    - name: OpenCV (visage / sous-titres incrustés)
+      if: inputs.opencv == 'true'
+      shell: bash
+      run: |
+        python3 -m pip install -q --user --break-system-packages "opencv-python-headless>=4.8,<5" \
+          || python3 -m pip install -q --user "opencv-python-headless>=4.8,<5" \
+          || echo "::warning::OpenCV indisponible : position du visage par défaut"
+        python3 -c "import cv2; print('OpenCV', cv2.__version__)" || true
