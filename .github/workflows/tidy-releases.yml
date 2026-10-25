@@ -33,6 +33,7 @@ jobs:
             gh release list --repo "$REPO" --limit 100 --json tagName,name -q '.[] | "\(.tagName)\t\(.name)"' | while IFS=$'\t' read -r t n; do
               case "$t" in
                 renders) r="🎬 résultat Build Video";; out-shorts) r="✂️ résultat Shorts";;
+                out-chaine-*) r="🔗 shorts d'une chaîne (supprimés après 2 jours)";;
                 [Ss]hort*) r="📥 vidéo déposée pour les Shorts";; *) r="📥 vidéo déposée pour Build Video";;
               esac
               echo "| \`$t\` — $n | $r |"

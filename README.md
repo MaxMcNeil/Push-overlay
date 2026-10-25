@@ -113,6 +113,14 @@ Chaque nouveau résultat **remplace** le précédent : Build Video garde une seu
 release « out-shorts » (et un seul dossier Drive `…/derniers`). Les anciennes vidéos déposées sont supprimées après traitement (on garde
 la dernière). Les Artifacts des runs sont gardés 3 jours (1 jour pour les passages intermédiaires).
 
+### 🔗 Chaîne automatique (fond vert → montage → shorts)
+
+Lancé tout seul par Montage LV final quand le fond vert a été lancé avec **enchainer** : la vidéo arrive par Google
+Drive (privé, secret `RCLONE_CONF` requis, même compte Google que les autres dépôts), les shorts vont dans une
+release à part **`out-chaine-<id>`**, supprimée après 2 jours. `out-shorts` et le dossier Drive « derniers » ne sont
+jamais touchés. Rien à configurer ici en plus de `RCLONE_CONF`. Guide complet : README de
+vdo-BACKGROUND-replace-GREEN-, section « Chaîne ».
+
 ## Utilisation (Build Video)
 1. *Releases → Draft a new release* → joins ta vidéo (n'importe quel nom) → **Publish**.
 2. Attends la fin du workflow (onglet Actions).

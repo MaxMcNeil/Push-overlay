@@ -11,6 +11,9 @@ MAX_MB="${SHORTS_RELEASE_MAX_MB:-1900}"
 DEST="${DESTINATION:-auto}"
 STAMP=$(date -u +%Y%m%d-%H%M)
 TAG="out-shorts"   # une seule release de sortie : chaque lancement remplace la précédente
+# 🔗 CHAÎNE (fond vert → montage → shorts) : release à part « out-chaine-<id> », gardée 2 jours ;
+# tes shorts manuels (out-shorts, dossier Drive « derniers ») ne sont jamais touchés par la chaîne.
+if [ -n "${CHAINE_ID:-}" ]; then TAG="out-chaine-$CHAINE_ID"; fi
 FILES=(out/short-*.mp4)
 SUM="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
@@ -28,6 +31,7 @@ if [ -n "${RCLONE_CONF:-}" ]; then
   [ -n "$REMOTE" ] && rclone about "$REMOTE:" >/dev/null 2>&1 && DRIVE_OK=1 || echo "::warning::RCLONE_CONF présent mais Google Drive injoignable (jeton expiré ?)."
 fi
 DRIVE_DIR="${GDRIVE_FOLDER:-Push-overlay/shorts}/derniers"   # dossier unique, vidé à chaque dépôt
+[ -n "${CHAINE_ID:-}" ] && DRIVE_DIR="${GDRIVE_FOLDER:-Push-overlay/shorts}/chaine-$CHAINE_ID"   # chaîne : dossier à part, jamais vidé
 
 to_release=(); to_drive=()
 for f in "${FILES[@]}"; do
@@ -71,6 +75,12 @@ for (const c of sel.clips) {
 JS
 
 # ---------- Release ----------
+if [ -n "${CHAINE_ID:-}" ]; then
+  # chaîne : seulement les anciennes sorties de chaîne de plus de 2 jours
+  gh release list --repo "$REPO" --limit 100 --json tagName,createdAt \
+    -q '.[] | select(.tagName | startswith("out-chaine-")) | select(.createdAt < (now - 2*86400 | todate)) | .tagName' 2>/dev/null \
+    | while read -r t; do [ -n "$t" ] && { echo "Sortie de chaîne de plus de 2 jours supprimée : $t"; gh release delete "$t" --repo "$REPO" -y --cleanup-tag || true; }; done
+else
 # anciennes releases de sortie (out-shorts, out-shorts-<date>…) supprimées avant de publier les nouvelles
 for t in $(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tagName' | grep -E '^out-shorts' || true); do
   echo "Suppression de l'ancienne release de sortie : $t"; gh release delete "$t" --repo "$REPO" -y --cleanup-tag || true
@@ -80,7 +90,23 @@ for t in $(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tag
   [ "$t" = "${SRC_TAG:-}" ] && continue
   echo "Suppression de l'ancienne vidéo déposée : $t"; gh release delete "$t" --repo "$REPO" -y --cleanup-tag || true
 done
-if [ ${#to_release[@]} -gt 0 ]; then
+fi
+if [ ${#to_release[@]} -gt 0 ] && [ -n "${CHAINE_ID:-}" ]; then
+  { printf '%s\n' "🔗 **Chaîne \`$CHAINE_ID\`** — shorts du montage ${BASE:-?} ($(date -u +%d/%m/%Y)). Release supprimée automatiquement après 2 jours : télécharge tes shorts avant." ""
+    [ -n "${CHAINE_ORIGINE:-}" ] && printf '%s\n' "Montage : ${CHAINE_ORIGINE}" ""
+    printf '%s\n' "---" ""; cat "$NOTES"; } > /tmp/out-notes.md
+  gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 \
+    || gh release create "$TAG" --repo "$REPO" --prerelease --title "🔗 CHAÎNE $CHAINE_ID — ✂️ vidéos courtes" --notes-file /tmp/out-notes.md \
+    || { echo "::error::Création de la release impossible"; exit 1; }
+  UP=0
+  for f in "${to_release[@]}"; do
+    for i in 1 2 3; do gh release upload "$TAG" "$f" --repo "$REPO" --clobber && { UP=$((UP+1)); break; }; echo "réessai $i…"; sleep 5; done
+  done
+  gh release upload "$TAG" out/short-*.meta.json --repo "$REPO" --clobber || true
+  [ "$UP" -gt 0 ] || { echo "::error::Aucun short n'a pu être déposé dans la release $TAG"; exit 1; }
+  echo "### ✅ 🔗 Chaîne : $UP short(s) dans la release « $TAG » (gardée 2 jours)" >> "$SUM"
+  echo "https://github.com/$REPO/releases/tag/$TAG" >> "$SUM"
+elif [ ${#to_release[@]} -gt 0 ]; then
   { printf '%s\n' "✂️ **Tes derniers shorts** (vidéo source : ${BASE:-?}, $(date -u +%d/%m/%Y)) — remplacés à chaque nouvelle découpe." "" \
       "**Pour découper une autre vidéo** : Releases → *Draft a new release* → tag \`shorts-001\` (doit commencer par « shorts ») → joins la vidéo, ou colle son lien Google Drive dans la description → *Publish*." \
       "**Pour un montage complet (pas des shorts)** : tag SANS « short », ex. \`video-001\`." "" "---" ""; cat "$NOTES"; } > /tmp/out-notes.md
@@ -100,7 +126,7 @@ if [ ${#to_drive[@]} -gt 0 ]; then
     echo "::error::${#to_drive[@]} fichier(s) trop lourd(s) pour une release, et Google Drive n'est pas configuré (secret RCLONE_CONF). Ils restent dans les Artifacts du run (14 jours)."
     echo "### ⚠ ${#to_drive[@]} fichier(s) seulement dans les Artifacts (Drive non configuré)" >> "$SUM"
   else
-    rclone delete "$REMOTE:$DRIVE_DIR" -q 2>/dev/null || true   # les anciens shorts partent à la corbeille Drive
+    [ -z "${CHAINE_ID:-}" ] && { rclone delete "$REMOTE:$DRIVE_DIR" -q 2>/dev/null || true; }   # les anciens shorts partent à la corbeille Drive
     for f in "${to_drive[@]}"; do rclone copy "$f" "$REMOTE:$DRIVE_DIR" --retries 3 -q || echo "::error::Envoi Drive échoué : $f"; done
     rclone copy "$NOTES" "$REMOTE:$DRIVE_DIR" -q || true
     echo "### ✅ ${#to_drive[@]} short(s) sur Google Drive : $DRIVE_DIR" >> "$SUM"

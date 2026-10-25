@@ -13,6 +13,9 @@ name: Video to Shorts
 on:
   release:
     types: [published]
+  # 🔗 CHAÎNE : lancé automatiquement par Montage LV final (après un fond vert avec « enchainer »), jamais par un cron
+  repository_dispatch:
+    types: [chaine-shorts]
   workflow_dispatch:
     inputs:
       source:
@@ -55,7 +58,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: shorts-${{ github.event.release.tag_name || github.run_id }}
+  group: shorts-${{ github.event.client_payload.chaine_id || github.event.release.tag_name || github.run_id }}
   cancel-in-progress: false
 
 env:
@@ -103,7 +106,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          SOURCE: ${{ inputs.source }}
+          SOURCE: ${{ inputs.source || github.event.client_payload.video_id }}
           EVENT_TAG: ${{ github.event.release.tag_name }}
           RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
         run: |
@@ -291,6 +294,8 @@ jobs:
           GDRIVE_FOLDER: ${{ vars.GDRIVE_FOLDER || 'Push-overlay/shorts' }}
           SHORTS_RELEASE_MAX_MB: ${{ vars.SHORTS_RELEASE_MAX_MB || '1900' }}
           RENDER_RESULT: ${{ needs.render.result }}
+          CHAINE_ID: ${{ github.event.client_payload.chaine_id }}
+          CHAINE_ORIGINE: ${{ github.event.client_payload.origine }}
         run: bash scripts/shorts/publish.sh
 
       - name: Mémoriser les thèmes utilisés
