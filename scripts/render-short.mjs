@@ -412,10 +412,22 @@ if (D - CTA_START > 2) {
 
 // ---------- caméra : plein écran, jump-zoom par idée, poussée lente, micro-zooms sur les mots-clés ----------
 const Tz = `(on/${FPS})`;
-const beatTerm = beats.map((b, i) => {
+// RELANCES D'ATTENTION : le cadrage change (alternance plan large / serré) à chaque coupe de silence et à chaque
+// nouvelle phrase — au plus toutes les 1,8 s — : les coupes deviennent des « jump cuts » rythmés, jamais un saut brut.
+const cutPts = (tr.cuts || []).filter((t) => t > 0.5 && t < CTA_START - 0.5);
+const sentPts = tr.words.filter((w, i) => i > 0 && (/[.!?؟…]$/.test(tr.words[i - 1].w) || w.t0 - tr.words[i - 1].t1 > 0.35)).map((w) => w.t0);
+const switchPts = [...new Set([...cutPts, ...sentPts].map((t) => +t.toFixed(2)))].sort((a, b) => a - b)
+  .filter((t) => t > HOOK_END - 0.2 && t < CTA_START - 0.3)
+  .reduce((acc, t) => (acc.length && t - acc[acc.length - 1] < 1.8 ? acc : [...acc, t]), []);
+const shots = [0, ...switchPts, D].map((t, i, arr) => (i < arr.length - 1 ? { t0: t, t1: arr[i + 1], z: i % 2 ? ST.jump : 0 } : null)).filter(Boolean).slice(0, 90);
+const jumpTerm = shots.filter((x) => x.z).map((x) => `between(${Tz},${x.t0.toFixed(3)},${(x.t1 - 0.001).toFixed(3)})*${x.z.toFixed(3)}`).join("+") || "0";
+// lente poussée de caméra dans chaque idée
+const pushTerm = beats.map((b) => {
   const len = Math.max(0.5, b.t1 - b.t0);
-  return `between(${Tz},${b.t0.toFixed(3)},${(b.t1 - 0.001).toFixed(3)})*(${(i % 2 ? ST.jump : 0).toFixed(3)}+${ST.push}*(${Tz}-${b.t0.toFixed(3)})/${len.toFixed(3)})`;
+  return `between(${Tz},${b.t0.toFixed(3)},${(b.t1 - 0.001).toFixed(3)})*${ST.push}*(${Tz}-${b.t0.toFixed(3)})/${len.toFixed(3)}`;
 }).join("+") || "0";
+const beatTerm = `${jumpTerm}+${pushTerm}`;
+console.log(`Relances : ${shots.length} plans (changement de cadrage toutes les ${(D / Math.max(1, shots.length)).toFixed(1)} s en moyenne), ${cutPts.length} coupes de silence masquées`);
 const kset = new Set((plan.keywords || []).map((k) => String(k)));
 const norm = (t) => String(t).replace(/[\p{P}\p{S} ]/gu, "").trim();
 let lastK = -9;

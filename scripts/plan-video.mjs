@@ -225,6 +225,8 @@ function audioPart() {
 }
 
 // Un seul appel avec TOUTE la vidéo : le modèle comprend l'histoire d'ensemble (bien meilleur qu'extrait par extrait).
+// budget de temps total de l'écriture du scénario (toutes IA confondues) ; au-delà : repli, le rendu continue
+const PLAN_DEADLINE = Date.now() + Number(process.env.PLAN_BUDGET_MIN || 10) * 60 * 1000;
 async function viaApi(chunks, lang) {
   const providers = llmProviders();
   if (!providers.length) return null;
@@ -241,7 +243,7 @@ async function viaApi(chunks, lang) {
   for (const [name, fn] of providers) {
     try {
       console.log(`Écriture du scénario via ${name}...`);
-      const j = parseJson(await fn(sys, user, { audio }));
+      const j = parseJson(await fn(sys, user, { audio, thinking: 2048, timeoutMs: 4 * 60 * 1000, deadline: PLAN_DEADLINE }));
       if (!j || !Array.isArray(j.beats)) throw new Error("JSON inattendu");
       if (j.summary) console.log(`  Résumé compris par l'IA : ${String(j.summary).slice(0, 220)}`);
       return { engine: name, hook: j.hook, hookEmoji: j.hook_emoji, beats: j.beats, keywords: j.keywords };

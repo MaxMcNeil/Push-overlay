@@ -17,7 +17,11 @@ import { execFileSync } from "child_process";
 import { providers, parseJson } from "../lib/llm.mjs";
 import { findVideo } from "../lib/util.mjs";
 
-const ERRORS = []; // raisons des échecs IA (affichées dans le récapitulatif de la release)
+const ERRORS = [];
+// budget de temps TOTAL de la sélection IA (propositions + juge) ; au-delà : repli heuristique, le workflow continue
+const BUDGET_MS = Number(process.env.SELECT_BUDGET_MIN || 14) * 60 * 1000;
+const DEADLINE = Date.now() + BUDGET_MS;
+const leftMs = () => DEADLINE - Date.now(); // raisons des échecs IA (affichées dans le récapitulatif de la release)
 // L'AUDIO est envoyé à Gemini avec la transcription : il entend le ton, l'émotion, l'ironie, l'insistance — ce qui
 // fait qu'un passage « accroche » ne se lit pas toujours dans le texte. (≤ 13 Mo en 16 kb/s ≈ 1 h 50.)
 function audioPart() {
@@ -149,13 +153,15 @@ async function propose(name, fn) {
     const raw = [];
     for (let k = 0; k < parts.length; k++) {
       if (k) await new Promise((r) => setTimeout(r, 62000));
-      raw.push(...(parseJson(await fn(proposeSys(per), lines(parts[k]), { maxTokens: 3000, temperature: 0.4 }))?.shorts || []));
+      if (leftMs() < 90000) { console.log("  budget de temps presque épuisé : on s'arrête aux parties déjà lues"); break; }
+      raw.push(...(parseJson(await fn(proposeSys(per), lines(parts[k]), { maxTokens: 3000, temperature: 0.4, deadline: DEADLINE }))?.shorts || []));
     }
     return raw;
   }
-  const audio = name === "gemini" ? audioPart() : null;
+  // audio joint seulement si la vidéo n'est pas trop longue (sinon requête très lente) — le texte suffit alors
+  const audio = name === "gemini" && DUR <= 40 * 60 ? audioPart() : null;
   console.log(`Propositions de passages via ${name}${audio ? " (transcription + audio)" : ""}...`);
-  const txt = await fn(proposeSys(want), (audio ? "L'AUDIO de la vidéo est joint : écoute le ton et l'intensité du locuteur.\n\n" : "") + all, { audio, maxTokens: 24000, temperature: 0.4, timeoutMs: 6 * 60 * 1000 });
+  const txt = await fn(proposeSys(want), (audio ? "L'AUDIO de la vidéo est joint : écoute le ton et l'intensité du locuteur.\n\n" : "") + all, { audio, maxTokens: 24000, temperature: 0.4, timeoutMs: 5 * 60 * 1000, thinking: 4096, deadline: DEADLINE - Math.min(3 * 60 * 1000, BUDGET_MS * 0.25) });
   const j = parseJson(txt);
   if (!j) throw new Error(`réponse illisible (début : ${String(txt).replace(/\s+/g, " ").slice(0, 160)})`);
   return j.shorts || [];
@@ -176,7 +182,7 @@ function judgeSys() {
 }
 async function judge(fn, cands) {
   const user = cands.map((c) => `=== id ${c.key} (${Math.round(c.t1 - c.t0)} s) ===\n${textOf(c.a, c.b).slice(0, 2500)}`).join("\n\n");
-  const j = parseJson(await fn(judgeSys(), user, { maxTokens: 16000, temperature: 0.2, timeoutMs: 4 * 60 * 1000 }));
+  const j = parseJson(await fn(judgeSys(), user, { maxTokens: 16000, temperature: 0.2, timeoutMs: 3 * 60 * 1000, thinking: 2048, deadline: DEADLINE }));
   const map = new Map();
   for (const v of j?.verdicts || []) map.set(String(v.id), v);
   return map;
@@ -210,6 +216,7 @@ function pickNonOverlapping(cands, n) {
 
 async function viaLLM() {
   for (const [name, fn] of providers()) {
+    if (leftMs() < 60000) { ERRORS.push("budget de temps de la sélection épuisé"); console.log("Budget de temps épuisé : repli heuristique."); break; }
     try {
       const raw = await propose(name, fn);
       let cands = toCandidates(raw, "ia");
@@ -217,7 +224,8 @@ async function viaLLM() {
       console.log(`  ${raw.length} propositions, ${cands.length} gardées après contrôle des durées${ext ? ` (${ext} prolongée(s) jusqu'à la fin de l'idée)` : ""}.`);
       if (!cands.length) throw new Error("aucun passage exploitable dans la réponse");
       cands = pickNonOverlapping(cands, COUNT + 3);
-      // juge : relit le texte complet de chaque passage
+      // juge : relit le texte complet de chaque passage (sauté si le budget de temps est presque épuisé)
+      if (leftMs() < 45000) { console.log("  pas le temps pour la relecture : sélection sans juge."); return { engine: name, clips: pickNonOverlapping(cands, COUNT) }; }
       try {
         const v = await judge(fn, cands);
         if (v.size) {

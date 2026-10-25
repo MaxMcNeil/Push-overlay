@@ -60,12 +60,19 @@ export async function callGemini(sys, user, ctx = {}) {
   const models = await geminiModels(keys[0]);
   const dead = new Set(); // clés refusées (400/403) : inutile de les réessayer
   let lastErr = new Error("aucun modèle Gemini disponible");
-  for (const m of models) {
+  let timeouts = 0;
+  // BUDGET DE TEMPS : ctx.deadline (horodatage ms). Jamais d'appel qui dépasse le budget global de l'étape :
+  // au-delà, on rend la main (fournisseur suivant ou repli) au lieu de bloquer le workflow jusqu'à son délai maximal.
+  const left = () => (ctx.deadline ? ctx.deadline - Date.now() : Infinity);
+  let thinking = ctx.thinking; // budget de « réflexion » limité = réponses bien plus rapides
+  modelLoop: for (const m of models) {
     for (let round = 0; round < 2; round++) {
       let saturated = 0;
       for (let ki = 0; ki < keys.length; ki++) {
         if (dead.has(ki)) continue;
         const tag = `Gemini ${m} (clé ${ki + 1}/${keys.length})`;
+        if (left() < 25000) throw new Error(`budget de temps épuisé (dernière erreur : ${lastErr.message})`);
+        const tmo = Math.max(15000, Math.min(ctx.timeoutMs || 4 * 60 * 1000, left() - 5000));
         try {
           const res = await fetch(`${GEMINI_BASE}/v1beta/models/${m}:generateContent`, {
             method: "POST",
@@ -73,14 +80,18 @@ export async function callGemini(sys, user, ctx = {}) {
             body: JSON.stringify({
               systemInstruction: { parts: [{ text: sys }] },
               contents: [{ role: "user", parts: [...(ctx.audio ? [ctx.audio] : []), { text: user }] }],
-              generationConfig: { temperature: ctx.temperature ?? 0.7, responseMimeType: ctx.json === false ? "text/plain" : "application/json", maxOutputTokens: ctx.maxTokens || 8192 },
+              generationConfig: { temperature: ctx.temperature ?? 0.7, responseMimeType: ctx.json === false ? "text/plain" : "application/json", maxOutputTokens: ctx.maxTokens || 8192,
+                ...(thinking !== undefined ? { thinkingConfig: { thinkingBudget: thinking } } : {}) },
             }),
-            signal: AbortSignal.timeout(ctx.timeoutMs || 4 * 60 * 1000),
+            signal: AbortSignal.timeout(tmo),
           });
           if (res.status === 429 || res.status === 503 || res.status === 500) { saturated++; console.log(`  ${tag} : saturé (${res.status}) → clé suivante`); continue; }
           if (res.status === 404) { lastErr = new Error(`${tag} : modèle introuvable`); break; }
           if (!res.ok) {
             const body = (await res.text()).replace(/\s+/g, " ").slice(0, 300);
+            if (res.status === 400 && /thinking/i.test(body) && thinking !== undefined) { // modèle sans réglage de réflexion
+              console.log(`  ${tag} : réglage « thinking » refusé → sans`); thinking = undefined; ki--; continue;
+            }
             if (res.status === 400 && /audio|inline|payload|size|token/i.test(body) && ctx.audio) {
               // requête trop lourde avec l'audio : on retente sans audio
               console.log(`  ${tag} : audio refusé (${body.slice(0, 120)}) → sans audio`);
@@ -105,7 +116,19 @@ export async function callGemini(sys, user, ctx = {}) {
           if (!txt) { lastErr = new Error(`${tag} : réponse vide (${d.candidates?.[0]?.finishReason || d.promptFeedback?.blockReason || "?"})`); console.log(`  ${lastErr.message}`); continue; }
           console.log(`  Gemini : modèle utilisé = ${m} (clé ${ki + 1}/${keys.length})`);
           return txt;
-        } catch (e) { lastErr = e; console.log(`  ${tag} : ${e.message}`); }
+        } catch (e) {
+          lastErr = e;
+          if (/budget de temps/.test(e.message)) throw e;
+          if (e.name === "TimeoutError" || /aborted|timeout/i.test(e.message)) {
+            // une requête trop longue ne dépend pas de la clé : inutile de la rejouer sur les 5 clés
+            timeouts++;
+            console.log(`  ${tag} : pas de réponse en ${Math.round(tmo / 1000)} s${ctx.audio ? " → on retire l'audio" : ""}${timeouts >= 2 ? " → abandon de Gemini" : " → modèle suivant"}`);
+            if (timeouts >= 2) throw new Error(`Gemini trop lent (${timeouts} délais dépassés)`);
+            if (ctx.audio) ctx = { ...ctx, audio: null };
+            continue modelLoop;
+          }
+          console.log(`  ${tag} : ${e.message}`);
+        }
       }
       if (dead.size >= keys.length) throw lastErr;
       // toutes les clés saturées sur ce modèle : une seule courte pause (limite par minute), puis modèle suivant
@@ -133,7 +156,7 @@ export async function callGroq(sys, user, ctx = {}) {
           ...(ctx.json === false ? {} : { response_format: { type: "json_object" } }),
           messages: [{ role: "system", content: sys }, { role: "user", content: user }],
         }),
-        signal: AbortSignal.timeout(ctx.timeoutMs || 3 * 60 * 1000),
+        signal: AbortSignal.timeout(Math.max(15000, Math.min(ctx.timeoutMs || 3 * 60 * 1000, (ctx.deadline ? ctx.deadline - Date.now() : Infinity) - 5000))),
       }).catch((e) => ({ ok: false, status: 0, text: async () => e.message, headers: new Map() }));
       if (res.status === 429) {
         wait = Math.max(wait, Math.min(60, Number(res.headers.get("retry-after")) || 15 * (round + 1)));
