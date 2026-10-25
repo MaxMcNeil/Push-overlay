@@ -66,6 +66,7 @@ export async function callGemini(sys, user, ctx = {}) {
   const left = () => (ctx.deadline ? ctx.deadline - Date.now() : Infinity);
   let thinking = ctx.thinking; // budget de « réflexion » limité = réponses bien plus rapides
   modelLoop: for (const m of models) {
+    let over = 0;
     for (let round = 0; round < 2; round++) {
       let saturated = 0;
       for (let ki = 0; ki < keys.length; ki++) {
@@ -85,7 +86,14 @@ export async function callGemini(sys, user, ctx = {}) {
             }),
             signal: AbortSignal.timeout(tmo),
           });
-          if (res.status === 429 || res.status === 503 || res.status === 500) { saturated++; console.log(`  ${tag} : saturé (${res.status}) → clé suivante`); continue; }
+          if (res.status === 503 || res.status === 500) {
+            // 503/500 = MODÈLE surchargé chez Google (pas la clé) : 2 de suite → modèle suivant, sans attendre
+            over++;
+            console.log(`  ${tag} : modèle surchargé (${res.status})${over >= 2 ? " → modèle suivant" : " → nouvel essai"}`);
+            if (over >= 2) { over = 0; continue modelLoop; }
+            continue;
+          }
+          if (res.status === 429) { saturated++; console.log(`  ${tag} : quota de la clé atteint (429) → clé suivante`); continue; }
           if (res.status === 404) { lastErr = new Error(`${tag} : modèle introuvable`); break; }
           if (!res.ok) {
             const body = (await res.text()).replace(/\s+/g, " ").slice(0, 300);
