@@ -16,8 +16,8 @@ export function keysOf(...names) {
   const all = names.flatMap((n) => String(process.env[n] || "").split(/[\s,;]+/)).map((k) => k.trim()).filter(Boolean);
   return [...new Set(all)];
 }
-export const geminiKeys = () => keysOf("GEMINI_API_KEYS", "GEMINI_API_KEY");
-export const groqKeys = () => keysOf("GROQ_API_KEYS", "GROQ_API_KEY");
+export const geminiKeys = () => keysOf("GEMINI_API_KEYS", "GEMINI_API_KEY", "GEMINI_API_KEYS_PLUS");
+export const groqKeys = () => keysOf("GROQ_API_KEYS", "GROQ_API_KEY", "GROQ_API_KEYS_PLUS");
 export const hasAnyLLM = () => geminiKeys().length + groqKeys().length + (process.env.ANTHROPIC_API_KEY ? 1 : 0) > 0;
 
 // départ décalé (jobs parallèles : chaque job commence par une clé différente)
