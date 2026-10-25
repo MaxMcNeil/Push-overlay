@@ -161,7 +161,7 @@ async function propose(name, fn) {
   // audio joint seulement si la vidéo n'est pas trop longue (sinon requête très lente) — le texte suffit alors
   const audio = name === "gemini" && DUR <= 40 * 60 ? audioPart() : null;
   console.log(`Propositions de passages via ${name}${audio ? " (transcription + audio)" : ""}...`);
-  const txt = await fn(proposeSys(want), (audio ? "L'AUDIO de la vidéo est joint : écoute le ton et l'intensité du locuteur.\n\n" : "") + all, { audio, maxTokens: 24000, temperature: 0.4, timeoutMs: 5 * 60 * 1000, thinking: 4096, deadline: DEADLINE - Math.min(3 * 60 * 1000, BUDGET_MS * 0.25) });
+  const txt = await fn(proposeSys(want), (audio ? "L'AUDIO de la vidéo est joint : écoute le ton et l'intensité du locuteur.\n\n" : "") + all, { audio, maxTokens: 24000, temperature: 0.4, timeoutMs: 150 * 1000, thinking: 4096, deadline: DEADLINE - Math.min(3 * 60 * 1000, BUDGET_MS * 0.25) });
   const j = parseJson(txt);
   if (!j) throw new Error(`réponse illisible (début : ${String(txt).replace(/\s+/g, " ").slice(0, 160)})`);
   return j.shorts || [];
@@ -182,7 +182,7 @@ function judgeSys() {
 }
 async function judge(fn, cands) {
   const user = cands.map((c) => `=== id ${c.key} (${Math.round(c.t1 - c.t0)} s) ===\n${textOf(c.a, c.b).slice(0, 2500)}`).join("\n\n");
-  const j = parseJson(await fn(judgeSys(), user, { maxTokens: 16000, temperature: 0.2, timeoutMs: 3 * 60 * 1000, thinking: 2048, deadline: DEADLINE }));
+  const j = parseJson(await fn(judgeSys(), user, { maxTokens: 16000, temperature: 0.2, timeoutMs: 120 * 1000, thinking: 2048, deadline: DEADLINE }));
   const map = new Map();
   for (const v of j?.verdicts || []) map.set(String(v.id), v);
   return map;

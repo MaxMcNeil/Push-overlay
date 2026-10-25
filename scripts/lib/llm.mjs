@@ -65,7 +65,9 @@ export async function callGemini(sys, user, ctx = {}) {
   // au-delà, on rend la main (fournisseur suivant ou repli) au lieu de bloquer le workflow jusqu'à son délai maximal.
   const left = () => (ctx.deadline ? ctx.deadline - Date.now() : Infinity);
   let thinking = ctx.thinking; // budget de « réflexion » limité = réponses bien plus rapides
+  let preferLite = false; // après un délai dépassé : seulement les modèles « lite », bien plus rapides
   modelLoop: for (const m of models) {
+    if (preferLite && !/lite/.test(m)) continue;
     let over = 0;
     for (let round = 0; round < 2; round++) {
       let saturated = 0;
@@ -133,6 +135,7 @@ export async function callGemini(sys, user, ctx = {}) {
             console.log(`  ${tag} : pas de réponse en ${Math.round(tmo / 1000)} s${ctx.audio ? " → on retire l'audio" : ""}${timeouts >= 2 ? " → abandon de Gemini" : " → modèle suivant"}`);
             if (timeouts >= 2) throw new Error(`Gemini trop lent (${timeouts} délais dépassés)`);
             if (ctx.audio) ctx = { ...ctx, audio: null };
+            preferLite = true;
             continue modelLoop;
           }
           console.log(`  ${tag} : ${e.message}`);
@@ -147,10 +150,33 @@ export async function callGemini(sys, user, ctx = {}) {
   throw lastErr;
 }
 
+// Groq retire régulièrement des modèles (ex. llama-3.3-70b-versatile → 404) : on lit la liste des modèles disponibles
+// et on prend le meilleur modèle de texte selon un ordre de préférence, jamais un nom figé.
+let groqModelCache = null;
+const GROQ_PREF = [/gpt-oss-120b/, /llama-4-maverick/, /kimi-k2/, /llama-3\.3-70b/, /qwen3-32b/, /llama-4-scout/, /gpt-oss-20b/, /deepseek-r1-distill-llama-70b/, /gemma2-9b/, /llama-3\.1-8b/];
+async function groqModels(key) {
+  if (process.env.GROQ_MODEL) return [process.env.GROQ_MODEL];
+  if (groqModelCache) return groqModelCache;
+  let ids = [];
+  try {
+    const r = await fetch(`${GROQ_BASE}/openai/v1/models`, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15000) });
+    if (r.ok) ids = ((await r.json()).data || []).filter((m) => m.active !== false).map((m) => m.id)
+      .filter((id) => !/whisper|tts|guard|prompt-guard|playai|distil-whisper|vision|compound/i.test(id));
+  } catch {}
+  const ranked = [];
+  for (const re of GROQ_PREF) for (const id of ids) if (re.test(id) && !ranked.includes(id)) ranked.push(id);
+  groqModelCache = (ranked.length ? ranked : ids).slice(0, 3);
+  if (!groqModelCache.length) groqModelCache = ["openai/gpt-oss-120b", "llama-3.3-70b-versatile"];
+  console.log(`  Groq : modèles disponibles retenus = ${groqModelCache.join(", ")}`);
+  return groqModelCache;
+}
+
 export async function callGroq(sys, user, ctx = {}) {
   const keys = rotate(groqKeys());
   if (!keys.length) throw new Error("aucune clé Groq");
-  const model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+  const models = await groqModels(rotate(groqKeys())[0] || "");
+  let mi = 0, noEffort = false;
+  let model = models[0];
   let lastErr = new Error("Groq indisponible");
   for (let round = 0; round < 3; round++) {
     let wait = 0;
@@ -161,6 +187,7 @@ export async function callGroq(sys, user, ctx = {}) {
         body: JSON.stringify({
           // l'offre gratuite compte max_tokens dans la limite par minute (≈ 12 000) : on plafonne la réponse
           model, temperature: ctx.temperature ?? 0.6, max_tokens: Math.min(ctx.maxTokens || 4096, Number(process.env.GROQ_MAX_TOKENS || 4096)),
+          ...(/gpt-oss/.test(model) && !noEffort ? { reasoning_effort: "low" } : {}), // réflexion courte : la réponse garde sa place
           ...(ctx.json === false ? {} : { response_format: { type: "json_object" } }),
           messages: [{ role: "system", content: sys }, { role: "user", content: user }],
         }),
@@ -173,7 +200,15 @@ export async function callGroq(sys, user, ctx = {}) {
         continue;
       }
       if (res.status === 413) throw new Error("Groq : texte trop long pour l'offre gratuite (413)");
-      if (!res.ok) { lastErr = new Error(`Groq ${model} : HTTP ${res.status} ${(await res.text()).slice(0, 180)}`); console.log(`  ${lastErr.message}`); continue; }
+      if (!res.ok) {
+        const body = (await res.text()).slice(0, 180);
+        lastErr = new Error(`Groq ${model} : HTTP ${res.status} ${body}`); console.log(`  ${lastErr.message}`);
+        if (res.status === 400 && /reasoning_effort/i.test(body) && !noEffort) { noEffort = true; ki--; continue; }
+        if ((res.status === 404 || res.status === 400) && /model|decommission|not exist|not found/i.test(body) && mi < models.length - 1) {
+          model = models[++mi]; console.log(`  Groq : modèle suivant → ${model}`); ki--; // même clé, autre modèle
+        }
+        continue;
+      }
       const d = await res.json();
       console.log(`  Groq : modèle utilisé = ${model} (clé ${ki + 1}/${keys.length})`);
       return d.choices?.[0]?.message?.content || "";

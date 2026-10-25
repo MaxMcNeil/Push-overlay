@@ -25,6 +25,8 @@ const LANG_MAP = { arabic: "ar", french: "fr", english: "en", italian: "it" };
 // Plusieurs clés acceptées (rotation). Vidéo longue : l'audio est découpé en morceaux de 10 min (limite d'envoi
 // gratuite ≈ 25 Mo), chaque morceau est transcrit puis recalé ; un morceau refusé par Groq passe au whisper local.
 let groqDeadUntil = 0;
+const ASR_MODELS = [process.env.GROQ_ASR_MODEL || "whisper-large-v3", "whisper-large-v3-turbo"].filter((m, i, a) => a.indexOf(m) === i);
+let asrModel = ASR_MODELS[0];
 async function groqFile(mp3) {
   const keys = groqKeys();
   if (!keys.length || Date.now() < groqDeadUntil) return null;
@@ -35,7 +37,7 @@ async function groqFile(mp3) {
     for (let ki = 0; ki < keys.length; ki++) {
       const fd = new FormData();
       fd.append("file", new Blob([buf], { type: "audio/mpeg" }), "audio.mp3");
-      fd.append("model", process.env.GROQ_ASR_MODEL || "whisper-large-v3");
+      fd.append("model", asrModel);
       fd.append("response_format", "verbose_json");
       fd.append("timestamp_granularities[]", "word");
       fd.append("timestamp_granularities[]", "segment"); // les segments portent la ponctuation (les mots Groq n'en ont pas)
@@ -48,7 +50,14 @@ async function groqFile(mp3) {
         console.log(`  Groq (transcription, clé ${ki + 1}/${keys.length}) : limite atteinte (réessai dans ${ra}s)`);
         continue;
       }
-      if (!res.ok) throw new Error(`HTTP ${res.status} ${(await res.text()).replace(/\s+/g, " ").slice(0, 300)}`);
+      if (!res.ok) {
+        const body = (await res.text()).replace(/\s+/g, " ").slice(0, 300);
+        // modèle retiré par Groq : on passe au suivant au lieu d'abandonner Groq
+        if ((res.status === 404 || res.status === 400) && /model/i.test(body) && ASR_MODELS.indexOf(asrModel) < ASR_MODELS.length - 1) {
+          asrModel = ASR_MODELS[ASR_MODELS.indexOf(asrModel) + 1]; console.log(`  Groq : modèle de transcription indisponible → ${asrModel}`); ki--; continue;
+        }
+        throw new Error(`HTTP ${res.status} ${body}`);
+      }
       const j = await res.json();
       const words = (j.words || []).map((w) => ({ t0: Number(w.start), t1: Number(w.end), w: String(w.word || "").trim() })).filter((w) => w.w && isFinite(w.t0));
       const l = String(j.language || "").toLowerCase();

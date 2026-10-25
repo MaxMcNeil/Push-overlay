@@ -137,12 +137,11 @@ function computeGaps() {
 computeGaps();
 {
   // chaque élément a besoin d'une bande d'un seul tenant : on regarde la place réellement utilisable
-  const usable = gaps.reduce((n, g) => n + (g.y1 - g.y0 >= 86 ? g.y1 - g.y0 : 0), 0);
-  if (usable < NEED) {
-    const top = gaps.find((g) => g.y0 <= SAFE_TOP + 1);
-    const topRoom = top ? top.y1 - top.y0 : 0;
-    SHIFT = Math.round(Math.min(440, Math.max(0, NEED - topRoom + 24)));
-    if (SHIFT > 0) { computeGaps(); console.log(`Peu de place hors visage : la vidéo descend de ${SHIFT} px (bandeau flou en haut) pour loger les textes sans toucher le visage.`); }
+  // on descend la vidéo par paliers jusqu'à obtenir la place nécessaire (au plus 760 px : la vidéo reste à ≈ 60 %)
+  const usable = () => gaps.reduce((n, g) => n + (g.y1 - g.y0 >= 86 ? g.y1 - g.y0 : 0), 0);
+  if (usable() < NEED) {
+    for (let sft = 40; sft <= 760; sft += 40) { SHIFT = sft; computeGaps(); if (usable() >= NEED) break; }
+    console.log(`Peu de place hors visage : la vidéo descend de ${SHIFT} px (bandeau flou en haut) pour loger les textes sans toucher le visage.`);
   }
 }
 prot.forEach((p) => console.log(`Zone protégée (${p.what}${p.what === "visage" && !face.found ? ", position par défaut" : ""}) : y ${Math.round(p.y0)}→${Math.round(p.y1)}`));
@@ -158,7 +157,11 @@ if (autoSubsOff) console.log("Sous-titres déjà incrustés dans la vidéo : nos
 // 3) étiquette de chapitre
 const above = gaps.filter((g) => g.y1 <= faceMid && room(g) >= 110).sort((a, b) => room(b) - room(a))[0];
 const gT = above || gaps.filter((g) => room(g) >= 100).sort((a, b) => room(b) - room(a))[0];
-const TAG = (() => { if (!gT) return { y: SAFE_TOP, h: 100 }; const h = Math.min(130, room(gT)); return { y: take(gT, h, gT !== above), h }; })();
+// pas de place pour l'étiquette : JAMAIS de superposition → pas d'étiquettes ; hook et badge s'affichent dans la zone
+// des sous-titres pendant les premières secondes (les sous-titres commencent juste après)
+const NO_TAG = !gT;
+const TAG = NO_TAG ? { y: CAP_Y - CAP_H / 2, h: CAP_H } : (() => { const h = Math.min(130, room(gT)); return { y: take(gT, h, gT !== above), h }; })();
+if (NO_TAG) console.log("⚠ Pas de place pour les étiquettes hors visage : étiquettes supprimées, hook et badge dans la zone des sous-titres.");
 // 4) puces
 const gC = gaps.filter((g) => room(g) >= 190).sort((a, b) => room(b) - room(a))[0];
 const CHIPS = gC ? { y0: gC.y0, y1: gC.y1 } : null;
@@ -166,6 +169,18 @@ const CHIPS = gC ? { y0: gC.y0, y1: gC.y1 } : null;
 const near = CHIPS && Math.abs(CHIPS.y0 - (TAG.y + TAG.h)) < 30;
 const BIG = near ? { y0: TAG.y, y1: CHIPS.y1 } : CHIPS && CHIPS.y1 - CHIPS.y0 > TAG.h ? CHIPS : { y0: TAG.y, y1: TAG.y + TAG.h };
 console.log(`Zones : étiquette y=${Math.round(TAG.y)} h=${Math.round(TAG.h)}, ${CHIPS ? `puces y=${Math.round(CHIPS.y0)}→${Math.round(CHIPS.y1)}` : "pas de puces (pas de place hors visage)"}, ${subsOn ? `sous-titres y≈${Math.round(CAP_Y)}` : "sans sous-titres"}`);
+// CONTRÔLE : aucune zone de texte ne doit en toucher une autre, ni le visage / les sous-titres incrustés
+{
+  const boxes = [];
+  if (!NO_TAG) boxes.push({ n: "étiquette", y0: TAG.y, y1: TAG.y + TAG.h });
+  if (subsOn) boxes.push({ n: "sous-titres", y0: CAP_Y - CAP_H / 2, y1: CAP_Y + CAP_H / 2 });
+  if (CHIPS) boxes.push({ n: "puces", y0: CHIPS.y0, y1: CHIPS.y1 });
+  const hit = [];
+  boxes.forEach((a, i) => { boxes.slice(i + 1).forEach((b) => { if (Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) > 2) hit.push(`${a.n}/${b.n}`); });
+    prot.forEach((p) => { if (Math.min(a.y1, p.y1) - Math.max(a.y0, p.y0) > 2) hit.push(`${a.n}/${p.what}`); }); });
+  console.log(hit.length ? `⚠ Superpositions détectées : ${hit.join(", ")}` : "✔ Contrôle mise en page : aucune superposition (textes / visage)");
+}
+if (process.env.LAYOUT_ONLY) process.exit(0); // test rapide de la mise en page
 
 // ---------- timeline ----------
 const beats = plan.beats.filter((b) => b.t0 < D - 0.3).map((b) => ({ ...b, t1: Math.min(b.t1, D) }));
@@ -175,7 +190,7 @@ const END_LEN = Math.min(5, Math.max(3.6, D * 0.1));
 const CTA_START = Math.max(HOOK_END + 2, D - END_LEN);
 // badge « extrait » : dans la zone des puces s'il y en a une, sinon à la place de la 1re étiquette (qui attend)
 const BADGE = { t0: HOOK_END + 0.1, t1: Math.min(HOOK_END + 3.2, CTA_START - 0.3) };
-const BADGE_IN_TAG = !CHIPS;
+const BADGE_IN_TAG = !CHIPS || NO_TAG;
 const TAG_FROM = BADGE_IN_TAG && BADGE.t1 - BADGE.t0 > 1 ? BADGE.t1 + 0.05 : HOOK_END;
 const emojiHex = (e) => [...(e || "")].map((c) => c.codePointAt(0).toString(16)).join("-");
 const emojiOverlays = [];
@@ -205,7 +220,7 @@ function tagShape(w, h) {
   return rrect(w, h, 8);
 }
 beats.forEach((b, i) => {
-  if (!b.headline) return;
+  if (!b.headline || NO_TAG) return;
   const t0 = Math.max(b.t0, TAG_FROM), t1 = Math.min(b.t1, CTA_START);
   if (t1 - t0 < 0.8) return;
   const { lines, em } = wrapFit(up(b.headline), tagMaxW - 56, 46, TAG.h >= 120 ? 2 : 1, 28);
@@ -283,7 +298,7 @@ if (plan.hook) {
 // 7) sous-titres karaoké
 if (subsOn) {
   const em = rtl ? 74 : 84;
-  const words = tr.words.filter((w) => w.t0 < CTA_START - 0.1); // écran de fin : sous-titres masqués
+  const words = tr.words.filter((w) => w.t0 < CTA_START - 0.1 && (!NO_TAG || w.t0 >= TAG_FROM)); // fin : masqués
   const phrases = []; let cur = [];
   for (const w of words) {
     const gap = cur.length ? w.t0 - cur[cur.length - 1].t1 : 0;
