@@ -78,6 +78,8 @@ EXT="${NAME##*.}"; EXT=$(echo "$EXT" | tr 'A-Z' 'a-z')
 mv "input/$NAME" "input/video.$EXT"
 BASE=$(basename "$NAME" ".${NAME##*.}" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-40)
 out base "$BASE"
+# note visible dans le résumé du run (permet de relancer/diagnostiquer sans fouiller les journaux)
+echo "::notice title=Source de la vidéo::${SRC:-${EVENT_TAG:-dernière release shorts}} → $NAME"
 ls -la input/
 ffprobe -v error -show_entries stream=codec_type,width,height:format=duration,size -of compact=p=0 "input/video.$EXT" \
   || die "Le fichier téléchargé n'est pas une vidéo lisible (lien Drive privé ? page HTML reçue à la place de la vidéo ?)."
