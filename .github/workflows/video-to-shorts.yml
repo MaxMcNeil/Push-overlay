@@ -106,7 +106,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          SOURCE: ${{ inputs.source || github.event.client_payload.video_id }}
+          SOURCE: ${{ inputs.source || github.event.client_payload.video_url || github.event.client_payload.video_id }}
           EVENT_TAG: ${{ github.event.release.tag_name }}
           RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
         run: |
