@@ -56,11 +56,11 @@ jobs:
     runs-on: ubuntu-24.04   # figé : ubuntu-latest passe à Ubuntu 26 (oct. 2026), non testé
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Outils (ffmpeg, emoji couleur, Pillow, polices) — avec cache
         uses: ./.github/actions/setup-media
@@ -103,7 +103,7 @@ jobs:
       # ---------- whisper.cpp (transcription locale, mot à mot) ----------
       - name: Cache whisper.cpp
         id: whisper-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: whisper.cpp
           key: whispercpp-build-v4-${{ runner.os }}
@@ -131,7 +131,7 @@ jobs:
       - name: Cache llama.cpp
         if: env.GEMINI_API_KEY == '' && env.GEMINI_API_KEYS == '' && env.GROQ_API_KEY == '' && env.GROQ_API_KEYS == '' && env.ANTHROPIC_API_KEY == ''
         id: llama-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: llama.cpp
           key: llamacpp-qwen25-7b-v1-${{ runner.os }}
@@ -180,7 +180,7 @@ jobs:
           cp content/plan.json output/plan.json
           cp content/theme.json output/theme.json 2>/dev/null || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: video-finale
           path: output/

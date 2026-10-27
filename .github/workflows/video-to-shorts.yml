@@ -83,11 +83,11 @@ jobs:
       src_tag: ${{ steps.src.outputs.tag }}
       lang: ${{ steps.cut.outputs.lang }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Libérer de l'espace disque (vidéos de plusieurs Go)
         run: |
@@ -116,7 +116,7 @@ jobs:
 
       - name: Cache whisper.cpp (repli si Groq indisponible)
         id: whisper-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: whisper.cpp
           key: whispercpp-build-v4-${{ runner.os }}
@@ -162,7 +162,7 @@ jobs:
           cp content/transcript.json shorts/source-transcript.json
 
       - name: Garder la sélection et la transcription
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: shorts-selection
           path: |
@@ -172,7 +172,7 @@ jobs:
           retention-days: 3
 
       - name: Envoyer chaque passage au rendu
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: clips
           path: shorts/clip-*/
@@ -190,18 +190,18 @@ jobs:
       matrix:
         id: ${{ fromJSON(needs.select.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Outils (ffmpeg…) — avec cache
         uses: ./.github/actions/setup-media
         with:
           opencv: "true"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: clips
           path: shorts
@@ -254,7 +254,7 @@ jobs:
           cp "$D/meta.json" "out/short-${{ matrix.id }}.meta.json"
           ls -la out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: short-${{ matrix.id }}
@@ -269,16 +269,16 @@ jobs:
     runs-on: ubuntu-24.04   # figé : ubuntu-latest passe à Ubuntu 26 (oct. 2026), non testé
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         continue-on-error: true   # aucun short rendu : publish.sh le signale clairement
         with:
           pattern: short-*
           path: out
           merge-multiple: true
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: shorts-selection
           path: shorts
@@ -328,7 +328,7 @@ jobs:
     if: failure()
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Signaler l'échec sur la release déposée
         env:
           GH_TOKEN: ${{ github.token }}
