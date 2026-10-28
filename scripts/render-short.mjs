@@ -20,6 +20,7 @@ import { CONTENT_DIR, OUTPUT_DIR, findVideo, probeVideo, listFontFiles } from ".
 import { Ass, c1, c3, c4, rrect, esc } from "./lib/ass.mjs";
 import { measureTokens } from "./lib/measure.mjs";
 import { shortStyle } from "./lib/short-styles.mjs";
+import { channelFor, burnedLogo } from "./lib/channel.mjs";
 
 const plan = JSON.parse(readFileSync(`${CONTENT_DIR}/plan.json`, "utf8"));
 const tr = JSON.parse(readFileSync(`${CONTENT_DIR}/transcript.json`, "utf8"));
@@ -210,9 +211,16 @@ const emojiOverlays = [];
 }
 
 // 2) étiquette de chapitre (une par idée) + emoji réaction ; logo à côté
-const logoFile = [`input/logo-${rtl ? "ar" : "fr"}.png`, "input/logo.png", "input/logo-fr.png"].find((f) => existsSync(f));
+// logo = chaîne de la LANGUE du short (jamais le logo d'une autre langue) ; source verticale venant de Montage LV final
+// avec son petit logo déjà incrusté → pas de 2e petit logo (le grand logo de fin reste)
+const CH = channelFor(lang);
+const BURNED = burnedLogo(videoPath);
+const logoFile = CH.logo;
+const tagLogo = !!logoFile && !(BURNED && BURNED.orient === "v" && info.height > info.width);
+console.log(`Logo : ${CH.why}${logoFile && !tagLogo ? " — petit logo déjà incrusté par le montage : pas de doublon" : ""}`);
+if (CH.why.startsWith("⚠")) console.log(`::warning::${CH.why}`);
 const LOGO = Math.round(Math.min(96, TAG.h - 12));
-const tagX0 = logoFile ? 40 + LOGO + 16 : 50;
+const tagX0 = tagLogo ? 40 + LOGO + 16 : 50;
 const tagMaxW = W - tagX0 - 50;
 function tagShape(w, h) {
   if (ST.tagShape === "pill") return rrect(w, h, h / 2);
@@ -464,7 +472,8 @@ function circleMask(s) {
   if (!existsSync(out)) execFileSync("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", `color=c=white:s=${s}x${s}:d=1,format=gray,geq=lum='clip(255*(${s / 2}-hypot(X-${s / 2},Y-${s / 2}))+128,0,255)'`, "-frames:v", "1", out]);
   return out;
 }
-if (logoFile) { iLogo = addInput(["-loop", "1", "-framerate", String(FPS), "-i", logoFile]); iLM = addInput(["-loop", "1", "-framerate", String(FPS), "-i", circleMask(LOGO)]); }
+// durée bornée (-t) : une branche inutilisée (nullsink) ne doit jamais tourner sans fin
+if (logoFile) { iLogo = addInput(["-loop", "1", "-framerate", String(FPS), "-t", (D + 1).toFixed(2), "-i", logoFile]); iLM = addInput(["-loop", "1", "-framerate", String(FPS), "-t", (D + 1).toFixed(2), "-i", circleMask(LOGO)]); }
 function roundMask(w, h, r) {
   const out = `assets/mask-short-${w}x${h}-r${r}.png`;
   const ix = `max(max(${r}-X,X-(${w - 1}-${r})),0)`, iy = `max(max(${r}-Y,Y-(${h - 1}-${r})),0)`;
@@ -502,9 +511,11 @@ let last = "base2";
 f.push(`[base2]ass=${CONTENT_DIR}/short.ass:fontsdir=fonts[oa]`); last = "oa";
 if (logoFile) {
   const lx = rtl ? W - 40 - LOGO : 40, ly = Math.round(TAG.y + (TAG.h - LOGO) / 2);
-  f.push(`[${iLogo}:v]scale=${LOGO}:${LOGO},format=yuva420p[lg0]`, `[${iLM}:v]format=gray[lm]`, `[lg0][lm]alphamerge[lg]`);
+  // logo jamais déformé : ramené dans un carré (bandes transparentes) avant le masque rond
+  f.push(`[${iLogo}:v]format=rgba,scale=${LOGO}:${LOGO}:force_original_aspect_ratio=decrease,pad=${LOGO}:${LOGO}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=yuva420p[lg0]`, `[${iLM}:v]format=gray[lm]`, `[lg0][lm]alphamerge[lg]`);
   f.push(`[lg]split=2[lg1][lg2]`);
-  f.push(`[${last}][lg1]overlay=${lx}:${ly}:enable='between(t,${HOOK_END.toFixed(2)},${CTA_START.toFixed(2)})'[ol]`); last = "ol";
+  if (tagLogo) { f.push(`[${last}][lg1]overlay=${lx}:${ly}:enable='between(t,${HOOK_END.toFixed(2)},${CTA_START.toFixed(2)})'[ol]`); last = "ol"; }
+  else f.push(`[lg1]nullsink`);
   if (END.logo && D - CTA_START > 2) { f.push(`[lg2]scale=${END.logo.s}:${END.logo.s}[lg3]`, `[${last}][lg3]overlay=${END.logo.x}:${END.logo.y}:enable='gte(t,${(ET + 0.3).toFixed(2)})'[ol2]`); last = "ol2"; }
   else f.push(`[lg2]nullsink`);
 }

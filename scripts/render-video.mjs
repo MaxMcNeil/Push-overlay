@@ -10,6 +10,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { execFileSync, spawnSync } from "child_process";
 import { CONTENT_DIR, OUTPUT_DIR, findVideo, probeVideo, listFontFiles } from "./lib/util.mjs";
+import { channelFor } from "./lib/channel.mjs";
 import { Ass, PALETTE, c1, c3, c4, rrect, esc } from "./lib/ass.mjs";
 import { measureTokens, measureLine } from "./lib/measure.mjs";
 
@@ -35,6 +36,11 @@ const padSec = Math.max(0, D - decV);
 if (padSec > 0.5) console.log(`⚠ La piste image s'arrête ${padSec.toFixed(1)} s avant la fin : dernière image figée pour ne pas couper le son.`);
 const lang = plan.lang;
 const rtl = lang === "ar";
+// logo = chaîne de la LANGUE de la vidéo (dossier chaines/) ; aucune chaîne dans cette langue → aucun logo
+const CH = channelFor(lang);
+const logoFile = CH.logo;
+console.log(`Logo : ${CH.why}`);
+if (CH.why.startsWith("⚠")) console.log(`::warning::${CH.why}`);
 
 // ---------- thème visuel (voir lib/styles.mjs) : absent = rendu d'origine ----------
 const theme = (() => {
@@ -399,7 +405,7 @@ merged.forEach((s, i) => {
 });
 
 // 4) logo (cadre accent)
-ass.shape(5, 0, D, logoR.x, logoR.y, rrect(L.logo.w, L.logo.h, 26), `\\1a&HFF&${c3(P.accent)}\\bord6\\blur0.4`);
+if (logoFile) ass.shape(5, 0, D, logoR.x, logoR.y, rrect(L.logo.w, L.logo.h, 26), `\\1a&HFF&${c3(P.accent)}\\bord6\\blur0.4`);
 
 // 5) bandeau de headline : révélation par balayage + reflet + mot-clé en couleur
 function fitBanner(text) {
@@ -727,8 +733,6 @@ if (process.env.SAFE_MODE) console.log("Mode sûr : emojis désactivés, impulsi
 // ---------- fichiers de sortie intermédiaires ----------
 writeFileSync(`${CONTENT_DIR}/video.ass`, ass.toString());
 
-// ---------- logo selon la langue : FR (et EN/IT par défaut) ou AR ----------
-const logoFile = [`input/logo-${lang === "ar" ? "ar" : "fr"}.png`, "input/logo.png", "input/logo-fr.png"].find(existsSync);
 
 // ---------- graphe de filtres ----------
 const hasAudio = info.hasAudio;
@@ -777,7 +781,7 @@ if (hasPunch) {
   f.push(`[${last}][pv]overlay=x='${winNormal.x}+(${shake})':y='${winNormal.y}+(${shake})*0.6':enable='${enableFor("punch")}'[o3]`); last = "o3";
 }
 if (logoFile) {
-  f.push(`[${iLogo}:v]scale=${L.logo.w}:${L.logo.h},format=yuva420p[lg0]`);
+  f.push(`[${iLogo}:v]format=rgba,scale=${L.logo.w}:${L.logo.h}:force_original_aspect_ratio=decrease,pad=${L.logo.w}:${L.logo.h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=yuva420p[lg0]`);
   f.push(`[${iML}:v]format=gray[ml]`);
   f.push(`[lg0][ml]alphamerge[lg]`);
   f.push(`[${last}][lg]overlay=${logoR.x}:${logoR.y}[o4]`); last = "o4";

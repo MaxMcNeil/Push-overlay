@@ -31,7 +31,11 @@ horizontale, vertical si elle est verticale. Tout tourne sur GitHub (ffmpeg), sa
 - **Valeur ajoutée** : cartes d'analyse en *split-screen* (« Pourquoi ? », « Le contexte »…) avec flèche vers la vidéo, emoji, transitions flash, **zooms punch**.
 - **Sous-titres animés mot à mot** : pop, légère inclinaison, couleur qui change à chaque phrase. Largeurs mesurées avec le vrai moteur de rendu : l'arabe est parfaitement calé.
 - **Ticker permanent des 3 disclaimers** (FR/AR/EN/IT) : ta protection reste affichée du début à la fin.
-- **Logo selon la langue** : arabe → `input/logo-ar.png`, français (et EN/IT) → `input/logo-fr.png`. L'interface se met en miroir pour l'arabe.
+- **Logo selon la langue (règle stricte)** : le logo vient du dossier `chaines/` de **Montage-LV-final** (source unique :
+  change le logo là-bas, Build Video et les Shorts suivent ; copie de secours dans `chaines/` ici). Vidéo en arabe →
+  logo de la chaîne arabe, en français → logo français ; **aucune chaîne dans la langue de la vidéo (ex. italien,
+  anglais) → aucun logo**, jamais celui d'une autre langue. Short tiré d'un montage vertical qui porte déjà son petit
+  logo → pas de 2e petit logo (le grand logo de l'écran de fin reste). L'interface se met en miroir pour l'arabe.
 - **Effets sonores** synthétisés (impact d'ouverture, whoosh de transition, ding de headline, pop d'emoji), barre de progression.
 - Langues : **arabe, français, anglais, italien** (détection automatique).
 

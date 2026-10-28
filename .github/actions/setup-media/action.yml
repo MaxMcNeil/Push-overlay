@@ -61,3 +61,17 @@ runs:
           || python3 -m pip install -q --user "opencv-python-headless>=4.8,<5" \
           || echo "::warning::OpenCV indisponible : position du visage par défaut"
         python3 -c "import cv2; print('OpenCV', cv2.__version__)" || true
+
+    - name: Chaînes (logo par langue) — copie depuis Montage-LV-final
+      shell: bash
+      run: |
+        # source unique des logos : dossier chaines/ de Montage-LV-final (copié hors du dépôt, rien n'est modifié ici)
+        d="$RUNNER_TEMP/chaines-src"; rm -rf "$d"
+        if timeout 120 git clone -q --depth 1 --filter=blob:none --sparse https://github.com/MaxMcNeil/Montage-LV-final "$d" \
+           && git -C "$d" sparse-checkout set chaines && ls "$d"/chaines/*/chaine.json >/dev/null 2>&1; then
+          echo "CHAINES_DIR=$d/chaines" >> "$GITHUB_ENV"
+          echo "Chaînes de Montage-LV-final : $(ls "$d/chaines" | grep -v README | tr '\n' ' ')"
+        else
+          echo "::warning::Chaînes de Montage-LV-final injoignables : copie locale chaines/ de ce dépôt utilisée"
+        fi
+
