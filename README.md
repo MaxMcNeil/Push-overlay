@@ -125,6 +125,9 @@ release à part **`out-chaine-<id>`**, supprimée après 2 jours. `out-shorts` e
 jamais touchés. Rien à configurer ici en plus de `RCLONE_CONF`. Guide complet : README de
 vdo-BACKGROUND-replace-GREEN-, section « Chaîne ».
 
+**Sous-titres des Shorts lancés par la chaîne** (fond vert ou Montage LV final) : le choix fait au lancement est
+respecté (`non` = aucun sous-titre). Lancement à la main : inchangé.
+
 ## Utilisation (Build Video)
 1. *Releases → Draft a new release* → joins ta vidéo (n'importe quel nom) → **Publish**.
 2. Attends la fin du workflow (onglet Actions).

@@ -233,6 +233,9 @@ jobs:
       - name: Rendu du short (identité Shorts, 2e essai en mode sûr si besoin)
         env:
           ID: ${{ matrix.id }}
+          # 🔗 chaîne (fond vert / Montage LV final) : « non » au lancement = aucun sous-titre dans les Shorts.
+          # Lancement à la main : vide = comportement habituel (inchangé)
+          SUBTITLES: ${{ github.event.client_payload.sous_titres == 'non' && 'off' || '' }}
         run: |
           set -o pipefail
           mkdir -p out
