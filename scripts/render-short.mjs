@@ -125,7 +125,9 @@ let face = { found: false, y0: 0.08, y1: 0.56 }, caps = null;
 try { const f = JSON.parse(readFileSync(`${CONTENT_DIR}/face.json`, "utf8")); if (f.found) face = f; caps = f.captions || null; } catch {}
 const bandOf = (b) => ({ y0: Math.min(fy(b.y0, Zmax), fy(b.y0, 1)) - 16, y1: Math.max(fy(b.y1, Zmax), fy(b.y1, 1)) + 16 });
 const autoSubsOff = !!caps && !process.env.SUBTITLES;
-const subsOn = !autoSubsOff && String(process.env.SUBTITLES || "full") !== "off";
+let subsOn = !autoSubsOff && String(process.env.SUBTITLES || "full") !== "off";
+// source déjà verticale (montage de Montage LV final, déjà mis en page) : la vidéo n'est JAMAIS déplacée ni coupée
+const VERT = info.height >= info.width * 1.4;
 // place nécessaire : sous-titres (150) + étiquette (120) + marges
 const NEED = (subsOn ? 160 : 0) + 140;
 let prot, gaps;
@@ -140,7 +142,8 @@ computeGaps();
   // chaque élément a besoin d'une bande d'un seul tenant : on regarde la place réellement utilisable
   // on descend la vidéo par paliers jusqu'à obtenir la place nécessaire (au plus 760 px : la vidéo reste à ≈ 60 %)
   const usable = () => gaps.reduce((n, g) => n + (g.y1 - g.y0 >= 86 ? g.y1 - g.y0 : 0), 0);
-  if (usable() < NEED) {
+  if (VERT) console.log("Source verticale : vidéo entière, jamais déplacée (les textes se placent autour du visage).");
+  else if (usable() < NEED) {
     for (let sft = 40; sft <= 760; sft += 40) { SHIFT = sft; computeGaps(); if (usable() >= NEED) break; }
     console.log(`Peu de place hors visage : la vidéo descend de ${SHIFT} px (bandeau flou en haut) pour loger les textes sans toucher le visage.`);
   }
@@ -150,22 +153,47 @@ const room = (g) => g.y1 - g.y0;
 const take = (g, h, fromBottom) => { const y = fromBottom ? g.y1 - h : g.y0; if (fromBottom) g.y1 -= h + 10; else g.y0 += h + 10; return y; };
 const lowest = (min) => gaps.filter((g) => room(g) >= min).sort((a, b) => b.y1 - a.y1)[0];
 const faceMid = (prot[0].y0 + prot[0].y1) / 2;
-// 2) sous-titres
+// Ordre de priorité : 1) étiquettes (toujours), 2) puces (toujours), 3) accroche / badge, 4) sous-titres en DERNIER
+// (retirés s'il ne reste pas de place). Jamais rien sur le visage. S'il n'y a pas de zone totalement libre, étiquettes
+// et puces se posent sur le reste de l'image (sous-titres incrustés du montage, cadre photo / article) : leur fond est
+// opaque, elles restent lisibles.
+const reserve = (y0, y1) => { gaps = gaps.flatMap((g) => [{ y0: g.y0, y1: Math.min(g.y1, y0 - 10) }, { y0: Math.max(g.y0, y1 + 10), y1: g.y1 }]).filter((g) => g.y1 - g.y0 > 40); };
+const RES = [];   // zones déjà prises (pour les zones de repli)
+const faceFree = () => {  // bandes hors visage seulement (on accepte de couvrir le reste de l'image)
+  let g = [{ y0: SAFE_TOP, y1: SAFE_BOT }];
+  for (const p of [prot[0], ...RES]) g = g.flatMap((x) => [{ y0: x.y0, y1: Math.min(x.y1, p.y0 - 10) }, { y0: Math.max(x.y0, p.y1 + 10), y1: x.y1 }]).filter((x) => x.y1 - x.y0 > 40);
+  return g;
+};
+const FORCED = [];
+// 1) étiquette de chapitre
+const above = gaps.filter((g) => g.y1 <= faceMid && room(g) >= 110).sort((a, b) => room(b) - room(a))[0];
+let gT = above || gaps.filter((g) => room(g) >= 100).sort((a, b) => room(b) - room(a))[0];
+let TAG;
+if (gT) { const h = Math.min(130, room(gT)); TAG = { y: gT === above ? gT.y0 : gT.y1 - h, h }; }
+else {
+  const f = faceFree().sort((a, b) => room(b) - room(a))[0];
+  // étiquette un peu plus compacte (100 px) pour laisser aussi la place aux puces
+  if (f) { const h = Math.max(70, Math.min(100, room(f))); TAG = { y: f.y1 <= faceMid ? f.y0 : f.y1 - h, h }; }
+  else TAG = { y: SAFE_TOP, h: 80 };   // visage plein cadre : tout en haut, en petit
+  FORCED.push("étiquettes");
+}
+const NO_TAG = false;
+RES.push({ y0: TAG.y, y1: TAG.y + TAG.h }); reserve(TAG.y, TAG.y + TAG.h);
+// 2) puces
+let gC = gaps.filter((g) => room(g) >= 190).sort((a, b) => room(b) - room(a))[0];
+if (!gC) { gC = faceFree().filter((g) => room(g) >= 90).sort((a, b) => room(b) - room(a))[0]; if (gC) FORCED.push("puces"); }
+const CHIPS = gC ? { y0: gC.y0, y1: Math.min(gC.y1, gC.y0 + 320) } : null;
+if (CHIPS) { RES.push(CHIPS); reserve(CHIPS.y0, CHIPS.y1); }
+// 3) sous-titres : en dernier, seulement s'il reste une place libre
 const CAP_H = 150;
 let CAP_Y = SAFE_BOT - CAP_H / 2 - 10;
-if (subsOn) { const g = lowest(CAP_H); if (g) CAP_Y = take(g, CAP_H, true) + CAP_H / 2; }
+if (subsOn) {
+  const g = lowest(CAP_H);
+  if (g) CAP_Y = take(g, CAP_H, true) + CAP_H / 2;
+  else { subsOn = false; console.log("Sous-titres du short retirés : plus de place libre après les étiquettes et les puces (priorité aux étiquettes)."); }
+}
 if (autoSubsOff) console.log("Sous-titres déjà incrustés dans la vidéo : nos sous-titres sont désactivés.");
-// 3) étiquette de chapitre
-const above = gaps.filter((g) => g.y1 <= faceMid && room(g) >= 110).sort((a, b) => room(b) - room(a))[0];
-const gT = above || gaps.filter((g) => room(g) >= 100).sort((a, b) => room(b) - room(a))[0];
-// pas de place pour l'étiquette : JAMAIS de superposition → pas d'étiquettes ; hook et badge s'affichent dans la zone
-// des sous-titres pendant les premières secondes (les sous-titres commencent juste après)
-const NO_TAG = !gT;
-const TAG = NO_TAG ? { y: CAP_Y - CAP_H / 2, h: CAP_H } : (() => { const h = Math.min(130, room(gT)); return { y: take(gT, h, gT !== above), h }; })();
-if (NO_TAG) console.log("⚠ Pas de place pour les étiquettes hors visage : étiquettes supprimées, hook et badge dans la zone des sous-titres.");
-// 4) puces
-const gC = gaps.filter((g) => room(g) >= 190).sort((a, b) => room(b) - room(a))[0];
-const CHIPS = gC ? { y0: gC.y0, y1: gC.y1 } : null;
+if (FORCED.length) console.log(`Pas de zone totalement libre : ${FORCED.join(" et ")} posées sur le reste de l'image (fond opaque), jamais sur le visage.`);
 // 5) hook / badge / carte de fin : la plus grande zone disponible autour de l'étiquette
 const near = CHIPS && Math.abs(CHIPS.y0 - (TAG.y + TAG.h)) < 30;
 const BIG = near ? { y0: TAG.y, y1: CHIPS.y1 } : CHIPS && CHIPS.y1 - CHIPS.y0 > TAG.h ? CHIPS : { y0: TAG.y, y1: TAG.y + TAG.h };
@@ -178,7 +206,7 @@ console.log(`Zones : étiquette y=${Math.round(TAG.y)} h=${Math.round(TAG.h)}, $
   if (CHIPS) boxes.push({ n: "puces", y0: CHIPS.y0, y1: CHIPS.y1 });
   const hit = [];
   boxes.forEach((a, i) => { boxes.slice(i + 1).forEach((b) => { if (Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) > 2) hit.push(`${a.n}/${b.n}`); });
-    prot.forEach((p) => { if (Math.min(a.y1, p.y1) - Math.max(a.y0, p.y0) > 2) hit.push(`${a.n}/${p.what}`); }); });
+    prot.forEach((p) => { if (Math.min(a.y1, p.y1) - Math.max(a.y0, p.y0) > 2 && !(p.what !== "visage" && FORCED.length)) hit.push(`${a.n}/${p.what}`); }); });
   console.log(hit.length ? `⚠ Superpositions détectées : ${hit.join(", ")}` : "✔ Contrôle mise en page : aucune superposition (textes / visage)");
 }
 if (process.env.LAYOUT_ONLY) process.exit(0); // test rapide de la mise en page
