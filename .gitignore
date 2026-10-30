@@ -29,3 +29,4 @@ content/theme.json
 content/audio-*.wav
 content/*-whisper.json
 content/music.json
+content/style-pick.json

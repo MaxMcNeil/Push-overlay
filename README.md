@@ -15,6 +15,9 @@ Chaque nouveau résultat remplace le précédent, et les anciennes vidéos dépo
 
 Deux workflows :
 - **Build Video** : une vidéo → la même vidéo montée (`final.mp4`). Release « normale » (tag libre, sauf `shorts…`).
+  **Plusieurs vidéos dans la même release** (10 max) : elles sont toutes montées **en même temps**, chacune avec son style ;
+  le titre de la release suit l'avancement (« 2/3 terminées »), et la release « renders » garde toutes les vidéos du lot.
+  Avant le montage, la **musique de fond** est supprimée (même 1 seconde) : risque de droits d'auteur écarté.
 - **Video to Shorts** : une vidéo longue → plusieurs **Shorts verticaux** montés. Release dont le **tag commence par `shorts`**, ou lien Google Drive.
 
 Tu déposes une vidéo dans une **Release GitHub**. Le workflow la transcrit, écrit un scénario
@@ -113,7 +116,7 @@ Une clé saturée ou refusée est sautée automatiquement, et chaque short comme
 « Create API key in new project ». Les secrets d'un autre dépôt (ex. Vid-o-presse-finder) ne sont pas visibles ici : il faut les recréer.
 
 ### Pas de surcharge de GitHub
-Chaque nouveau résultat **remplace** le précédent : Build Video garde une seule vidéo dans la release « renders », Video to Shorts une seule
+Chaque nouveau résultat **remplace** le précédent : Build Video garde dans la release « renders » les vidéos du dernier lot seulement, Video to Shorts une seule
 release « out-shorts » (et un seul dossier Drive `…/derniers`). Les anciennes vidéos déposées sont supprimées après traitement (on garde
 la dernière). Les Artifacts des runs sont gardés 3 jours (1 jour pour les passages intermédiaires).
 

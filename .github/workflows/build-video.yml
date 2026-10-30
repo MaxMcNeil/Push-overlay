@@ -44,17 +44,74 @@ env:
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
 jobs:
-  build:
-    # évite la boucle : la Release "renders" qui reçoit le résultat ne relance pas le workflow
-    # (startsWith / contains ignorent les majuscules) : tout ce qui parle de « short » part vers Video to Shorts
+  # 1) liste les vidéos de la release (jusqu'à 10) : chacune sera montée par sa propre tâche, EN PARALLÈLE
+  lister:
     if: >-
       github.event_name != 'release' || (
         github.event.release.tag_name != 'renders' &&
         !startsWith(github.event.release.tag_name, 'short') &&
         !contains(github.event.release.name, 'short') &&
         !startsWith(github.event.release.tag_name, 'out-'))
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.l.outputs.tag }}
+      videos: ${{ steps.l.outputs.videos }}
+      n: ${{ steps.l.outputs.n }}
+      lot: ${{ steps.l.outputs.lot }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Vidéos de la release
+        id: l
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WANT_TAG: ${{ github.event.release.tag_name || inputs.release }}
+        run: |
+          vids() { gh release view "$1" --repo "$REPO" --json assets -q '.assets[].name' 2>/dev/null | grep -Ei '\.(mp4|mov|mkv|webm|avi|m4v)$' || true; }
+          TAG="$WANT_TAG"
+          if [ -z "$TAG" ]; then
+            # la plus récente release « normale » qui contient une vidéo (on ignore renders, shorts*, out-*)
+            shopt -s nocasematch
+            for t in $(gh release list --repo "$REPO" --limit 40 --json tagName -q '.[].tagName'); do
+              case "$t" in renders|short*|out-*) continue;; esac
+              [ -n "$(vids "$t")" ] && { TAG="$t"; break; }
+            done
+          fi
+          vids "$TAG" > /tmp/vids.txt
+          N=$(wc -l < /tmp/vids.txt)
+          if [ "$N" -eq 0 ]; then
+            echo "::error::Aucune vidéo trouvée${TAG:+ dans la release $TAG}. Publie une Release avec ta ou tes vidéos en pièce jointe."
+            bash scripts/release-status.sh "$TAG" fail "Aucune vidéo dans cette release (formats acceptés : mp4, mov, mkv, webm, avi, m4v)."
+            exit 1
+          fi
+          if [ "$N" -gt 10 ]; then
+            echo "::warning::$N vidéos dans la release : les 10 premières sont montées (dépose les autres dans une autre release)."
+            head -n 10 /tmp/vids.txt > /tmp/v10 && mv /tmp/v10 /tmp/vids.txt; N=10
+          fi
+          echo "Release $TAG — $N vidéo(s) :"; cat /tmp/vids.txt
+          {
+            echo "tag=$TAG"; echo "n=$N"; echo "lot=$(date -u +%Y%m%d-%H%M)"
+            echo "videos=$(jq -R . /tmp/vids.txt | jq -sc 'to_entries | map({i: (.key + 1), name: .value})')"
+          } >> "$GITHUB_OUTPUT"
+          bash scripts/release-status.sh "$TAG" run "Montage en cours : 0/$N vidéo(s) terminée(s)… [suivre](https://github.com/$REPO/actions/runs/${{ github.run_id }})"
+
+  # 2) une tâche par vidéo, toutes en même temps (musique de fond supprimée, puis montage complet)
+  build:
+    needs: lister
+    name: "Vidéo ${{ matrix.video.i }}/${{ needs.lister.outputs.n }} — ${{ matrix.video.name }}"
     runs-on: ubuntu-24.04   # figé : ubuntu-latest passe à Ubuntu 26 (oct. 2026), non testé
     timeout-minutes: 180
+    strategy:
+      fail-fast: false        # une vidéo qui échoue n'arrête pas les autres
+      max-parallel: 10
+      matrix:
+        video: ${{ fromJSON(needs.lister.outputs.videos) }}
+    env:
+      SRC_TAG: ${{ needs.lister.outputs.tag }}
+      LOT: ${{ needs.lister.outputs.lot }}
+      N: ${{ needs.lister.outputs.n }}
+      VIDEO_NAME: ${{ matrix.video.name }}
+      VIDEO_I: ${{ matrix.video.i }}
     steps:
       - uses: actions/checkout@v5
 
@@ -67,37 +124,21 @@ jobs:
         with:
           build-tools: "true"
 
-      - name: Télécharger la vidéo de la Release
+      - name: Télécharger la vidéo ${{ matrix.video.i }} de la release
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          # la release qui a déclenché le workflow (avant : toujours « la dernière », même en modifiant une ancienne)
-          WANT_TAG: ${{ github.event.release.tag_name || inputs.release }}
         run: |
           mkdir -p input
-          pick_asset() { gh release view "$1" --repo "$REPO" --json assets -q '.assets[].name' 2>/dev/null | grep -Ei '\.(mp4|mov|mkv|webm|avi|m4v)$' | head -n1 || true; }
-          TAG="$WANT_TAG"; ASSET_NAME=""
-          if [ -n "$TAG" ]; then
-            ASSET_NAME=$(pick_asset "$TAG")
-          else
-            # la plus récente release « normale » qui contient une vidéo (on ignore renders, shorts*, out-*)
-            shopt -s nocasematch
-            for t in $(gh release list --repo "$REPO" --limit 40 --json tagName -q '.[].tagName'); do
-              case "$t" in renders|short*|out-*) continue;; esac
-              ASSET_NAME=$(pick_asset "$t"); [ -n "$ASSET_NAME" ] && { TAG="$t"; break; }
-            done
-          fi
-          if [ -z "$ASSET_NAME" ]; then
-            echo "::error::Aucune vidéo trouvée${TAG:+ dans la release $TAG}. Publie une Release avec ta vidéo en pièce jointe."
-            exit 1
-          fi
-          echo "SRC_TAG=$TAG" >> "$GITHUB_ENV"
-          echo "Release $TAG — vidéo : $ASSET_NAME"
-          bash scripts/release-status.sh "$TAG" run "Montage en cours… [suivre](https://github.com/$REPO/actions/runs/${{ github.run_id }})"
-          gh release download "$TAG" --repo "$REPO" --pattern "$ASSET_NAME" --dir input --clobber
-          EXT="${ASSET_NAME##*.}"
-          mv "input/$ASSET_NAME" "input/video.$EXT"
-          echo "ASSET_BASE=$(basename "$ASSET_NAME" ".$EXT" | tr -c 'A-Za-z0-9._-' '_')" >> "$GITHUB_ENV"
+          ID=$(gh api "repos/$REPO/releases/tags/$SRC_TAG" --jq '.assets[] | select(.name == $ENV.VIDEO_NAME) | .id' | head -n1)
+          [ -n "$ID" ] || { echo "::error::Vidéo « $VIDEO_NAME » introuvable dans la release $SRC_TAG"; exit 1; }
+          EXT="${VIDEO_NAME##*.}"; EXT="${EXT,,}"
+          for i in 1 2 3; do
+            gh api -H "Accept: application/octet-stream" "repos/$REPO/releases/assets/$ID" > "input/video.$EXT" && [ -s "input/video.$EXT" ] && break
+            echo "téléchargement : nouvel essai"; sleep 10
+          done
+          echo "ASSET_BASE=$(basename "$VIDEO_NAME" ".${VIDEO_NAME##*.}" | tr -c 'A-Za-z0-9._-' '_')" >> "$GITHUB_ENV"
+          echo "Vidéo $VIDEO_I/$N : $VIDEO_NAME"
           ffprobe -v error -show_entries stream=codec_type,width,height,duration -of csv=p=0 "input/video.$EXT"
 
       # ---------- musique de fond : supprimée avant tout le reste (droits d'auteur) ----------
@@ -196,11 +237,14 @@ jobs:
         continue-on-error: true   # protège le cœur : sans thème, le rendu d'origine est utilisé
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BATCH_SEED: ${{ needs.lister.outputs.lot }}
+          BATCH_INDEX: ${{ matrix.video.i }}
         run: |
           mkdir -p state
           git fetch --depth=1 origin "$DEFAULT_BRANCH" || true
           git show "origin/$DEFAULT_BRANCH:state/style-history.json" > state/style-history.json 2>/dev/null || echo '{}' > state/style-history.json
           node scripts/pick-style.mjs
+          cp content/style-pick.json "style-pick-$VIDEO_I.json" 2>/dev/null || true
 
       - name: Rendu vidéo
         run: node scripts/render-video.mjs
@@ -213,71 +257,120 @@ jobs:
 
       - uses: actions/upload-artifact@v6
         with:
-          name: video-finale
+          name: video-finale-${{ matrix.video.i }}
           path: output/
           retention-days: 3
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        continue-on-error: true
+        with:
+          name: style-${{ matrix.video.i }}
+          path: style-pick-${{ matrix.video.i }}.json
+          if-no-files-found: ignore
+          retention-days: 1
 
       - name: Publier dans la Release "renders"
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
-          gh release view renders --repo "${{ github.repository }}" >/dev/null 2>&1 || \
-            gh release create renders --repo "${{ github.repository }}" --prerelease \
-              --title "🎬 RÉSULTAT — Vidéo montée" --notes "Résultat automatique."
-          NAME="$(date -u +%Y%m%d-%H%M)-${ASSET_BASE}.mp4"
+          gh release view renders --repo "$REPO" >/dev/null 2>&1 || \
+            gh release create renders --repo "$REPO" --prerelease --title "🎬 RÉSULTAT — Vidéo montée" --notes "Résultat automatique." || true
+          NAME="${LOT}-$(printf %02d "$VIDEO_I")-${ASSET_BASE}.mp4"
           cp output/final.mp4 "$NAME"
-          # une seule vidéo gardée : le nouveau rendu REMPLACE l'ancien (GitHub n'est pas surchargé)
-          gh release view renders --repo "${{ github.repository }}" --json assets -q '.assets[].name' | while read -r a; do
-            [ -n "$a" ] && gh release delete-asset renders "$a" --repo "${{ github.repository }}" -y || true
+          # la release « renders » garde TOUTES les vidéos de ce lot ; seules celles des lots précédents sont retirées
+          gh release view renders --repo "$REPO" --json assets -q '.assets[].name' | while read -r a; do
+            case "$a" in "$LOT"-*|"") ;; *) gh release delete-asset renders "$a" --repo "$REPO" -y || true;; esac
           done
-          gh release upload renders "$NAME" --repo "${{ github.repository }}" --clobber
-          printf '%s\n' "🎬 **Ta dernière vidéo montée** : \`$NAME\` (fichier ci-dessous). Elle est remplacée à chaque nouveau montage." "" \
-            "**Pour monter une autre vidéo** : Releases → *Draft a new release* → tag \`video-001\` (n'importe quel nom SANS « short ») → joins la vidéo → *Publish*." \
-            "**Pour la découper en Shorts** : même chose avec un tag qui commence par \`shorts\` (ex. \`shorts-001\`)." > /tmp/renders.md
-          gh release edit renders --repo "${{ github.repository }}" --title "🎬 RÉSULTAT — Vidéo montée" --notes-file /tmp/renders.md --prerelease
-          bash scripts/release-status.sh "$SRC_TAG" ok "Vidéo montée → release [🎬 RÉSULTAT — Vidéo montée](https://github.com/${{ github.repository }}/releases/tag/renders)"
-          echo "### ✅ Vidéo prête : release « renders » → $NAME" >> "$GITHUB_STEP_SUMMARY"
+          for i in 1 2 3; do gh release upload renders "$NAME" --repo "$REPO" --clobber && break; sleep 10; done
+          DONE=$(gh release view renders --repo "$REPO" --json assets -q '.assets[].name' | grep -c "^$LOT-" || true)
+          [ "$DONE" -lt "$N" ] && bash scripts/release-status.sh "$SRC_TAG" run "Montage en cours : $DONE/$N vidéo(s) terminée(s)… [suivre](https://github.com/$REPO/actions/runs/${{ github.run_id }})"
+          echo "### ✅ Vidéo $VIDEO_I/$N prête : release « renders » → $NAME" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Supprimer les anciennes vidéos déposées (la dernière release écrase les précédentes)
+  # 3) bilan quand TOUTES les vidéos sont finies : état de ta release, notes de « renders », nettoyage, historique
+  terminer:
+    needs: [lister, build]
+    if: always() && needs.lister.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        continue-on-error: true
+        with:
+          pattern: style-*
+          merge-multiple: true
+          path: picks
+      - name: Bilan du lot
+        id: b
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SRC_TAG: ${{ needs.lister.outputs.tag }}
+          LOT: ${{ needs.lister.outputs.lot }}
+          N: ${{ needs.lister.outputs.n }}
+          VIDEOS: ${{ needs.lister.outputs.videos }}
+        run: |
+          gh release view renders --repo "$REPO" --json assets -q '.assets[].name' 2>/dev/null | grep "^$LOT-" | sort > /tmp/done.txt || true
+          DONE=$(wc -l < /tmp/done.txt)
+          FAILED=$(jq -r '.[] | "\(.i)\t\(.name)"' <<<"$VIDEOS" | while IFS=$'\t' read -r i name; do
+            grep -q "^$LOT-$(printf %02d "$i")-" /tmp/done.txt || echo "$name"; done | paste -sd ',' - | sed 's/,/, /g')
+          {
+            echo "🎬 **Tes $DONE dernière(s) vidéo(s) montée(s)** (fichiers ci-dessous). Elles sont remplacées au prochain montage."
+            echo; sed 's/^/- `/; s/$/`/' /tmp/done.txt; echo
+            echo "**Pour monter d'autres vidéos** : Releases → *Draft a new release* → tag \`video-001\` (n'importe quel nom SANS « short ») → joins une ou plusieurs vidéos (10 max, montées en même temps) → *Publish*."
+            echo "**Pour les découper en Shorts** : même chose avec un tag qui commence par \`shorts\` (ex. \`shorts-001\`)."
+          } > /tmp/renders.md
+          [ "$DONE" -gt 0 ] && gh release edit renders --repo "$REPO" --title "🎬 RÉSULTAT — Vidéo(s) montée(s)" --notes-file /tmp/renders.md --prerelease || true
+          LINK="[🎬 RÉSULTAT](https://github.com/$REPO/releases/tag/renders)"
+          if [ "$DONE" -ge "$N" ]; then
+            bash scripts/release-status.sh "$SRC_TAG" ok "$N/$N vidéo(s) montée(s) → release $LINK"
+          elif [ "$DONE" -gt 0 ]; then
+            bash scripts/release-status.sh "$SRC_TAG" fail "$DONE/$N vidéo(s) montée(s) → $LINK ; échec pour : $FAILED — [voir le détail](https://github.com/$REPO/actions/runs/${{ github.run_id }})"
+          else
+            bash scripts/release-status.sh "$SRC_TAG" fail "Le montage a échoué : [voir le détail](https://github.com/$REPO/actions/runs/${{ github.run_id }}). Vérifie que les pièces jointes sont bien des vidéos."
+          fi
+          echo "### $DONE/$N vidéo(s) montée(s)${FAILED:+ — échec : $FAILED}" >> "$GITHUB_STEP_SUMMARY"
+          echo "done=$DONE" >> "$GITHUB_OUTPUT"
+
+      - name: Supprimer les anciennes vidéos déposées (jamais une release encore en cours de montage)
+        if: steps.b.outputs.done != '0'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          KEEP: ${{ github.event.release.tag_name || inputs.release }}
+          CUR: ${{ needs.lister.outputs.tag }}
         run: |
-          # releases d'ENTRÉE de Build Video (pas renders, pas shorts*, pas out-*) : on garde seulement celle qui vient d'être montée
-          gh release list --repo "$REPO" --limit 100 --json tagName,createdAt -q 'sort_by(.createdAt) | reverse | .[].tagName' > /tmp/rels.txt
-          CUR="${SRC_TAG:-$KEEP}"; [ -n "$CUR" ] || CUR=$(grep -viE '^(renders|short.*|out-.*)$' /tmp/rels.txt | head -n1)
-          grep -viE '^(renders|short.*|out-.*)$' /tmp/rels.txt | while read -r t; do
+          # releases d'ENTRÉE de Build Video (pas renders, pas shorts*, pas out-*) : on garde celle qui vient d'être montée
+          # et toute release dont le montage est encore EN COURS (titre « ⏳ EN COURS »)
+          gh release list --repo "$REPO" --limit 100 --json tagName,name -q '.[] | [.tagName, .name] | @tsv' > /tmp/rels.tsv
+          while IFS=$'\t' read -r t name; do
+            case "$t" in renders|out-*) continue;; esac
+            shopt -s nocasematch; case "$t" in short*) continue;; esac; shopt -u nocasematch
             [ "$t" = "$CUR" ] && continue
+            case "$name" in "⏳ EN COURS"*) echo "Gardée (montage en cours) : $t"; continue;; esac
             echo "Suppression de l'ancienne release d'entrée : $t"
             gh release delete "$t" --repo "$REPO" -y --cleanup-tag || true
-          done
+          done < /tmp/rels.tsv
 
-      - name: Mémoriser le style utilisé (pour ne pas le répéter trop vite)
+      - name: Mémoriser les styles utilisés (pour ne pas les répéter trop vite)
         continue-on-error: true
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          cp state/style-history.json /tmp/style-history.json
+          ls picks/*.json >/dev/null 2>&1 || { echo "Aucun style à mémoriser."; exit 0; }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin "$DEFAULT_BRANCH"
-          git checkout -f -B style-history "origin/$DEFAULT_BRANCH"
-          mkdir -p state
-          cp /tmp/style-history.json state/style-history.json
-          git add state/style-history.json
-          if git diff --cached --quiet; then
-            echo "Historique inchangé."
-          else
-            git commit -m "chore: historique des styles [skip ci]"
-            git push origin "HEAD:$DEFAULT_BRANCH" || (git pull --rebase origin "$DEFAULT_BRANCH" && git push origin "HEAD:$DEFAULT_BRANCH") || echo "⚠ historique non poussé (non bloquant)"
-          fi
-
-      - name: Signaler l'échec sur la release déposée
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          bash scripts/release-status.sh "${SRC_TAG:-${{ github.event.release.tag_name }}}" fail "Le montage a échoué : [voir le détail](https://github.com/$REPO/actions/runs/${{ github.run_id }}). Vérifie que la pièce jointe est bien une vidéo."
+          for k in 1 2 3; do
+            git fetch -q origin "$DEFAULT_BRANCH" && git checkout -q -f -B style-history "origin/$DEFAULT_BRANCH"
+            mkdir -p state; [ -f state/style-history.json ] || echo '{}' > state/style-history.json
+            node -e '
+              const fs = require("fs"); const H = "state/style-history.json"; const h = JSON.parse(fs.readFileSync(H, "utf8"));
+              for (const f of fs.readdirSync("picks").sort()) { try { const p = JSON.parse(fs.readFileSync("picks/" + f, "utf8"));
+                if (p.channel && p.id) h[p.channel] = [...(h[p.channel] || []), p.id].slice(-12); } catch {} }
+              fs.writeFileSync(H, JSON.stringify(h, null, 2) + "\n");'
+            git add state/style-history.json
+            git diff --cached --quiet && { echo "Historique inchangé."; break; }
+            git commit -q -m "chore: historique des styles [skip ci]" && git push -q origin "HEAD:$DEFAULT_BRANCH" && break
+            sleep 5
+          done
