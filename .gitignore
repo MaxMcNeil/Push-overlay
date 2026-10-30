@@ -28,3 +28,4 @@ content/theme.json
 /out/
 content/audio-*.wav
 content/*-whisper.json
+content/music.json

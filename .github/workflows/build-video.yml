@@ -54,7 +54,7 @@ jobs:
         !contains(github.event.release.name, 'short') &&
         !startsWith(github.event.release.tag_name, 'out-'))
     runs-on: ubuntu-24.04   # figé : ubuntu-latest passe à Ubuntu 26 (oct. 2026), non testé
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v5
 
@@ -99,6 +99,37 @@ jobs:
           mv "input/$ASSET_NAME" "input/video.$EXT"
           echo "ASSET_BASE=$(basename "$ASSET_NAME" ".$EXT" | tr -c 'A-Za-z0-9._-' '_')" >> "$GITHUB_ENV"
           ffprobe -v error -show_entries stream=codec_type,width,height,duration -of csv=p=0 "input/video.$EXT"
+
+      # ---------- musique de fond : supprimée avant tout le reste (droits d'auteur) ----------
+      # Demucs sépare ta voix du reste ; s'il y a de la musique, même 1 seconde, le son de TOUTE la vidéo est remplacé
+      # par ta voix seule (image intacte, même synchro). Sans musique : son d'origine gardé. Bibliothèques et modèle en
+      # cache (1er lancement ≈ 3-4 min d'installation, ensuite quelques secondes).
+      - name: Cache Demucs (séparation voix / musique)
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/demucs-venv
+            ~/.cache/torch/hub/checkpoints
+          key: demucs-v1-${{ runner.os }}-py312
+
+      - name: Supprimer la musique de fond (droits d'auteur)
+        timeout-minutes: 75
+        run: |
+          if [ ! -x ~/demucs-venv/bin/python ] || ! ~/demucs-venv/bin/python -c "import demucs, torch" 2>/dev/null; then
+            rm -rf ~/demucs-venv && python3 -m venv ~/demucs-venv
+            for i in 1 2 3; do
+              ~/demucs-venv/bin/pip install -q torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu \
+                && ~/demucs-venv/bin/pip install -q demucs==4.0.1 soundfile numpy && break
+              echo "installation de Demucs : nouvel essai dans 15 s"; sleep 15
+            done
+          fi
+          V=$(ls input/video.* | head -n1)
+          ~/demucs-venv/bin/python scripts/remove-music.py "$V" "$RUNNER_TEMP/music" 2>&1 | grep -v "^+ \|%|" || true
+          if python3 -c "import json,sys; j=json.load(open('content/music.json')); sys.exit(0 if j.get('checked') else 1)"; then
+            python3 -c "import json; j=json.load(open('content/music.json')); print('### 🎵 Musique de fond : ' + ('détectée → supprimée (voix seule)' if j['replaced'] else 'aucune'))" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ⚠ Musique de fond NON vérifiée (Demucs indisponible) : vérifie la vidéo avant de publier" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # ---------- whisper.cpp (transcription locale, mot à mot) ----------
       - name: Cache whisper.cpp
