@@ -12,6 +12,57 @@ import { findVideo, probeVideo } from "../lib/util.mjs";
 import { channelOf } from "../lib/styles.mjs";
 import { SHORT_STYLES, pickShortStyles } from "../lib/short-styles.mjs";
 
+// ---------- garde « à l'oreille » : une coupe ne mange jamais le début (ni la fin) d'un mot ----------
+// La transcription place souvent le début d'un mot sur sa voyelle : un « s », « ch », « f » qui le précède (faible en
+// volume mais aigu) serait coupé. On mesure le son toutes les 10 ms (volume global + aigus) et chaque morceau gardé
+// démarre avant le premier son réel (≤ 0,5 s plus tôt) et va jusqu'au bout du dernier (≤ 0,4 s plus tard).
+function soundActivity(src, start, dur) {
+  try {
+    const buf = execFileSync("ffmpeg", ["-v", "error", "-ss", start.toFixed(3), "-t", dur.toFixed(3), "-i", src, "-vn", "-ac", "1",
+      "-ar", "16000", "-f", "s16le", "-"], { maxBuffer: 1 << 28 });
+    const x = new Int16Array(buf.buffer, buf.byteOffset, Math.floor(buf.length / 2));
+    const H = 160, n = Math.floor(x.length / H);
+    if (n < 50) return null;
+    const bb = new Float64Array(n), hf = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      let s1 = 0, s2 = 0;
+      for (let k = i * H; k < (i + 1) * H; k++) {
+        const v = x[k] / 32768, d2 = k >= 2 ? (x[k] - 2 * x[k - 1] + x[k - 2]) / 32768 : 0;
+        s1 += v * v; s2 += d2 * d2;
+      }
+      bb[i] = 10 * Math.log10(s1 / H + 1e-18); hf[i] = 10 * Math.log10(s2 / H + 1e-18);
+    }
+    const pct = (a, p) => { const s = Array.from(a).sort((u, v) => u - v); return s[Math.floor(p * (s.length - 1))]; };
+    const thr = (a, m) => { const lo = pct(a, 0.1), hi = pct(a, 0.9); return lo + Math.max(m, 0.22 * (hi - lo)); };
+    const tb = thr(bb, 6), th = thr(hf, 8);
+    return Array.from(bb, (v, i) => v > tb || hf[i] > th);
+  } catch { return null; }
+}
+function guardKeep(keep, act, dur) {
+  if (!act) return { keep, moved: 0 };
+  const fps = 100, n = act.length, fr = (t) => Math.max(0, Math.min(n - 1, Math.floor(t * fps)));
+  const out = keep.map((x) => ({ ...x }));
+  let moved = 0;
+  out.forEach((r, i) => {
+    const prevB = i > 0 ? out[i - 1].b : 0;
+    let j = fr(r.a) - 1; const lo = fr(Math.max(prevB, r.a - 0.5));
+    if (i > 0 && j >= lo && act[j]) {
+      while (j >= lo && act[j]) j--;
+      const na = Math.max(prevB, j >= lo ? (j + 1) / fps - 0.05 : r.a - 0.12);
+      if (na < r.a - 1e-3) { r.a = na; moved++; }
+    }
+    const nxtA = i + 1 < keep.length ? keep[i + 1].a : dur;
+    j = fr(r.b); const hi = fr(Math.min(nxtA, r.b + 0.4));
+    if (i + 1 < keep.length && j < hi && act[j]) {
+      while (j < hi && act[j]) j++;
+      const nb = Math.min(nxtA, j < hi ? j / fps + 0.05 : r.b + 0.12);
+      if (nb > r.b + 1e-3) { r.b = nb; moved++; }
+    }
+  });
+  for (let i = 1; i < out.length; i++) if (out[i].a < out[i - 1].b) out[i].a = out[i - 1].b;
+  return { keep: out.filter((r) => r.b - r.a > 0.04), moved };
+}
+
 const sel = JSON.parse(readFileSync("shorts/selection.json", "utf8"));
 const tr = JSON.parse(readFileSync("content/transcript.json", "utf8"));
 const src = findVideo();
@@ -58,13 +109,18 @@ for (const c of sel.clips) {
   if (TIGHT > 0 && rel.length) {
     const iv = [];
     for (const w of rel) {
-      const a = Math.max(0, w.t0 - 0.08), b = Math.min(dur, w.t1 + 0.14);
+      const a = Math.max(0, w.t0 - 0.12), b = Math.min(dur, w.t1 + 0.14);
       const last = iv[iv.length - 1];
       if (last && a - last.b <= TIGHT) last.b = Math.max(last.b, b); else iv.push({ a, b });
     }
     iv[0].a = 0; iv[iv.length - 1].b = dur; // début et fin d'origine conservés (marges + fondu)
     const removed = dur - iv.reduce((n, x) => n + (x.b - x.a), 0);
     if (removed >= 0.4 && iv.length <= 60) keep = iv;
+  }
+  if (keep.length > 1) {   // chaque coupe vérifiée à l'oreille (aucun « s » mangé) ; analyse impossible = comme avant
+    const g = guardKeep(keep, soundActivity(src, c.start, dur), dur);
+    keep = g.keep;
+    if (g.moved) console.log(`  #${c.id} : ${g.moved} coupe(s) décalée(s) pour ne manger aucun début ni fin de mot`);
   }
   const newDur = keep.reduce((n, x) => n + (x.b - x.a), 0);
   const fadeOut = `afade=t=out:st=${Math.max(0, newDur - 0.22).toFixed(3)}:d=0.22`;
