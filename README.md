@@ -131,6 +131,10 @@ respecté (`non` = aucun sous-titre). Lancement à la main : inchangé.
   propos n'engageant que leurs auteurs, liberté d'expression, respect des lois de chaque pays… 20 mentions par langue,
   ordre mélangé propre à chaque vidéo, **jamais deux fois la même** (au-delà de 20 min la liste recommence, jamais deux
   fois de suite la même). Textes : `scripts/lib/legal.mjs`.
+- **Aussi dans Video to Shorts** (option « protection_juridique » au lancement **à la main uniquement** — la chaîne
+  automatique fond vert → Montage → Shorts n'est jamais concernée) : même règle (0:01, 1:01, 2:01…, jamais pendant
+  l'écran d'abonnement), carte posée dans la zone de l'étiquette, hors visage et hors interface YouTube ; l'accroche se
+  range alors dans la zone des puces et le petit logo s'efface le temps de la mention.
 - **Écran de fin** (toutes langues, tous formats) : 4,5 s ajoutées APRÈS la vidéo (aucune parole coupée) — fond flouté
   et assombri, logo de la chaîne de la langue (aucun logo si la chaîne n'existe pas encore : en/it), nom de la chaîne,
   « Merci de nous avoir suivis » + invitation à s'abonner, carillon discret, fondu au noir.

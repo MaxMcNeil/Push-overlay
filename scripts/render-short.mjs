@@ -21,6 +21,7 @@ import { Ass, c1, c3, c4, rrect, esc } from "./lib/ass.mjs";
 import { measureTokens } from "./lib/measure.mjs";
 import { shortStyle } from "./lib/short-styles.mjs";
 import { channelFor, burnedLogo } from "./lib/channel.mjs";
+import { legalKicker, legalSequence, LEGAL } from "./lib/legal.mjs";
 
 const plan = JSON.parse(readFileSync(`${CONTENT_DIR}/plan.json`, "utf8"));
 const tr = JSON.parse(readFileSync(`${CONTENT_DIR}/transcript.json`, "utf8"));
@@ -82,7 +83,7 @@ const up = (t) => (ST.upper && !rtl ? String(t).toLocaleUpperCase(lang) : String
 const nb = (t) => t.replace(/ +([?!:;»؟])/g, " $1").replace(/(«) +/g, "$1 ");
 const tokensOf = (text) => nb(esc(text)).split(/ +/).filter(Boolean);
 const allTok = new Set(["●", "|"]);
-[plan.hook && up(plan.hook), T_.badge, up(T_.cta1), T_.cta2, up(LBL.sub), up(LBL.subbed), up(LBL.like),
+[plan.hook && up(plan.hook), T_.badge, legalKicker(lang), ...(LEGAL[lang] || LEGAL.en), up(T_.cta1), T_.cta2, up(LBL.sub), up(LBL.subbed), up(LBL.like),
   ...plan.beats.flatMap((b) => [b.headline && up(b.headline), ...(b.points || [])]), ...tr.words.map((w) => up(w.w))]
   .filter(Boolean).forEach((t) => tokensOf(t).forEach((k) => allTok.add(k)));
 const TM = measureTokens({ tokens: [...allTok], font, dir: CONTENT_DIR });
@@ -220,7 +221,34 @@ const CTA_START = Math.max(HOOK_END + 2, D - END_LEN);
 // badge « extrait » : dans la zone des puces s'il y en a une, sinon à la place de la 1re étiquette (qui attend)
 const BADGE = { t0: HOOK_END + 0.1, t1: Math.min(HOOK_END + 3.2, CTA_START - 0.3) };
 const BADGE_IN_TAG = !CHIPS || NO_TAG;
-const TAG_FROM = BADGE_IN_TAG && BADGE.t1 - BADGE.t0 > 1 ? BADGE.t1 + 0.05 : HOOK_END;
+let TAG_FROM = BADGE_IN_TAG && BADGE.t1 - BADGE.t0 > 1 ? BADGE.t1 + 0.05 : HOOK_END;
+// ---------- protection juridique (lancement manuel uniquement : LEGAL_GUARD=oui) ----------
+// mention de 3 s dès la 1re seconde puis chaque minute, jamais pendant l'écran de fin ; texte dans la langue du short,
+// jamais deux fois la même. Zone : celle de l'étiquette (en haut, hors visage, hors interface) ; l'accroche se range
+// alors dans la zone des puces. Sans zone de puces, l'étiquette sert d'abord à l'accroche : la 1re mention vient juste après.
+const LEGAL_ON = /^(1|oui|yes|true|on|si|sì|نعم)$/i.test(String(process.env.LEGAL_GUARD || "").trim());
+const LEGAL_LEN = 3;
+const LZ = CHIPS && BIG === CHIPS ? { y0: TAG.y, y1: TAG.y + TAG.h }            // accroche dans les puces : étiquette libre
+  : CHIPS && near ? { y0: TAG.y, y1: TAG.y + TAG.h }                          // accroche → puces seules (voir HOOK_Z)
+  : CHIPS ? { y0: CHIPS.y0, y1: Math.min(CHIPS.y1, CHIPS.y0 + 200) }          // puces plus petites que l'étiquette
+  : { y0: TAG.y, y1: TAG.y + TAG.h };
+const legalAt = [];
+if (LEGAL_ON) {
+  const first = !CHIPS && plan.hook ? HOOK_END + 0.1 : 1;
+  for (let t = first; t + LEGAL_LEN <= CTA_START - 0.2; t = t < 60 ? 61 : t + 60) legalAt.push({ t0: t, t1: t + LEGAL_LEN });
+  const seq = legalSequence(lang, legalAt.length, `${process.env.ID || ""}|${videoPath}|${plan.hook || ""}|${D.toFixed(1)}`);
+  legalAt.forEach((g, k) => (g.text = seq.list[k]));
+  console.log(`Protection juridique : ${legalAt.length} mention(s) de ${LEGAL_LEN} s à ${legalAt.map((g) => `${Math.floor(g.t0 / 60)}:${String(Math.round(g.t0 % 60)).padStart(2, "0")}`).join(", ") || "—"} (zone y=${Math.round(LZ.y0)}→${Math.round(LZ.y1)})`);
+}
+const inLegal = (a, b) => legalAt.some((g) => a < g.t1 + 0.15 && b > g.t0 - 0.15);
+// l'accroche ne partage jamais la zone de la mention
+const HOOK_Z = legalAt.length && CHIPS && near && inLegal(0.12, HOOK_END) ? CHIPS : BIG;
+// le badge « extrait » attend la fin de la mention s'il devait s'afficher au même endroit
+{
+  const bz = BADGE_IN_TAG ? { y0: TAG.y, y1: TAG.y + TAG.h } : CHIPS;
+  const g = legalAt.find((x) => bz && Math.min(bz.y1, LZ.y1) - Math.max(bz.y0, LZ.y0) > 2 && BADGE.t0 < x.t1 && BADGE.t1 > x.t0);
+  if (g) { const len = BADGE.t1 - BADGE.t0; BADGE.t0 = g.t1 + 0.1; BADGE.t1 = Math.min(BADGE.t0 + len, CTA_START - 0.3); if (BADGE_IN_TAG) TAG_FROM = BADGE.t1 - BADGE.t0 > 1 ? BADGE.t1 + 0.05 : Math.max(TAG_FROM, g.t1 + 0.05); }
+}
 const emojiHex = (e) => [...(e || "")].map((c) => c.codePointAt(0).toString(16)).join("-");
 const emojiOverlays = [];
 
@@ -304,12 +332,12 @@ if (CHIPS && !SAFE) beats.forEach((b) => {
 
 // 4) hook d'ouverture : gros texte, mot-clé surligné au marqueur
 if (plan.hook) {
-  const zoneH = BIG.y1 - BIG.y0;
+  const zoneH = HOOK_Z.y1 - HOOK_Z.y0;
   const { lines, em } = wrapFit(up(plan.hook), 960, 96, 3, 44);
   let e = em, ls = lines;
   while (ls.length * lh(e) > zoneH && e > 40) { e -= 4; ls = wrapFit(up(plan.hook), 960, e, 3, 40).lines; }
   const key = keyWord(up(plan.hook));
-  const cy0 = (BIG.y0 + BIG.y1) / 2;
+  const cy0 = (HOOK_Z.y0 + HOOK_Z.y1) / 2;
   ls.forEach((ln, k) => {
     const yc = cy0 + (k - (ls.length - 1) / 2) * lh(e);
     for (const g of lineGeom(ln, e, W / 2)) {
@@ -330,6 +358,36 @@ if (plan.hook) {
     ass.add(29, t0, t1, `{\\an5\\pos(${Math.round(W / 2 + (rtl ? -12 : 12))},${Math.round(y + h / 2)})\\fs${fsz(em)}\\bord0\\shad0${c1("#FFFFFF")}\\fad(180,220)}${T_.badge}`);
   }
 }
+
+// 6) mentions de protection juridique : carte sombre posée sur la zone de l'étiquette (jamais sur le visage)
+legalAt.forEach((g) => {
+  const x = 40, w = W - 80, y = LZ.y0, h = LZ.y1 - LZ.y0;
+  const { t0, t1 } = g;
+  const fad = "\\fad(220,280)";
+  ass.add(40, t0, t1, `{\\an7\\pos(${x},${Math.round(y)})\\bord0\\shad0${c1("#000000", 0.9)}${fad}\\p1}${rrect(w, h, 18)}{\\p0}`);
+  const colW = Math.round(Math.max(130, lineW(esc(legalKicker(lang)), 18) + 30));
+  const colX = rtl ? x + w - colW : x;
+  const sh = Math.round(Math.min(h * 0.4, 56)), sw = Math.round(sh * 0.84);
+  const kH = lh(18), blockH = sh + 6 + (h >= 96 ? kH : 0);
+  const sx = Math.round(colX + colW / 2 - sw / 2), sy = Math.round(y + h / 2 - blockH / 2);
+  const shield = `m ${sw / 2} 0 l ${sw} ${sh * 0.17} l ${sw} ${sh * 0.48} b ${sw} ${sh * 0.76} ${sw * 0.74} ${sh * 0.92} ${sw / 2} ${sh} b ${sw * 0.26} ${sh * 0.92} 0 ${sh * 0.76} 0 ${sh * 0.48} l 0 ${sh * 0.17}`;
+  ass.add(41, t0, t1, `{\\an7\\pos(${sx},${sy})\\bord0\\shad0${c1(P.accent)}${fad}\\p1}${shield}{\\p0}`);
+  ass.add(42, t0, t1, `{\\an7\\pos(${sx},${sy})\\1a&HFF&\\bord${Math.max(2, Math.round(sh / 16))}${c3("#000000")}\\shad0${fad}\\p1}m ${sw * 0.27} ${sh * 0.5} l ${sw * 0.43} ${sh * 0.66} l ${sw * 0.75} ${sh * 0.33}{\\p0}`);
+  if (h >= 96) ass.add(41, t0, t1, `{\\an8\\pos(${Math.round(colX + colW / 2)},${sy + sh + 6})\\fs${fsz(18)}\\bord0\\shad0${c1(P.accent)}${fad}}${esc(legalKicker(lang))}`);
+  const tW = w - colW - 40;
+  const maxL = h >= 150 ? 3 : 2;
+  let em = 24, lines = null;
+  for (const e of [40, 37, 34, 31, 28, 26, 24]) { const l = wrapPx(g.text, tW, e, maxL); if (l && l.length * lh(e) <= h - 16) { em = e; lines = l; break; } }
+  if (!lines) lines = wrapFit(g.text, tW, 22, maxL, 22).lines;
+  const tx0 = rtl ? x + 20 : colX + colW + 20;
+  lines.forEach((ln, k) => {
+    const yc = y + h / 2 + (k - (lines.length - 1) / 2) * lh(em);
+    const cx = tx0 + lineW(ln, em) / 2 + (rtl ? tW - lineW(ln, em) : 0);
+    for (const q of lineGeom(ln, em, cx)) ass.add(42, t0 + 0.1, t1, `{\\an5\\pos(${Math.round(q.xc)},${Math.round(yc)})\\fs${fsz(em)}\\bord0\\shad0${c1("#FFFFFF")}\\fad(260,280)}${q.t}`);
+  });
+  const gx = rtl ? x + 20 : colX + colW + 20;
+  ass.add(42, t0, t1, `{\\an${rtl ? 9 : 7}\\pos(${rtl ? gx + tW : gx},${Math.round(y + h - 8)})\\bord0\\shad0${c1(P.accent, 0.7)}\\fscx100\\t(0,${LEGAL_LEN * 1000},\\fscx0)${fad}\\p1}m 0 0 l ${tW} 0 l ${tW} 3 l 0 3{\\p0}`);
+});
 
 // 7) sous-titres karaoké
 if (subsOn) {
@@ -511,7 +569,7 @@ function roundMask(w, h, r) {
 const iCM = D - CTA_START > 2 ? addInput(["-loop", "1", "-framerate", String(FPS), "-i", roundMask(CARD.w, CARD.h, 28)]) : -1;
 const sfxIdx = {};
 for (const [k, f] of Object.entries(SFX)) sfxIdx[k] = addInput(["-i", f]);
-const usable = SAFE ? [] : emojiOverlays.filter((e) => existsSync(e.file));
+const usable = SAFE ? [] : emojiOverlays.filter((e) => existsSync(e.file) && !(e.kind === "react" && inLegal(e.t0, e.t1)));
 const emoIdx = usable.map((e) => addInput(["-loop", "1", "-framerate", String(FPS), "-t", Math.max(0.2, e.t1 - e.t0 + 0.1).toFixed(3), "-i", e.file]));
 
 const f = [];
@@ -542,7 +600,7 @@ if (logoFile) {
   // logo jamais déformé : ramené dans un carré (bandes transparentes) avant le masque rond
   f.push(`[${iLogo}:v]format=rgba,scale=${LOGO}:${LOGO}:force_original_aspect_ratio=decrease,pad=${LOGO}:${LOGO}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=yuva420p[lg0]`, `[${iLM}:v]format=gray[lm]`, `[lg0][lm]alphamerge[lg]`);
   f.push(`[lg]split=2[lg1][lg2]`);
-  if (tagLogo) { f.push(`[${last}][lg1]overlay=${lx}:${ly}:enable='between(t,${HOOK_END.toFixed(2)},${CTA_START.toFixed(2)})'[ol]`); last = "ol"; }
+  if (tagLogo) { f.push(`[${last}][lg1]overlay=${lx}:${ly}:enable='between(t,${HOOK_END.toFixed(2)},${CTA_START.toFixed(2)})${legalAt.length ? `*not(${legalAt.map((g) => `between(t,${(g.t0 - 0.1).toFixed(2)},${(g.t1 + 0.1).toFixed(2)})`).join("+")})` : ""}'[ol]`); last = "ol"; }
   else f.push(`[lg1]nullsink`);
   if (END.logo && D - CTA_START > 2) { f.push(`[lg2]scale=${END.logo.s}:${END.logo.s}[lg3]`, `[${last}][lg3]overlay=${END.logo.x}:${END.logo.y}:enable='gte(t,${(ET + 0.3).toFixed(2)})'[ol2]`); last = "ol2"; }
   else f.push(`[lg2]nullsink`);

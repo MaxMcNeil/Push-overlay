@@ -48,6 +48,11 @@ on:
         description: "Consigne pour le choix des passages (facultatif, ex. « les moments sur l'économie »)"
         required: false
         default: ""
+      protection_juridique:
+        description: "Protection juridique : mention de 3 s dès la 1re seconde puis chaque minute, dans la langue du short (lancement manuel uniquement)"
+        type: choice
+        options: [non, oui]
+        default: non
       destination:
         description: "Où déposer les shorts"
         type: choice
@@ -235,6 +240,8 @@ jobs:
           # 🔗 chaîne (fond vert / Montage LV final) : « non » au lancement = aucun sous-titre dans les Shorts.
           # Lancement à la main : vide = comportement habituel (inchangé)
           SUBTITLES: ${{ github.event.client_payload.sous_titres == 'non' && 'off' || '' }}
+          # ⚖️ protection juridique : UNIQUEMENT au lancement à la main (la chaîne automatique n'est jamais concernée)
+          LEGAL_GUARD: ${{ github.event_name == 'workflow_dispatch' && inputs.protection_juridique || 'non' }}
         run: |
           set -o pipefail
           mkdir -p out
