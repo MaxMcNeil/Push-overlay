@@ -53,19 +53,35 @@ const GRAD = theme.gradient || ["FF2E63", "08D9D6", "7B2FF7"];
 const layoutRTL = rtl !== !!T.flip; // côté de la carte d'analyse (le logo et la headline ne bougent pas : identité de chaîne)
 console.log(`Thème : ${theme.id || "neon-night (défaut)"}`);
 
-// ---------- orientation : suit la vidéo (ou content/orientation.txt si présent) ----------
-let vertical = info.height > info.width;
-if (existsSync(`${CONTENT_DIR}/orientation.txt`)) {
-  const f = readFileSync(`${CONTENT_DIR}/orientation.txt`, "utf8").trim().toLowerCase();
-  if (f === "vertical") vertical = true;
-  if (f === "horizontal") vertical = false;
-  if (f === "vertical" || f === "horizontal") console.log(`Orientation imposée par content/orientation.txt : ${f} (supprime ce fichier pour suivre la vidéo)`);
-}
+// ---------- FORMAT DE SORTIE ----------
+// FORMAT = auto (suit la vidéo) | vertical (1080x1920) | horizontal (1920x1080) — choisi au lancement (voir le workflow).
+// Plus aucun réglage caché dans le dépôt (l'ancien content/orientation.txt est ignoré).
+const srcPortrait = info.height > info.width * 1.05, srcLandscape = info.width > info.height * 1.05;
+const srcKind = srcPortrait ? "verticale" : srcLandscape ? "horizontale" : "carrée";
+const FORMAT = String(process.env.FORMAT || "auto").toLowerCase().trim();
+let vertical = FORMAT === "vertical" ? true : FORMAT === "horizontal" ? false : info.height > info.width;
+if (!["auto", "vertical", "horizontal"].includes(FORMAT)) console.log(`⚠ FORMAT « ${FORMAT} » inconnu : format automatique.`);
+// cas croisés (mise en page artistique dédiée, voir plus bas)
+const PORTRAIT_IN_LANDSCAPE = !vertical && srcPortrait && process.env.LAYOUT !== "shorts";
+const LANDSCAPE_IN_PORTRAIT = vertical && srcLandscape && process.env.LAYOUT !== "shorts";
 const W = vertical ? 1080 : 1920;
 const H = vertical ? 1920 : 1080;
 const FPS = info.fps;
-const srcAspect = info.width / info.height;
-console.log(`Source ${info.width}x${info.height} → sortie ${W}x${H} (${vertical ? "vertical" : "horizontal"}), ${D.toFixed(1)} s, langue ${lang}`);
+let srcAspect = info.width / info.height;
+// Vidéo horizontale en sortie verticale : si un visage est bien visible (content/face.json), recadrage 4:5 centré sur
+// lui → la personne remplit l'écran ; sinon (écran, diapos, paysage) l'image entière est gardée, carte en dessous.
+let REFRAME = null; // { w, h, x, y } en pixels de la source
+if (LANDSCAPE_IN_PORTRAIT) {
+  let face = null;
+  try { const f = JSON.parse(readFileSync(`${CONTENT_DIR}/face.json`, "utf8")); if (f.found && (f.ratio ?? 1) >= 0.4 && f.cx > 0 && f.cx < 1) face = f; } catch {}
+  if (face && process.env.REFRAME !== "off") {
+    const ch = Math.floor(info.height / 2) * 2, cw = Math.floor((info.height * 4) / 5 / 2) * 2;
+    const x = Math.round(Math.max(0, Math.min(info.width - cw, face.cx * info.width - cw / 2)) / 2) * 2;
+    REFRAME = { w: cw, h: ch, x, y: 0 };
+    srcAspect = cw / ch;
+  }
+}
+console.log(`Format : vidéo ${srcKind} ${info.width}x${info.height} → sortie ${vertical ? "VERTICALE 1080x1920" : "HORIZONTALE 1920x1080"} (${FORMAT === "auto" ? "automatique : suit la vidéo" : `choisi au lancement : ${FORMAT}`})${PORTRAIT_IN_LANDSCAPE ? " — mise en page « portrait dans paysage »" : ""}${LANDSCAPE_IN_PORTRAIT ? (REFRAME ? ` — recadrage 4:5 centré sur le visage (x=${REFRAME.x})` : " — mise en page « paysage dans portrait » (image entière, cartes en dessous)") : ""}, ${D.toFixed(1)} s, langue ${lang}`);
 
 // ---------- polices ----------
 const files = listFontFiles();
@@ -169,6 +185,25 @@ const L = vertical
       panel: { x: 1210, y: 185, w: 660, h: 640 }, subsY: 1000, subsSize: 78, subsPx: 1560, subsWords: 5,
       ticker: { y: 1020, h: 54, size: 30 }, bannerMaxLines: 2, bannerSizes: [76, 66, 58, 52, 46, 40, 34], titleSize: 50, bodySize: 33, hookSize: 88,
     };
+// --- cas croisés : mises en page dédiées (jamais une petite vignette perdue au milieu de l'écran) ---
+let STACKED = false; // carte d'analyse SOUS la vidéo (au lieu d'à côté)
+if (PORTRAIT_IN_LANDSCAPE) {
+  // vidéo verticale dans un écran 16:9 : grande colonne au centre ; aux idées, elle glisse à gauche et la carte
+  // d'analyse occupe toute la droite (format « plateau télé »)
+  Object.assign(L, {
+    normalBox: { x: 735, y: 185, w: 450, h: 800 }, splitBox: { x: 150, y: 185, w: 450, h: 800 },
+    panel: { x: 680, y: 200, w: 1090, h: 700 },
+  });
+}
+if (LANDSCAPE_IN_PORTRAIT && !REFRAME) {
+  // vidéo horizontale dans un écran 9:16, sans visage à suivre : image entière en largeur, la carte se loge dessous
+  STACKED = true;
+  Object.assign(L, {
+    // hors idées : vidéo au centre ; à chaque idée elle remonte et la carte apparaît dessous (sous-titres libres en bas)
+    normalBox: { x: 40, y: 620, w: 1000, h: 562 }, splitBox: { x: 40, y: 400, w: 1000, h: 562 },
+    panel: { x: 40, y: 990, w: 1000, h: 380 },
+  });
+}
 // Mise en page "shorts" (LAYOUT=shorts, vertical) : la vidéo occupe ≈ 90 % de l'écran et AUCUN texte ne passe sur
 // le visage. La position du visage vient de content/face.json (scripts/face-box.py) ; les textes se rangent dans les
 // bandes libres au-dessus / au-dessous du visage, sans descendre dans la zone couverte par l'interface des applis
@@ -521,7 +556,7 @@ merged.filter((s) => s.state === "split").forEach((s) => {
   });
 
   // flèche pulsante qui relie la carte à la vidéo (inutile en shorts : la carte est posée sur la vidéo)
-  if (SHORTS) return;
+  if (SHORTS || STACKED) return; // (carte sous la vidéo : pas de flèche latérale)
   const w = winSplitFinal;
   const ax = layoutRTL ? w.x - 4 : w.x + w.w + 4;
   const ay = w.y + w.h / 2;
@@ -534,7 +569,8 @@ merged.filter((s) => s.state === "split").forEach((s) => {
 if (plan.hook) {
   const t0 = 0.15, t1 = HOOK_END;
   const box = winNormal;
-  const hw = Math.min(box.w * 0.92, vertical ? 940 : 1200);
+  // (vidéo verticale dans un écran horizontal : le hook prend toute la largeur au lieu de la colonne étroite)
+  const hw = PORTRAIT_IN_LANDSCAPE ? 1300 : Math.min(box.w * 0.92, vertical ? 940 : 1200);
   let em = L.hookSize;
   let lines = wrapPx(plan.hook, hw - 90, em, 4);
   if (!lines) { em = Math.round(em * 0.8); lines = wrapClamp(plan.hook, hw - 90, em, 4); }
@@ -753,7 +789,7 @@ const f = [];
 const bw = even(W / 8), bh = even(H / 8);
 const gw = even(W / 6), gh = even(H / 6);
 const hasPunch = merged.some((s) => s.state === "punch");
-f.push(`[${iSrc}:v]setpts=PTS-STARTPTS,fps=${FPS},setsar=1${padSec > 0.5 ? `,tpad=stop_mode=clone:stop_duration=${(padSec + 1).toFixed(2)}` : ""},split=${hasPunch ? 4 : 3}[bgs][nv0][sv0]${hasPunch ? "[pv0]" : ""}`);
+f.push(`[${iSrc}:v]setpts=PTS-STARTPTS,fps=${FPS},setsar=1${REFRAME ? `,crop=${REFRAME.w}:${REFRAME.h}:${REFRAME.x}:${REFRAME.y}` : ""}${padSec > 0.5 ? `,tpad=stop_mode=clone:stop_duration=${(padSec + 1).toFixed(2)}` : ""},split=${hasPunch ? 4 : 3}[bgs][nv0][sv0]${hasPunch ? "[pv0]" : ""}`);
 // fond : copie floutée + dérive de teinte + dégradé animé (basse résolution = rapide)
 f.push(`[bgs]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},gblur=sigma=5,eq=brightness='${MV.bgDark}+${pulseExpr("t", "b", 6)}':saturation=${T.sat}:eval=frame,hue=h='${T.hueSpeed}*t+${MV.hueOffset % 50}':s=1.15,scale=${W}:${H}:flags=bicubic,format=yuv420p[bg0]`);
 f.push(`gradients=size=${gw}x${gh}:rate=${FPS}:duration=${D.toFixed(3)}:${GRAD.map((c, i) => `c${i}=0x${c}`).join(":")}:nb_colors=${GRAD.length}:speed=${MV.gradSpeed},scale=${W}:${H}:flags=bicubic,format=yuv420p[grad]`);

@@ -131,6 +131,20 @@ vdo-BACKGROUND-replace-GREEN-, section « Chaîne ».
 **Sous-titres des Shorts lancés par la chaîne** (fond vert ou Montage LV final) : le choix fait au lancement est
 respecté (`non` = aucun sous-titre). Lancement à la main : inchangé.
 
+### 🖼 Format de sortie (Build Video) : vertical ou horizontal
+- **Automatique** (par défaut) : même orientation que ta vidéo.
+- **Au choix**, quelle que soit ta vidéo d'entrée :
+  - lancement à la main : *Actions → Build Video → Run workflow* → menu **format** (`auto`, `vertical`, `horizontal`) ;
+  - par release : mets **vertical** (ou portrait, 9:16) ou **horizontal** (ou paysage, 16:9) dans le **titre** ou le tag
+    (ex. titre « Interview — vertical »). Rien → automatique. Les deux à la fois → automatique (avertissement).
+- **Cas croisés, mises en page dédiées** :
+  - vidéo verticale → sortie horizontale : grande colonne au centre ; à chaque idée elle glisse sur le côté et la carte
+    d'analyse occupe le reste (format plateau télé) ;
+  - vidéo horizontale → sortie verticale : visage détecté → **recadrage 4:5 centré sur la personne** ; pas de visage
+    (écran, diapos, paysage) → image entière, et la carte d'analyse apparaît **sous** la vidéo.
+- Le nom du fichier final se termine par `-vertical` ou `-horizontal`, et le résumé du run indique le format choisi.
+- Il n'y a plus de réglage caché : l'ancien fichier `content/orientation.txt`, qui forçait le vertical, est supprimé.
+
 ## Utilisation (Build Video)
 1. *Releases → Draft a new release* → joins ta vidéo (n'importe quel nom) → **Publish**.
 2. Attends la fin du workflow (onglet Actions).
@@ -149,5 +163,4 @@ Prérequis : `ffmpeg` (avec libass), Node 20, Python 3 + Pillow, polices Poppins
 - Les cartes d'analyse sont écrites à partir de **ce qui est dit** + du contexte général ; le LLM peut se tromper : relis `plan.json` pour les sujets sensibles (c'est aussi pour ça que les disclaimers restent affichés).
 - Repli sans LLM : phrases propres tirées de la vidéo, cartes = extrait de la parole (pas d'analyse inédite).
 - Pas de b-roll ni de cartes géographiques automatiques (aucune banque d'images embarquée) : zoom, split-screen, flèches, emojis et graphismes sont générés.
-- `content/orientation.txt` contient « Vertical » : il **force la sortie verticale** même pour une vidéo horizontale (Build Video). Supprime-le pour suivre l'orientation de la vidéo.
 - Les anciens scripts d'overlay OBS (`generate-overlay.mjs`, `templates/`, `docs/`) sont conservés mais ne sont plus lancés par le workflow.
