@@ -42,7 +42,7 @@ jobs:
           import yaml
           w = yaml.safe_load(open(".github/workflows/video-to-shorts.yml"))
           st = [x for x in w["jobs"]["render"]["steps"] if x.get("name", "").startswith("Retirer la musique")][0]
-          print("set -eo pipefail\n" + st["run"].replace("${{ matrix.id }}", "T"))
+          print("set -eo pipefail\n" + st["run"].replace("$" + "{{ matrix.id }}", "T"))
           PY
           cp input/video.mp4 before.mp4
           time bash step.sh
