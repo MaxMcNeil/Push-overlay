@@ -1,28 +1,20 @@
 # Push-overlay — vidéo brute → vidéo finale montée (+ Shorts)
 
-## 📥 Déposer une vidéo (mémo)
+## 📥 Déposer une vidéo puis lancer (mémo)
 
-| Je veux… | Tag de la release (le titre est libre) | Le résultat arrive dans |
-|---|---|---|
-| **la vidéo entière montée** | `video-001`, `video-002`… (tout tag **sans** « short ») | release **🎬 RÉSULTAT — Vidéo montée** |
-| **des Shorts** à partir d'une vidéo longue | `shorts-001`, `shorts-002`… (commence par **shorts**) | release **✂️ RÉSULTAT — Shorts** |
+**Rien ne se lance tout seul** : déposer une vidéo, une photo ou un logo ne déclenche aucun workflow. Deux étapes :
+1. **Déposer** : *Releases → Draft a new release* → **nouveau** tag (ex. `video-002`, `shorts-002` ; ne réutilise jamais
+   un ancien tag) → joins la ou les vidéos → *Publish*.
+2. **Lancer** : *Actions* → le workflow voulu → *Run workflow* :
 
-*Releases → Draft a new release → Choose a tag (taper le tag → Create new tag) → joindre la vidéo → Publish.*
-Vidéo de plus de 2 Go (shorts) : release sans pièce jointe, avec le **lien Google Drive** dans la description.
-Erreur de tag ? Pas grave : un tag **ou un titre** qui contient « short » part vers les Shorts, tout le reste vers le montage complet.
-Ta release affiche l'état dans son titre : **⏳ EN COURS** → **✅ TERMINÉ** (lien vers le résultat) ou **❌ ÉCHEC** (lien vers l'erreur).
-Chaque nouveau résultat remplace le précédent, et les anciennes vidéos déposées sont supprimées automatiquement.
+| Je veux… | Workflow | Champ à remplir | Résultat |
+|---|---|---|---|
+| **la vidéo entière montée** | **Build Video** | `release` = ton tag (vide = la plus récente) · `format` = auto / vertical / horizontal | release **🎬 RÉSULTAT — Vidéo montée** |
+| **des Shorts** | **Video to Shorts** | `source` = ton tag **ou** un lien Google Drive | release **✂️ RÉSULTAT — Shorts** |
 
-Deux workflows :
-- **Build Video** : une vidéo → la même vidéo montée (`final.mp4`). Release « normale » (tag libre, sauf `shorts…`).
-  **Plusieurs vidéos dans la même release** (10 max) : elles sont toutes montées **en même temps**, chacune avec son style ;
-  le titre de la release suit l'avancement (« 2/3 terminées »), et la release « renders » garde toutes les vidéos du lot.
-  Avant le montage, la **musique de fond** est supprimée (même 1 seconde) : risque de droits d'auteur écarté.
-- **Video to Shorts** : une vidéo longue → plusieurs **Shorts verticaux** montés. Release dont le **tag commence par `shorts`**, ou lien Google Drive.
-
-Tu déposes une vidéo dans une **Release GitHub**. Le workflow la transcrit, écrit un scénario
-(hook + headlines choc + cartes d'analyse) et **rend `final.mp4`** : horizontal si ta vidéo est
-horizontale, vertical si elle est verticale. Tout tourne sur GitHub (ffmpeg), sans service payant.
+Ta release affiche l'état dans son titre : **⏳ EN COURS** → **✅ TERMINÉ** ou **❌ ÉCHEC** (avec le lien).
+Plusieurs vidéos dans une release → montées séparément, en parallèle. Chaque nouveau résultat remplace le précédent.
+Seule exception au lancement manuel : la chaîne fond vert → Montage LV final → Shorts (lancée par Montage LV final).
 
 ## Ce que contient la vidéo finale
 - **Jamais 100 % de l'écran** : ta vidéo vit dans une fenêtre arrondie (halo néon) sur un fond animé (copie floutée + dérive de teinte).

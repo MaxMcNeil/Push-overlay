@@ -10,16 +10,16 @@ name: Video to Shorts
 # les anciennes vidéos déposées « shorts… » sont supprimées) ; plus lourd → Google Drive
 # (secret RCLONE_CONF requis). Réglable avec le champ « destination ».
 
+# LANCEMENT MANUEL UNIQUEMENT (Actions → Video to Shorts → Run workflow) : déposer une vidéo ne déclenche plus rien.
+# Seule exception : la chaîne fond vert → Montage LV final → Shorts (repository_dispatch « chaine-shorts » ci-dessous).
 on:
-  release:
-    types: [published]
   # 🔗 CHAÎNE : lancé automatiquement par Montage LV final (après un fond vert avec « enchainer »), jamais par un cron
   repository_dispatch:
     types: [chaine-shorts]
   workflow_dispatch:
     inputs:
       source:
-        description: "Lien Google Drive, tag de release, ou lien direct .mp4 (vide = dernière release « shorts… »)"
+        description: "Lien Google Drive, tag de la release qui contient la vidéo, ou lien direct .mp4 (vide = dernière release « shorts… »)"
         required: false
         default: ""
       nombre:

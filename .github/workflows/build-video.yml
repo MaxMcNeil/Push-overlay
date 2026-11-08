@@ -5,18 +5,13 @@ name: Build Video
 # Résultat : onglet Actions -> run -> Artifacts, ET Release "renders" (téléchargeable direct).
 
 # Les Releases dont le tag commence par "shorts" sont pour le workflow « Video to Shorts » (ignorées ici).
+# LANCEMENT MANUEL UNIQUEMENT : déposer une vidéo, une photo ou un logo ne déclenche plus rien.
+# Actions → Build Video → Run workflow (tag de la release + format).
 on:
-  release:
-    types: [published]          # (plus "edited" : modifier le titre d'une release relançait un rendu complet)
-  push:
-    branches: [main]
-    paths:                      # (plus "scripts/**" : chaque mise à jour du code relançait — et annulait — un rendu)
-      - "content/manual-headlines.txt"
-      - "input/logo*.png"
   workflow_dispatch:
     inputs:
       release:
-        description: "Tag de la release à monter (vide = la plus récente qui contient une vidéo)"
+        description: "Tag de la release qui contient la ou les vidéos (vide = la plus récente avec une vidéo, hors shorts)"
         required: false
         default: ""
       format:
