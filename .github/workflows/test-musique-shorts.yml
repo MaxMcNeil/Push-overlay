@@ -1,0 +1,58 @@
+# TEST TEMPORAIRE (branche test-musique-shorts uniquement) : exécute l'étape « Retirer la musique de fond » EXACTE de
+# video-to-shorts.yml sur un vrai passage, avec et sans musique ajoutée. À supprimer après le test.
+name: test-musique-shorts
+on:
+  push:
+    branches: [test-musique-shorts]
+permissions:
+  contents: read
+jobs:
+  t:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        cas: [avec-musique, sans-ajout]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-media
+      - name: Cache Demucs
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/demucs-venv
+            ~/.cache/torch/hub/checkpoints
+          key: demucs-v1-${{ runner.os }}-py312
+      - name: Préparer un passage réel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "Vidéo" -p "ssstik.io_1794126618184.mp4" -O src.mp4
+          mkdir -p input content
+          ffmpeg -v error -y -ss 5 -i src.mp4 -t 45 -c:v libx264 -preset veryfast -c:a aac clip.mp4
+          if [ "${{ matrix.cas }}" = avec-musique ]; then
+            ffmpeg -v error -y -i clip.mp4 -f lavfi -i "aevalsrc=0.25*sin(2*PI*220*t)*(0.6+0.4*sin(2*PI*2*t))+0.2*sin(2*PI*330*t)+0.15*sin(2*PI*440*t)*(gt(mod(t\,0.5)\,0.25)):d=45:s=48000" \
+              -filter_complex "[0:a][1:a]amix=inputs=2:normalize=0:duration=first[a]" -map 0:v -map "[a]" -c:v copy -c:a aac input/video.mp4
+          else cp clip.mp4 input/video.mp4; fi
+          ffprobe -v error -show_entries format=duration -of csv=p=0 input/video.mp4
+      - name: Étape exacte de video-to-shorts.yml
+        run: |
+          python3 - <<'PY' > step.sh
+          import yaml
+          w = yaml.safe_load(open(".github/workflows/video-to-shorts.yml"))
+          st = [x for x in w["jobs"]["render"]["steps"] if x.get("name", "").startswith("Retirer la musique")][0]
+          print("set -eo pipefail\n" + st["run"].replace("${{ matrix.id }}", "T"))
+          PY
+          cp input/video.mp4 before.mp4
+          time bash step.sh
+      - name: Bilan
+        run: |
+          cat content/music.json
+          b=$(ffprobe -v error -show_entries format=duration -of csv=p=0 before.mp4); a=$(ffprobe -v error -show_entries format=duration -of csv=p=0 input/video.mp4)
+          vb=$(ffmpeg -i before.mp4 -af volumedetect -f null - 2>&1 | grep mean_volume | awk '{print $5}')
+          va=$(ffmpeg -i input/video.mp4 -af volumedetect -f null - 2>&1 | grep mean_volume | awk '{print $5}')
+          # musique synthétique : énergie à 220 Hz avant/après
+          eb=$(ffmpeg -i before.mp4 -af "bandpass=f=220:w=20,volumedetect" -f null - 2>&1 | grep mean_volume | awk '{print $5}')
+          ea=$(ffmpeg -i input/video.mp4 -af "bandpass=f=220:w=20,volumedetect" -f null - 2>&1 | grep mean_volume | awk '{print $5}')
+          echo "::notice title=${{ matrix.cas }}::music.json=$(cat content/music.json | head -c 300) | durée $b→$a | volume $vb→$va dB | 220Hz $eb→$ea dB"
