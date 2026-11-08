@@ -313,7 +313,7 @@ jobs:
             node -e '
               const fs=require("fs"),p="state/style-history.json";fs.mkdirSync("state",{recursive:true});
               let h={};try{h=JSON.parse(fs.readFileSync(p,"utf8"))}catch{}
-              const ch=(process.env.LANG_CH==="ar"?"ar":"fr")+"-shorts";
+              const ch=(["fr","ar","en","it"].includes(process.env.LANG_CH)?process.env.LANG_CH:"fr")+"-shorts";
               const used=fs.readdirSync("out").filter(f=>f.endsWith(".meta.json")).sort().map(f=>JSON.parse(fs.readFileSync("out/"+f,"utf8")).theme).filter(Boolean);
               h[ch]=[...(h[ch]||[]),...used].slice(-12);fs.writeFileSync(p,JSON.stringify(h,null,2)+"\n");console.log(ch,"→",h[ch].join(" → "));'
             git add state/style-history.json

@@ -27,7 +27,9 @@ export const PRESETS = [
     gradient: ["FF4D9D", "5CE1E6", "B388EB"], radius: 44, transition: "flash2", subAnim: "drop", bullet: "dot", flip: true, sfx: 3, frame: "accent", hueSpeed: 36, subsDy: 24 },
 ].map((p) => ({ ...base, ...p }));
 
-export const channelOf = (lang) => (lang === "ar" ? "ar" : "fr"); // FR/EN/IT = chaîne FR ; AR = chaîne arabe
+// Une chaîne par langue (historique des thèmes séparé) : fr = Le Journal du NON, ar = Gulf think-tank ; en / it prêts
+// pour les futures chaînes (leur historique démarre vide, rien à configurer). Langue inconnue → fr.
+export const channelOf = (lang) => (["fr", "ar", "en", "it"].includes(lang) ? lang : "fr");
 
 // Choisit un thème pour une chaîne, en évitant les `avoid` derniers utilisés sur CETTE chaîne.
 export function pickStyle({ channel, history = {}, avoid = 3, force = null, rng = Math.random }) {
