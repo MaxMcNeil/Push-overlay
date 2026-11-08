@@ -19,6 +19,11 @@ on:
         type: choice
         options: [auto, vertical, horizontal]
         default: auto
+      protection_juridique:
+        description: "Protection juridique : une mention de 3 s chaque minute (neutralité, droit de réponse…), dans la langue de la vidéo, jamais deux fois la même"
+        type: choice
+        options: [non, oui]
+        default: non
 
 permissions:
   contents: write
@@ -129,6 +134,7 @@ jobs:
       VIDEO_NAME: ${{ matrix.video.name }}
       VIDEO_I: ${{ matrix.video.i }}
       FORMAT: ${{ needs.lister.outputs.format }}
+      LEGAL_GUARD: ${{ inputs.protection_juridique || 'non' }}
     steps:
       - uses: actions/checkout@v5
 

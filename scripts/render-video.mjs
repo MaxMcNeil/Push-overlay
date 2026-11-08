@@ -13,6 +13,7 @@ import { CONTENT_DIR, OUTPUT_DIR, findVideo, probeVideo, listFontFiles } from ".
 import { channelFor } from "./lib/channel.mjs";
 import { Ass, PALETTE, c1, c3, c4, rrect, esc } from "./lib/ass.mjs";
 import { measureTokens, measureLine } from "./lib/measure.mjs";
+import { outroText, legalKicker, legalSequence, tickerLabel, LEGAL } from "./lib/legal.mjs";
 
 const plan = JSON.parse(readFileSync(`${CONTENT_DIR}/plan.json`, "utf8"));
 const tr = JSON.parse(readFileSync(`${CONTENT_DIR}/transcript.json`, "utf8"));
@@ -121,7 +122,8 @@ try {
 const nb = (t) => t.replace(/ +([?!:;»؟])/g, "\u00A0$1").replace(/(«) +/g, "$1\u00A0");
 const tokensOf = (text) => nb(esc(text)).split(/ +/).filter(Boolean);
 const allTokens = new Set(["●"]);
-[plan.hook, ...plan.disclaimers, ...plan.beats.flatMap((b) => [b.headline, b.title, b.text, b.kicker, ...(b.points || [])]), ...tr.words.map((w) => w.w)]
+[plan.hook, ...plan.disclaimers, ...plan.beats.flatMap((b) => [b.headline, b.title, b.text, b.kicker, ...(b.points || [])]), ...tr.words.map((w) => w.w),
+  ...Object.values(outroText(lang)), legalKicker(lang), tickerLabel(lang), CH.nom, ...(LEGAL[lang] || LEGAL.en)]
   .filter(Boolean).forEach((t) => tokensOf(t).forEach((k) => allTokens.add(k)));
 const TM = measureTokens({ tokens: [...allTokens], font, dir: CONTENT_DIR });
 console.log(`Mesure du texte : ${TM.w.size} mots mesurés${TM.ok ? "" : " (⚠ mesure partielle, estimation utilisée)"}, espace = ${TM.space}px`);
@@ -177,13 +179,13 @@ const L = vertical
       logo: { x: 40, y: 190, w: 120, h: 120 }, banner: { x: 180, y: 170, w: 860, h: 200 },
       normalBox: { x: 40, y: 400, w: 1000, h: 1150 }, splitBox: { x: 40, y: 400, w: 520, h: 900 },
       panel: { x: 580, y: 400, w: 460, h: 900 }, subsY: 1520, subsSize: 74, subsPx: 940, subsWords: 4,
-      ticker: { y: 1620, h: 54, size: 28 }, bannerMaxLines: 3, bannerSizes: [66, 58, 52, 46, 40, 34], titleSize: 44, bodySize: 31, hookSize: 80,
+      ticker: { y: 1596, h: 78, size: 40 }, bannerMaxLines: 3, bannerSizes: [66, 58, 52, 46, 40, 34], titleSize: 44, bodySize: 31, hookSize: 80,
     }
   : {
       logo: { x: 44, y: 30, w: 120, h: 120 }, banner: { x: 190, y: 34, w: 1686, h: 128 },
       normalBox: { x: 320, y: 185, w: 1280, h: 720 }, splitBox: { x: 50, y: 185, w: 1130, h: 640 },
       panel: { x: 1210, y: 185, w: 660, h: 640 }, subsY: 1000, subsSize: 78, subsPx: 1560, subsWords: 5,
-      ticker: { y: 1020, h: 54, size: 30 }, bannerMaxLines: 2, bannerSizes: [76, 66, 58, 52, 46, 40, 34], titleSize: 50, bodySize: 33, hookSize: 88,
+      ticker: { y: 1000, h: 70, size: 38 }, bannerMaxLines: 2, bannerSizes: [76, 66, 58, 52, 46, 40, 34], titleSize: 50, bodySize: 33, hookSize: 88,
     };
 // --- cas croisés : mises en page dédiées (jamais une petite vignette perdue au milieu de l'écran) ---
 let STACKED = false; // carte d'analyse SOUS la vidéo (au lieu d'à côté)
@@ -358,6 +360,22 @@ function placeWords({ layer, t0, t1, line, em, edge, yc, keys, hi, base, tags, m
   });
 }
 const HOOK_END = plan.hook ? Math.min(3.3, D * 0.4) : 0.4;
+// ---------- écran de fin (ajouté APRÈS la vidéo : aucune parole n'est coupée ni masquée) ----------
+const OUTRO_D = !SHORTS && D >= 8 && !/^(0|non|no|off|false)$/i.test(String(process.env.OUTRO ?? "")) ? 4.5 : 0;
+const DT = D + OUTRO_D; // durée du fichier final
+if (OUTRO_D) console.log(`Écran de fin : ${OUTRO_D} s après la vidéo (${CH.logo ? "logo de la chaîne" : "sans logo"}, langue ${lang})`);
+// ---------- protection juridique : mention de 3 s chaque minute, texte différent à chaque fois ----------
+const LEGAL_ON = /^(1|oui|yes|true|on|si|sì|نعم)$/i.test(String(process.env.LEGAL_GUARD || "").trim());
+const LEGAL_LEN = 3;
+const legalSlots = [];
+if (LEGAL_ON && !SHORTS) {
+  for (let t = 60; t + LEGAL_LEN <= D - 0.5; t += 60) legalSlots.push(t);
+  if (!legalSlots.length && D >= 20) legalSlots.push(Math.round(Math.max(HOOK_END + 2, D / 2 - LEGAL_LEN / 2) * 10) / 10); // vidéo < 1 min : une mention au milieu
+}
+const LEGAL_SEQ = legalSequence(lang, legalSlots.length, `${videoPath}|${plan.beats.map((b) => b.headline || "").join("|")}|${D.toFixed(1)}`);
+const legalAt = legalSlots.map((t, k) => ({ t0: t, t1: t + LEGAL_LEN, text: LEGAL_SEQ.list[k] }));
+if (LEGAL_ON) console.log(`Protection juridique : ${legalAt.length} mention(s) de ${LEGAL_LEN} s${legalAt.length ? ` à ${legalAt.map((x) => `${Math.floor(x.t0 / 60)}:${String(Math.round(x.t0 % 60)).padStart(2, "0")}`).join(", ")}` : " (vidéo trop courte)"} — ${LEGAL_SEQ.cycled ? `⚠ plus de ${LEGAL_SEQ.size} passages : la liste recommence (jamais deux fois de suite la même)` : "toutes différentes"}`);
+const inLegal = (a, b) => legalAt.some((x) => a < x.t1 + 0.2 && b > x.t0 - 0.2);
 const FULL = `m 0 0 l ${W} 0 l ${W} ${H} l 0 ${H}`;
 const dirX = rtl ? -1 : 1; // sens de lecture / des balayages
 const SUB_COLORS = [P.gold, P.cyan, "#FF7AB6", "#9DFF5C"];
@@ -719,27 +737,110 @@ if (subMode === "keywords") {
       if (b.t1 <= b.t0) b.t1 = b.t0 + 0.1;
     }
   }
-  evs.forEach((e) => (e.texts || [e.text]).forEach((tx) => ass.add(10, e.t0, e.t1, tx)));
+  evs.forEach((e) => (e.texts || [e.text]).forEach((tx) => ass.add(10, e.t0, Math.min(e.t1, D), tx)));
 }
 
-// 9) ticker de disclaimers permanent : défilement continu SANS trou (largeur mesurée exactement)
+// 9) ticker de disclaimers permanent : défilement continu SANS trou (largeur mesurée exactement), assez grand et assez
+// lent pour être lu sur un téléphone ; étiquette fixe côté début de lecture ; en arabe le texte défile de gauche à droite
+// (sens des bandeaux d'info arabes : le début de la phrase entre en premier).
 {
   const tk = L.ticker;
   const mid = tk.y + tk.h / 2 + 1;
-  ass.shape(11, 0, D, 0, tk.y, `m 0 0 l ${W} 0 l ${W} ${tk.h} l 0 ${tk.h}`, c1(P.dark, 0.9));
-  ass.shape(11, 0, D, 0, tk.y, `m 0 0 l ${W} 0 l ${W} 3 l 0 3`, c1(P.accent));
-  const full = plan.disclaimers.map((t) => esc(lang === "ar" ? t : t.toUpperCase()).replace(/ +/g, " ")).join(" ● ") + " ●";
+  ass.shape(11, 0, DT, 0, tk.y, `m 0 0 l ${W} 0 l ${W} ${tk.h} l 0 ${tk.h}`, c1(P.dark, 0.92));
+  ass.shape(11, 0, DT, 0, tk.y, `m 0 0 l ${W} 0 l ${W} 3 l 0 3`, c1(P.accent));
+  const label = esc(tickerLabel(lang));
+  const lEm = Math.round(tk.size * 0.78);
+  const labW = Math.round(tw(label, lEm) + 44);
+  const labX = rtl ? W - labW : 0;
+  ass.shape(13, 0, DT, labX, tk.y + 3, `m 0 0 l ${labW} 0 l ${labW} ${tk.h - 3} l 0 ${tk.h - 3}`, c1(P.accent));
+  ass.add(14, 0, DT, `{\\an5\\pos(${labX + labW / 2},${mid + 1})\\fs${fs(lEm)}\\bord0\\shad0${rtl ? "" : "\\fsp2"}${c1(P.white)}}${label}`);
+  const full = plan.disclaimers.map((t) => esc(t).replace(/ +/g, " ")).join("   ●   ") + "   ●";
   const exact = measureLine({ text: full, fs: fs(tk.size), font, dir: CONTENT_DIR });
   const textW = Math.round((exact || tw(full, tk.size)) * 1.01) + 8;
-  console.log(`Ticker : largeur ${textW}px (${exact ? "mesurée" : "estimée"})`);
-  const gap = 140;
-  const speed = 150;
+  const speed = vertical ? 85 : 100; // px/s (avant : 150 = illisible)
+  console.log(`Ticker : texte ${tk.size}px, largeur ${textW}px (${exact ? "mesurée" : "estimée"}), ${speed} px/s, sens ${rtl ? "→" : "←"}`);
+  const gap = 160;
   const cycle = (textW + gap) / speed;
   const dur = (W + textW) / speed;
-  for (let start = 0; start < D; start += cycle) {
-    ass.add(12, start, Math.min(D, start + dur),
-      `{\\an4\\move(${W},${mid},${-textW},${mid})\\clip(0,${tk.y},${W},${tk.y + tk.h})\\fs${fs(tk.size)}\\bord0\\shad0${c1(P.white)}}${full}`);
+  const clip = rtl ? `\\clip(0,${tk.y},${W - labW},${tk.y + tk.h})` : `\\clip(${labW},${tk.y},${W},${tk.y + tk.h})`;
+  for (let start = 0; start < DT; start += cycle) {
+    const mv = rtl ? `\\move(${-textW},${mid},${W},${mid})` : `\\move(${W},${mid},${-textW},${mid})`;
+    ass.add(12, start, Math.min(DT, start + dur), `{\\an4${mv}${clip}\\fs${fs(tk.size)}\\bord0\\shad0${c1(P.white)}}${full}`);
   }
+}
+
+// 10) mentions de protection juridique : carte sobre posée sur le bandeau de titre (jamais sur la vidéo ni le visage)
+const LEGAL_COL = (() => {
+  const kEm = vertical ? 24 : 20;
+  const kick = esc(legalKicker(lang));
+  return { kEm, kick, w: Math.round(Math.max(vertical ? 150 : 170, tw(kick, kEm) + 36)) };
+})();
+legalAt.forEach((g) => {
+  const { x: bx, y: by, w: bw, h: bh } = bannerR;
+  const t0 = g.t0, t1 = g.t1;
+  const col = LEGAL_COL;
+  const fad = `\\fad(260,320)`;
+  ass.add(13, t0, t1, `{\\an7\\pos(${bx},${by})\\bord2${c3(P.gold, 0.55)}${c1(P.dark, 0.97)}\\shad0${fad}\\p1}${rrect(bw, bh, 22)}{\\p0}`);
+  // colonne : bouclier + « mention légale »
+  const colX = rtl ? bx + bw - col.w : bx;
+  ass.add(14, t0, t1, `{\\an7\\pos(${colX},${by})\\bord0\\shad0${c1(P.gold, 0.12)}${fad}\\p1}${rrect(col.w, bh, 22)}{\\p0}`);
+  const sh = Math.round(Math.min(bh * 0.42, 64)), sw = Math.round(sh * 0.84);
+  const kH = lh(col.kEm);
+  const blockH = sh + 8 + kH;
+  const sx = Math.round(colX + col.w / 2 - sw / 2), sy = Math.round(by + bh / 2 - blockH / 2);
+  const shield = `m ${sw / 2} 0 l ${sw} ${sh * 0.17} l ${sw} ${sh * 0.48} b ${sw} ${sh * 0.76} ${sw * 0.74} ${sh * 0.92} ${sw / 2} ${sh} b ${sw * 0.26} ${sh * 0.92} 0 ${sh * 0.76} 0 ${sh * 0.48} l 0 ${sh * 0.17}`;
+  ass.add(15, t0, t1, `{\\an7\\pos(${sx},${sy})\\bord0\\shad0${c1(P.gold)}${fad}\\p1}${shield}{\\p0}`);
+  const ck = `m ${sw * 0.27} ${sh * 0.5} l ${sw * 0.43} ${sh * 0.66} l ${sw * 0.75} ${sh * 0.33}`;
+  ass.add(16, t0, t1, `{\\an7\\pos(${sx},${sy})\\1a&HFF&\\bord${Math.max(2, Math.round(sh / 16))}${c3(P.dark)}\\shad0${fad}\\p1}${ck}{\\p0}`);
+  ass.add(15, t0, t1, `{\\an8\\pos(${colX + col.w / 2},${sy + sh + 8})\\fs${fs(col.kEm)}\\bord0\\shad0${rtl ? "" : "\\fsp2"}${c1(P.gold)}${fad}}${col.kick}`);
+  // texte de la mention
+  const tx0 = rtl ? bx + 30 : colX + col.w + 30;
+  const tW = bw - col.w - 60;
+  const sizes = vertical ? [44, 40, 37, 34, 31, 28] : [44, 40, 36, 32, 29, 26];
+  let em = sizes[sizes.length - 1], lines = null;
+  for (const e of sizes) {
+    const l = wrapPx(g.text, tW, e, vertical ? 3 : 2);
+    if (l && l.length * lh(e) <= bh - 24) { em = e; lines = l; break; }
+  }
+  if (!lines) lines = wrapClamp(g.text, tW, em, vertical ? 3 : 2);
+  const edge = rtl ? tx0 + tW : tx0;
+  lines.forEach((ln, k) => {
+    const yc = Math.round(by + bh / 2 + (k - (lines.length - 1) / 2) * lh(em));
+    ass.add(15, t0 + 0.12, t1, `{\\an${rtl ? 6 : 4}\\pos(${Math.round(edge)},${yc})\\fs${fs(em)}\\bord0\\shad0${c1(P.white)}\\fad(300,320)}${ln}`);
+  });
+  // fine jauge de temps restant (bas de la carte)
+  const gx = rtl ? bx + 22 : bx + col.w + 22, gw = bw - col.w - 44;
+  ass.add(15, t0, t1, `{\\an${rtl ? 9 : 7}\\pos(${rtl ? gx + gw : gx},${by + bh - 9})\\bord0\\shad0${c1(P.gold, 0.6)}\\fscx100\\t(0,${LEGAL_LEN * 1000},\\fscx0)${fad}\\p1}m 0 0 l ${gw} 0 l ${gw} 3 l 0 3{\\p0}`);
+});
+
+// 11) écran de fin sobre : fond flouté de la dernière image, voile sombre, logo rond, nom de la chaîne, merci + abonnement
+let OUTRO_LOGO = null;
+if (OUTRO_D) {
+  const t0 = D, t1 = DT;
+  const O = outroText(lang);
+  ass.shape(10, t0, t1, 0, 0, FULL, `${c1(P.dark, 0.66)}\\fad(700,0)`);
+  // vignettage doux (bords plus sombres)
+  ass.add(10, t0, t1, `{\\an7\\pos(0,0)\\1a&HFF&\\bord${Math.round(Math.min(W, H) * 0.16)}${c3(P.black, 0.55)}\\blur${Math.round(Math.min(W, H) * 0.12)}\\shad0\\fad(900,0)\\p1}${FULL}{\\p0}`);
+  const lg = CH.logo ? (vertical ? 230 : 170) : 0;
+  const name = CH.nom ? esc(CH.nom) : "";
+  const nEm = vertical ? 32 : 30;
+  const maxW = W - (vertical ? 140 : 400);
+  let tEm = vertical ? 70 : 68; while (tEm > 40 && tw(O.title, tEm) > maxW) tEm -= 2;
+  let sEm = vertical ? 42 : 38; while (sEm > 26 && tw(O.sub, sEm) > maxW) sEm -= 2;
+  const oEm = vertical ? 30 : 28;
+  const parts = [lg ? lg + 44 : 0, name ? lh(nEm) + 18 : 0, lh(tEm), 30 + 3 + 30, lh(sEm), 12 + lh(oEm)];
+  const total = parts.reduce((a, b) => a + b, 0);
+  let y = Math.round(H * (vertical ? 0.44 : 0.46) - total / 2);
+  if (lg) { OUTRO_LOGO = { x: even(W / 2 - lg / 2), y: even(y), s: even(lg), t0 }; y += lg + 44;
+    ass.add(10, t0 + 0.2, t1, `{\\an7\\pos(${OUTRO_LOGO.x},${OUTRO_LOGO.y})\\1a&HFF&\\bord3${c3(P.white, 0.45)}\\blur1\\shad0\\fad(700,0)\\p1}${rrect(OUTRO_LOGO.s, OUTRO_LOGO.s, Math.round(OUTRO_LOGO.s * 0.22))}{\\p0}`); }
+  const txt = (layer, d, yy, em, col, text, extra = "") =>
+    ass.add(layer, t0 + d, t1, `{\\an8\\move(${W / 2},${Math.round(yy + 16)},${W / 2},${Math.round(yy)},0,700)\\fs${fs(em)}\\bord0\\shad2${c4(P.black, 0.5)}${c1(col.c, col.a)}${extra}\\fad(650,0)}${text}`);
+  if (name) { txt(14, 0.45, y, nEm, { c: P.gold, a: 1 }, name, rtl ? "" : "\\fsp4"); y += lh(nEm) + 18; }
+  txt(14, 0.6, y, tEm, { c: P.white, a: 1 }, esc(O.title)); y += lh(tEm) + 30;
+  const lw = Math.round(Math.min(420, W * 0.3));
+  ass.add(14, t0 + 0.9, t1, `{\\an8\\pos(${W / 2},${y})\\bord0\\shad0${c1(P.accent)}\\fscx0\\t(0,700,\\fscx100)\\p1}m 0 0 l ${lw} 0 l ${lw} 3 l 0 3{\\p0}`); y += 3 + 30;
+  txt(14, 1.1, y, sEm, { c: P.white, a: 0.92 }, esc(O.sub)); y += lh(sEm) + 12;
+  txt(14, 1.35, y, oEm, { c: P.white, a: 0.55 }, esc(O.note));
 }
 
 // ---------- effets sonores synthétiques ----------
@@ -764,7 +865,9 @@ const SFX = {
   ding: synth(`ding-${vn}`, `sine=f=${SV.d}:d=0.55:r=48000,aecho=0.7:0.6:60:0.4,afade=t=out:st=0.05:d=0.5`),
   impact: synth(`impact-${vn}`, `sine=f=${SV.i}:d=0.7:r=48000,afade=t=out:st=0.05:d=0.65,volume=2.2`),
 };
+if (OUTRO_D) SFX.outro = synth("outro-chime", `aevalsrc=0.55*sin(2*PI*523.25*t)*exp(-1.8*t)+0.35*sin(2*PI*783.99*t)*exp(-2.4*t)+0.2*sin(2*PI*1046.5*t)*exp(-3*t):d=2.6:s=48000,aecho=0.8:0.5:140:0.25,afade=t=out:st=1.8:d=0.8`);
 const sfxEvents = [{ type: "impact", t: 0.1, v: 0.9 }];
+if (OUTRO_D) sfxEvents.push({ type: "outro", t: D + 0.35, v: 0.32 });
 beats.forEach((b, i) => { if (i > 0 || b.t0 + 0.2 >= HOOK_END) sfxEvents.push({ type: "ding", t: Math.max(b.t0, HOOK_END - 0.2), v: 0.35 }); });
 merged.forEach((s, i) => { if (i > 0) sfxEvents.push({ type: "whoosh", t: s.t0, v: 0.55 }); });
 emojiOverlays.filter((e) => e.kind === "sticker").forEach((e) => sfxEvents.push({ type: "pop", t: e.t0, v: 0.5 }));
@@ -783,10 +886,11 @@ function mask(name, w, h, r) {
 const mNormal = mask("n", winNormal.w, winNormal.h, T.radius);
 const mSplit = mask("s", winSplitFinal.w, winSplitFinal.h, T.radius);
 const mLogo = mask("l", L.logo.w, L.logo.h, 26);
+const mOutro = OUTRO_LOGO ? mask("o", OUTRO_LOGO.s, OUTRO_LOGO.s, Math.round(OUTRO_LOGO.s * 0.22)) : null;
 
 // ---------- emojis disponibles ----------
 // SAFE_MODE (2e essai après un échec) : pas d'emojis incrustés, moins d'impulsions → graphe ffmpeg minimal
-const usableEmoji = process.env.SAFE_MODE ? [] : emojiOverlays.filter((e) => existsSync(e.file));
+const usableEmoji = process.env.SAFE_MODE ? [] : emojiOverlays.filter((e) => existsSync(e.file) && e.t0 < D && !(e.kind !== "card" && inLegal(e.t0, e.t1))).map((e) => ({ ...e, t1: Math.min(e.t1, D) }));
 if (process.env.SAFE_MODE) console.log("Mode sûr : emojis désactivés, impulsions limitées.");
 
 // ---------- fichiers de sortie intermédiaires ----------
@@ -802,6 +906,8 @@ const iLogo = logoFile ? addInput(["-loop", "1", "-framerate", String(FPS), "-i"
 const iMN = addInput(["-loop", "1", "-framerate", String(FPS), "-i", mNormal]);
 const iMS = addInput(["-loop", "1", "-framerate", String(FPS), "-i", mSplit]);
 const iML = addInput(["-loop", "1", "-framerate", String(FPS), "-i", mLogo]);
+const iOL = OUTRO_LOGO ? addInput(["-loop", "1", "-framerate", String(FPS), "-t", OUTRO_D.toFixed(3), "-i", logoFile]) : -1;
+const iOM = OUTRO_LOGO ? addInput(["-loop", "1", "-framerate", String(FPS), "-t", OUTRO_D.toFixed(3), "-i", mOutro]) : -1;
 const sfxIdx = {};
 for (const [k, f] of Object.entries(SFX)) sfxIdx[k] = addInput(["-i", f]);
 // chaque emoji n'est décodé QUE pendant sa fenêtre d'affichage (-t + décalage des timestamps) : bien plus rapide
@@ -812,10 +918,10 @@ const f = [];
 const bw = even(W / 8), bh = even(H / 8);
 const gw = even(W / 6), gh = even(H / 6);
 const hasPunch = merged.some((s) => s.state === "punch");
-f.push(`[${iSrc}:v]setpts=PTS-STARTPTS,fps=${FPS},setsar=1${REFRAME ? `,crop=${REFRAME.w}:${REFRAME.h}:${REFRAME.x}:${REFRAME.y}` : ""}${padSec > 0.5 ? `,tpad=stop_mode=clone:stop_duration=${(padSec + 1).toFixed(2)}` : ""},split=${hasPunch ? 4 : 3}[bgs][nv0][sv0]${hasPunch ? "[pv0]" : ""}`);
+f.push(`[${iSrc}:v]setpts=PTS-STARTPTS,fps=${FPS},setsar=1${REFRAME ? `,crop=${REFRAME.w}:${REFRAME.h}:${REFRAME.x}:${REFRAME.y}` : ""}${padSec > 0.5 || OUTRO_D ? `,tpad=stop_mode=clone:stop_duration=${((padSec > 0.5 ? padSec + 1 : 0) + (OUTRO_D ? OUTRO_D + 1 : 0)).toFixed(2)}` : ""},split=${hasPunch ? 4 : 3}[bgs][nv0][sv0]${hasPunch ? "[pv0]" : ""}`);
 // fond : copie floutée + dérive de teinte + dégradé animé (basse résolution = rapide)
 f.push(`[bgs]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},gblur=sigma=5,eq=brightness='${MV.bgDark}+${pulseExpr("t", "b", 6)}':saturation=${T.sat}:eval=frame,hue=h='${T.hueSpeed}*t+${MV.hueOffset % 50}':s=1.15,scale=${W}:${H}:flags=bicubic,format=yuv420p[bg0]`);
-f.push(`gradients=size=${gw}x${gh}:rate=${FPS}:duration=${D.toFixed(3)}:${GRAD.map((c, i) => `c${i}=0x${c}`).join(":")}:nb_colors=${GRAD.length}:speed=${MV.gradSpeed},scale=${W}:${H}:flags=bicubic,format=yuv420p[grad]`);
+f.push(`gradients=size=${gw}x${gh}:rate=${FPS}:duration=${DT.toFixed(3)}:${GRAD.map((c, i) => `c${i}=0x${c}`).join(":")}:nb_colors=${GRAD.length}:speed=${MV.gradSpeed},scale=${W}:${H}:flags=bicubic,format=yuv420p[grad]`);
 f.push(`[bg0][grad]blend=all_mode=overlay:all_opacity=0.5[bg]`);
 f.push(`[${iMN}:v]format=gray,split=${hasPunch ? 2 : 1}${hasPunch ? "[mn1][mn2]" : "[mn1]"}`);
 // travelling lent dans la fenêtre : la vidéo "vit" même quand le plan est fixe
@@ -843,7 +949,7 @@ if (logoFile) {
   f.push(`[${iLogo}:v]format=rgba,scale=${L.logo.w}:${L.logo.h}:force_original_aspect_ratio=decrease,pad=${L.logo.w}:${L.logo.h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=yuva420p[lg0]`);
   f.push(`[${iML}:v]format=gray[ml]`);
   f.push(`[lg0][ml]alphamerge[lg]`);
-  f.push(`[${last}][lg]overlay=${logoR.x}:${logoR.y}[o4]`); last = "o4";
+  f.push(`[${last}][lg]overlay=${logoR.x}:${logoR.y}${OUTRO_D ? `:enable='lt(t,${D.toFixed(3)})'` : ""}[o4]`); last = "o4";
 }
 f.push(`[${last}]ass=${CONTENT_DIR}/video.ass:fontsdir=fonts[oass]`); last = "oass";
 usableEmoji.forEach((e, k) => {
@@ -858,7 +964,14 @@ usableEmoji.forEach((e, k) => {
   f.push(`[${last}][e${k}]overlay=x='${ex}':y='${ey}':eof_action=pass:enable='between(t,${T0},${e.t1.toFixed(3)})'[oe${k}]`);
   last = `oe${k}`;
 });
-f.push(`[${last}]format=yuv420p[vout]`);
+if (OUTRO_LOGO) {
+  const o = OUTRO_LOGO;
+  f.push(`[${iOL}:v]format=rgba,scale=${o.s}:${o.s}:force_original_aspect_ratio=decrease,pad=${o.s}:${o.s}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=yuva420p[olg0]`);
+  f.push(`[${iOM}:v]format=gray[olm]`);
+  f.push(`[olg0][olm]alphamerge,fade=in:st=0.25:d=0.7:alpha=1,setpts=PTS-STARTPTS+${o.t0.toFixed(3)}/TB[olg]`);
+  f.push(`[${last}][olg]overlay=${o.x}:${o.y}:eof_action=pass:enable='gte(t,${o.t0.toFixed(3)})'[oout]`); last = "oout";
+}
+f.push(`[${last}]${OUTRO_D ? `fade=t=out:st=${(DT - 0.7).toFixed(3)}:d=0.7,` : ""}format=yuv420p[vout]`);
 
 // audio : voix d'origine + effets sonores calés sur le montage
 const byType = {};
@@ -876,7 +989,7 @@ for (const [type, evs] of Object.entries(byType)) {
 f.push(`${sfxLabels.join("")}amix=inputs=${sfxLabels.length}:normalize=0:duration=longest,aresample=48000,aformat=channel_layouts=stereo[sfx]`);
 if (hasAudio) {
   f.push(`[${iSrc}:a]asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo[voice]`);
-  f.push(`[voice][sfx]amix=inputs=2:normalize=0:duration=first,apad=whole_dur=${D.toFixed(3)},alimiter=limit=0.96[aout]`);
+  f.push(`[voice][sfx]amix=inputs=2:normalize=0:duration=first,apad=whole_dur=${DT.toFixed(3)}${OUTRO_D ? `,afade=t=out:st=${(DT - 0.7).toFixed(3)}:d=0.7` : ""},alimiter=limit=0.96[aout]`);
 } else {
   f.push(`[sfx]apad,alimiter=limit=0.96[aout]`);
 }
@@ -891,7 +1004,7 @@ const args = [
   "-map", "[vout]", "-map", "[aout]",
   "-c:v", "libx264", "-preset", process.env.X264_PRESET || "veryfast", "-crf", "19", "-pix_fmt", "yuv420p",
   "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
-  "-t", D.toFixed(3), out,
+  "-t", DT.toFixed(3), out,
 ];
 function outDur(file) {
   const j = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "json", file]).toString());
@@ -906,8 +1019,8 @@ function runFfmpeg(srcFile) {
 console.log("Rendu ffmpeg en cours...");
 runFfmpeg(videoPath);
 let od = outDur(out);
-console.log(`Vérification : vidéo ${od.v.toFixed(1)} s / audio ${od.a.toFixed(1)} s (attendu ${D.toFixed(1)} s)`);
-if (od.v < D - 1.0) {
+console.log(`Vérification : vidéo ${od.v.toFixed(1)} s / audio ${od.a.toFixed(1)} s (attendu ${DT.toFixed(1)} s${OUTRO_D ? `, dont ${OUTRO_D} s d'écran de fin` : ""})`);
+if (od.v < DT - 1.0) {
   // le rendu est trop court : on normalise la source (image à cadence constante, timestamps réparés) et on recommence
   console.log("⚠ Vidéo trop courte : nouvelle tentative sur une copie normalisée de la source...");
   const norm = `${CONTENT_DIR}/source-cfr.mp4`;
@@ -915,6 +1028,6 @@ if (od.v < D - 1.0) {
   runFfmpeg(norm);
   od = outDur(out);
   console.log(`Vérification (2e essai) : vidéo ${od.v.toFixed(1)} s / audio ${od.a.toFixed(1)} s`);
-  if (od.v < D - 1.0) throw new Error(`Vidéo finale trop courte (${od.v.toFixed(1)} s au lieu de ${D.toFixed(1)} s). Voir les durées affichées plus haut.`);
+  if (od.v < DT - 1.0) throw new Error(`Vidéo finale trop courte (${od.v.toFixed(1)} s au lieu de ${DT.toFixed(1)} s). Voir les durées affichées plus haut.`);
 }
 console.log(`✔ ${out}`);
