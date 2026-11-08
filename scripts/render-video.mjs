@@ -267,6 +267,28 @@ if (SHORTS) {
   });
   console.log(`Mise en page : shorts — vidéo ${win.w}x${win.h} (${Math.round((win.w * win.h * 100) / (W * H))} % de l'écran), bandeau y=${Math.round(ban.y)}, ${subsOn ? `sous-titres y=${Math.round(subsY)}` : "sans sous-titres"}, ticker y=${Math.round(tick.y)}, carte ${NO_CARD ? "désactivée (pas de place hors visage)" : `y=${Math.round(panel.y)} h=${Math.round(panel.h)}`}`);
 }
+// ---------- SOUS-TITRES (Build Video, toutes langues, tous formats) ----------
+// 1) La vidéo a déjà des sous-titres incrustés (détectés par face-box.py : texte qui CHANGE d'une image à l'autre ;
+//    un titre fixe ne compte pas) → on n'ajoute pas les nôtres. SUBTITLES=full (variable) pour forcer.
+// 2) Nos sous-titres ont leur propre BANDE, entre le bas de la vidéo et le bandeau des disclaimers : ils ne touchent
+//    jamais l'image (ni le menton) ; si besoin la fenêtre vidéo est légèrement réduite pour libérer cette bande.
+let BURNED = null;
+try { const f = JSON.parse(readFileSync(`${CONTENT_DIR}/face.json`, "utf8")); BURNED = f.captions || null; } catch {}
+const STYLE0 = (() => { try { return existsSync(`${CONTENT_DIR}/style.json`) ? JSON.parse(readFileSync(`${CONTENT_DIR}/style.json`, "utf8")) : {}; } catch { return {}; } })();
+if (!SHORTS && BURNED && !process.env.SUBTITLES) {
+  AUTO_SUBS_OFF = true;
+  console.log(`La vidéo a déjà des sous-titres incrustés (hauteur ${Math.round(BURNED.y0 * 100)}–${Math.round(BURNED.y1 * 100)} %) : nos sous-titres sont désactivés.`);
+}
+const SUBS_ON = !AUTO_SUBS_OFF && String(process.env.SUBTITLES || STYLE0.subtitles || "full").toLowerCase() !== "off";
+let SUBS_BAND = null;
+if (!SHORTS && SUBS_ON) {
+  const subsLH = lh(Math.round(L.subsSize * MV.subsScale)) * 1.08;
+  const bandBottom = L.ticker.y - 10;
+  const limit = Math.round(bandBottom - subsLH - 12); // le bas de la vidéo ne descend jamais sous cette ligne
+  for (const k of ["normalBox", "splitBox"]) { const b = L[k]; if (b.y + b.h > limit) b.h = Math.max(240, limit - b.y); }
+  L.subsY = bandBottom;
+  SUBS_BAND = { y0: limit, y1: bandBottom };
+}
 const logoR = mirror(L.logo);
 const bannerR = (() => {
   // la bannière occupe la place restante à côté du logo
@@ -278,7 +300,8 @@ const panelR = mirrorW(L.panel);
 const winSplitFinal = fit(mirrorW(L.splitBox), srcAspect);
 // variations propres à la vidéo / au thème
 L.subsSize = Math.round(L.subsSize * MV.subsScale);
-L.subsY += Math.min(T.subsDy || 0, vertical ? 30 : 0);
+if (!SUBS_BAND) L.subsY += Math.min(T.subsDy || 0, vertical ? 30 : 0); // (bande fixe : pas de décalage de thème)
+if (SUBS_BAND) console.log(`Sous-titres : bande réservée y ${SUBS_BAND.y0}→${SUBS_BAND.y1} (vidéo au-dessus, disclaimers en dessous)`);
 
 // ---------- timeline des états : normal / split / punch ----------
 const beats = plan.beats.filter((b) => b.t0 < D).map((b) => ({ ...b, t1: Math.min(b.t1, D) }));
@@ -621,8 +644,8 @@ if (subMode === "keywords") {
   for (const w of tr.words.filter((x) => x.t0 < D)) {
     if (!kset.has(normTok(w.w))) continue;
     ci++;
-    const em = L.subsSize * 1.5;
-    evs.push({ t0: w.t0, t1: Math.max(w.t1, w.t0 + 1.0), text: `{\\an5\\pos(${W / 2},${L.subsY - 40})\\frz${ci % 2 ? -4 : 4}\\fs${fs(em)}\\fscx60\\fscy60\\t(0,100,\\fscx118\\fscy118)\\t(100,200,\\fscx100\\fscy100)\\bord9${c3(P.black)}\\shad4${c4(P.black, 0.6)}${c1(SUB_COLORS[ci % SUB_COLORS.length])}\\fad(0,120)}${esc(w.w)}` });
+    const em = SUBS_BAND ? L.subsSize * 1.1 : L.subsSize * 1.5; // (bande réservée : le mot-clé y tient)
+    evs.push({ t0: w.t0, t1: Math.max(w.t1, w.t0 + 1.0), text: `{\\an2\\pos(${W / 2},${L.subsY})\\frz${ci % 2 ? -4 : 4}\\fs${fs(em)}\\fscx60\\fscy60\\t(0,100,\\fscx118\\fscy118)\\t(100,200,\\fscx100\\fscy100)\\bord9${c3(P.black)}\\shad4${c4(P.black, 0.6)}${c1(SUB_COLORS[ci % SUB_COLORS.length])}\\fad(0,120)}${esc(w.w)}` });
   }
   for (let k = 1; k < evs.length; k++) {
     const a = evs[k - 1], b = evs[k];
