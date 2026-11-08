@@ -225,6 +225,48 @@ jobs:
           echo "SHORT_STYLE=$(node -p "require('./$D/meta.json').theme")" >> "$GITHUB_ENV"
           echo "KEY_OFFSET=$((10#${{ matrix.id }} - 1))" >> "$GITHUB_ENV"
 
+      # ---------- musique de fond : retirée automatiquement (lancement à la main uniquement) ----------
+      # Même outil que Build Video (scripts/remove-music.py, Demucs) : s'il y a de la musique dans le passage, même
+      # 1 seconde, le son du short est remplacé par la voix seule (image intacte, même synchro). Sans musique : son
+      # d'origine gardé. Shorts lancés PAR LA CHAÎNE (fond vert → Montage) : inchangés, cette étape est sautée.
+      # En cas de souci (installation, mémoire…), le short est quand même rendu avec son son d'origine + avertissement.
+      - name: Cache Demucs (séparation voix / musique)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/demucs-venv
+            ~/.cache/torch/hub/checkpoints
+          key: demucs-v1-${{ runner.os }}-py312
+
+      - name: Retirer la musique de fond du passage ${{ matrix.id }}
+        if: github.event_name == 'workflow_dispatch'
+        timeout-minutes: 40
+        continue-on-error: true
+        run: |
+          if [ ! -x ~/demucs-venv/bin/python ] || ! ~/demucs-venv/bin/python -c "import demucs, torch" 2>/dev/null; then
+            rm -rf ~/demucs-venv && python3 -m venv ~/demucs-venv
+            for i in 1 2 3; do
+              ~/demucs-venv/bin/pip install -q torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu \
+                && ~/demucs-venv/bin/pip install -q demucs==4.0.1 soundfile numpy && break
+              echo "installation de Demucs : nouvel essai dans 15 s"; sleep 15
+            done
+          fi
+          cp input/video.mp4 "$RUNNER_TEMP/avant-musique.mp4"
+          ~/demucs-venv/bin/python scripts/remove-music.py input/video.mp4 "$RUNNER_TEMP/music" 2>&1 | grep -v "^+ \|%|" || true
+          # garde-fou : vidéo illisible ou tronquée après remplacement → on reprend l'original (jamais de short cassé)
+          d0=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$RUNNER_TEMP/avant-musique.mp4" 2>/dev/null || echo 0)
+          d1=$(ffprobe -v error -show_entries format=duration -of csv=p=0 input/video.mp4 2>/dev/null || echo 0)
+          a1=$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 input/video.mp4 2>/dev/null | head -n1)
+          if [ -z "$a1" ] || ! awk -v a="$d0" -v b="$d1" 'BEGIN{exit !(b >= a - 0.6)}'; then
+            echo "::warning title=Short ${{ matrix.id }}::Résultat sans musique invalide (durée $d1 s au lieu de $d0 s) : son d'origine gardé."
+            cp "$RUNNER_TEMP/avant-musique.mp4" input/video.mp4
+            echo '{"checked":false,"error":"résultat invalide, original gardé"}' > content/music.json
+          fi
+          R=$(python3 -c "import json; j=json.load(open('content/music.json')); print('détectée → retirée (voix seule)' if j.get('replaced') else ('aucune' if j.get('checked') else 'NON vérifiée (Demucs indisponible) : écoute le short avant de publier'))" 2>/dev/null || echo "NON vérifiée")
+          echo "Musique de fond : $R"
+          echo "### 🎵 Short ${{ matrix.id }} — musique de fond : $R" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Scénario du short (hook, headlines, cartes)
         env:
           NO_MANUAL_HEADLINES: "1"

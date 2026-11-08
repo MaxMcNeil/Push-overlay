@@ -22,6 +22,8 @@ SR = 44100
 WIN = 1.0          # fenêtre d'analyse : 1 seconde
 ABS_MIN = -50.0    # en dessous (dBFS), la partie « sans voix » est inaudible : pas de musique
 ABOVE_FLOOR = 10.0 # au-dessus du bruit de fond de la pièce (dB) : quelque chose d'audible qui n'est pas la voix
+LOUD = -35.0       # partie « sans voix » nettement audible (dBFS) : musique CONTINUE du début à la fin (le « bruit de
+                   # fond » mesuré serait alors la musique elle-même → le seuil relatif seul ne la voyait pas)
 
 
 def run(cmd, **kw):
@@ -77,10 +79,11 @@ def main() -> int:
     a = db_per_window(read_wav(acc))
     floor = float(np.percentile(a, 10))
     thr = max(ABS_MIN, floor + ABOVE_FLOOR)
-    hits = [int(i) for i in np.where(a >= thr)[0]]
+    hits = sorted(set(int(i) for i in np.where(a >= thr)[0]) | set(int(i) for i in np.where(a >= LOUD)[0]))
+    print(f"Partie sans voix : médiane {float(np.median(a)):.0f} dBFS, fond {floor:.0f} dBFS, seuils {thr:.0f} / {LOUD:.0f} dBFS")
     report.update(checked=True, music=bool(hits), seconds=hits[:500], floor_db=round(floor, 1), thr_db=round(thr, 1))
     if not hits:
-        print(f"✔ Aucune musique de fond détectée (partie sans voix ≤ {thr:.0f} dBFS partout) : son d'origine gardé.")
+        print(f"✔ Aucune musique de fond détectée (partie sans voix sous {thr:.0f} dBFS et {LOUD:.0f} dBFS partout) : son d'origine gardé.")
         Path("content/music.json").write_text(json.dumps(report), encoding="utf-8")
         return 0
 

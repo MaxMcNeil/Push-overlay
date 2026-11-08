@@ -123,6 +123,15 @@ vdo-BACKGROUND-replace-GREEN-, section « Chaîne ».
 **Sous-titres des Shorts lancés par la chaîne** (fond vert ou Montage LV final) : le choix fait au lancement est
 respecté (`non` = aucun sous-titre). Lancement à la main : inchangé.
 
+### 🎵 Musique de fond retirée dans les Shorts (lancement à la main)
+
+Video to Shorts lancé **à la main** : chaque passage passe par le même outil que Build Video (Demucs). S'il y a de la
+musique, même 1 seconde ou en continu du début à la fin, le son du short est remplacé par la voix seule (image et synchro
+intactes) ; sinon le son d'origine est gardé. Garde-fous : en cas de souci (installation, résultat tronqué…), le short
+est quand même rendu avec son son d'origine et un avertissement s'affiche dans le résumé. Shorts lancés **par la
+chaîne** (fond vert → Montage) : inchangés. Testé : musique continue ajoutée sur un vrai passage → −28 dB sur la
+musique, voix au même niveau, durée identique.
+
 ### ⚖️ Protection juridique et écran de fin (Build Video)
 
 - **Protection juridique** (option au lancement, `non` par défaut) : sur `oui`, une mention de **3 s dès la 1re seconde puis chaque minute**
