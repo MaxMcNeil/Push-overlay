@@ -369,8 +369,8 @@ const LEGAL_ON = /^(1|oui|yes|true|on|si|sì|نعم)$/i.test(String(process.env.
 const LEGAL_LEN = 3;
 const legalSlots = [];
 if (LEGAL_ON && !SHORTS) {
-  for (let t = 60; t + LEGAL_LEN <= D - 0.5; t += 60) legalSlots.push(t);
-  if (!legalSlots.length && D >= 20) legalSlots.push(Math.round(Math.max(HOOK_END + 2, D / 2 - LEGAL_LEN / 2) * 10) / 10); // vidéo < 1 min : une mention au milieu
+  // 1re mention dès la 1re seconde, puis une par minute (1:01, 2:01…)
+  for (let t = 1; t + LEGAL_LEN <= D - 0.3; t += 60) legalSlots.push(t);
 }
 const LEGAL_SEQ = legalSequence(lang, legalSlots.length, `${videoPath}|${plan.beats.map((b) => b.headline || "").join("|")}|${D.toFixed(1)}`);
 const legalAt = legalSlots.map((t, k) => ({ t0: t, t1: t + LEGAL_LEN, text: LEGAL_SEQ.list[k] }));
@@ -890,7 +890,7 @@ const mOutro = OUTRO_LOGO ? mask("o", OUTRO_LOGO.s, OUTRO_LOGO.s, Math.round(OUT
 
 // ---------- emojis disponibles ----------
 // SAFE_MODE (2e essai après un échec) : pas d'emojis incrustés, moins d'impulsions → graphe ffmpeg minimal
-const usableEmoji = process.env.SAFE_MODE ? [] : emojiOverlays.filter((e) => existsSync(e.file) && e.t0 < D && !(e.kind !== "card" && inLegal(e.t0, e.t1))).map((e) => ({ ...e, t1: Math.min(e.t1, D) }));
+const usableEmoji = process.env.SAFE_MODE ? [] : emojiOverlays.filter((e) => existsSync(e.file) && e.t0 < D && !(e.kind === "sticker" && inLegal(e.t0, e.t1))).map((e) => ({ ...e, t1: Math.min(e.t1, D) }));
 if (process.env.SAFE_MODE) console.log("Mode sûr : emojis désactivés, impulsions limitées.");
 
 // ---------- fichiers de sortie intermédiaires ----------

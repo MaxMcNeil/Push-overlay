@@ -125,12 +125,12 @@ respecté (`non` = aucun sous-titre). Lancement à la main : inchangé.
 
 ### ⚖️ Protection juridique et écran de fin (Build Video)
 
-- **Protection juridique** (option au lancement, `non` par défaut) : sur `oui`, une mention de **3 s chaque minute**
-  (1:00, 2:00…) se pose sur le bandeau de titre, jamais sur la vidéo ni le visage. Texte **dans la langue de la vidéo**
+- **Protection juridique** (option au lancement, `non` par défaut) : sur `oui`, une mention de **3 s dès la 1re seconde puis chaque minute**
+  (0:01, 1:01, 2:01…) se pose sur le bandeau de titre, jamais sur la vidéo ni le visage. Texte **dans la langue de la vidéo**
   (fr, ar en arabe littéraire, en, it) : contenu déjà public, ni affirmation ni démenti, neutralité, droit de réponse,
   propos n'engageant que leurs auteurs, liberté d'expression, respect des lois de chaque pays… 20 mentions par langue,
   ordre mélangé propre à chaque vidéo, **jamais deux fois la même** (au-delà de 20 min la liste recommence, jamais deux
-  fois de suite la même). Vidéo de moins d'une minute : une seule mention, au milieu. Textes : `scripts/lib/legal.mjs`.
+  fois de suite la même). Textes : `scripts/lib/legal.mjs`.
 - **Écran de fin** (toutes langues, tous formats) : 4,5 s ajoutées APRÈS la vidéo (aucune parole coupée) — fond flouté
   et assombri, logo de la chaîne de la langue (aucun logo si la chaîne n'existe pas encore : en/it), nom de la chaîne,
   « Merci de nous avoir suivis » + invitation à s'abonner, carillon discret, fondu au noir.
