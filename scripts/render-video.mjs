@@ -300,6 +300,35 @@ const bannerR = (() => {
 const winNormal = fit(mirror(L.normalBox), srcAspect);
 const panelR = mirrorW(L.panel);
 const winSplitFinal = fit(mirrorW(L.splitBox), srcAspect);
+// ---------- VISAGE PROTÉGÉ (Build Video, tous formats ; les Shorts ont déjà leurs zones) ----------
+// Rien de ce que le montage ajoute (question d'ouverture, emojis, carte de protection juridique) ne passe sur le
+// visage. Zone = content/face.json (cheveux → cou, déplacements compris), reportée dans la fenêtre vidéo, élargie pour
+// le zoom lent et les « coups » de zoom. Visage non trouvé dans une vidéo verticale : zone d'un selfie par défaut.
+// Visage non trouvé ailleurs (diapos, paysage) : pas de zone, mise en page d'origine.
+let FACE_SRC = null;
+if (!SHORTS) {
+  try {
+    const f = JSON.parse(readFileSync(`${CONTENT_DIR}/face.json`, "utf8"));
+    if (f.found && [f.x0, f.y0, f.x1, f.y1].every((v) => Number.isFinite(v)) && f.x1 > f.x0 && f.y1 > f.y0) FACE_SRC = { x0: f.x0, y0: f.y0, x1: f.x1, y1: f.y1 };
+  } catch {}
+  if (!FACE_SRC && srcPortrait) FACE_SRC = { x0: 0.12, y0: 0.08, x1: 0.88, y1: 0.56, def: true };
+  if (FACE_SRC && REFRAME) {
+    const mx = (v) => Math.max(0, Math.min(1, (v * info.width - REFRAME.x) / REFRAME.w));
+    FACE_SRC = { ...FACE_SRC, x0: mx(FACE_SRC.x0), x1: mx(FACE_SRC.x1) };
+    if (FACE_SRC.x1 - FACE_SRC.x0 < 0.05) FACE_SRC = null;
+  }
+}
+const faceIn = (w, z = 1.2) => {
+  if (!FACE_SRC) return null;
+  // un point u de la source s'affiche entre z·u − 0,95(z−1) et z·u − 0,05(z−1) selon le travelling
+  const lo = (u) => Math.max(0, Math.min(u, z * u - 0.95 * (z - 1)));
+  const hi = (u) => Math.min(1, Math.max(u, z * u - 0.05 * (z - 1)));
+  return { x0: w.x + w.w * lo(FACE_SRC.x0) - 12, x1: w.x + w.w * hi(FACE_SRC.x1) + 12, y0: w.y + w.h * lo(FACE_SRC.y0) - 12, y1: w.y + w.h * hi(FACE_SRC.y1) + 12 };
+};
+const FACE_N = faceIn(winNormal), FACE_S = faceIn(winSplitFinal), FACE_P = faceIn(winNormal, 1.42);
+const faceOf = (state) => (state === "split" ? FACE_S : state === "punch" ? FACE_P : FACE_N);
+const hitsFace = (r, F) => !!F && r.x < F.x1 && r.x + r.w > F.x0 && r.y < F.y1 && r.y + r.h > F.y0;
+if (FACE_N) console.log(`Visage protégé${FACE_SRC.def ? " (position par défaut)" : ""} : x ${Math.round(FACE_N.x0)}→${Math.round(FACE_N.x1)}, y ${Math.round(FACE_N.y0)}→${Math.round(FACE_N.y1)} px — question d'ouverture, emojis et carte juridique placés ailleurs`);
 // variations propres à la vidéo / au thème
 L.subsSize = Math.round(L.subsSize * MV.subsScale);
 if (!SUBS_BAND) L.subsY += Math.min(T.subsDy || 0, vertical ? 30 : 0); // (bande fixe : pas de décalage de thème)
@@ -370,12 +399,58 @@ const LEGAL_LEN = 3;
 const legalSlots = [];
 if (LEGAL_ON && !SHORTS) {
   // 1re mention dès la 1re seconde, puis une par minute (1:01, 2:01…)
-  for (let t = 1; t + LEGAL_LEN <= D - 0.3; t += 60) legalSlots.push(t);
+  // (la 1re mention attend la fin de la question d'ouverture : les deux cartes ne se superposent jamais)
+  const first = plan.hook ? HOOK_END + 0.25 : 1;
+  for (let t = 1; t + LEGAL_LEN <= D - 0.3; t += 60) legalSlots.push(t === 1 ? Math.max(1, first) : t);
 }
 const LEGAL_SEQ = legalSequence(lang, legalSlots.length, `${videoPath}|${plan.beats.map((b) => b.headline || "").join("|")}|${D.toFixed(1)}`);
 const legalAt = legalSlots.map((t, k) => ({ t0: t, t1: t + LEGAL_LEN, text: LEGAL_SEQ.list[k] }));
 if (LEGAL_ON) console.log(`Protection juridique : ${legalAt.length} mention(s) de ${LEGAL_LEN} s${legalAt.length ? ` à ${legalAt.map((x) => `${Math.floor(x.t0 / 60)}:${String(Math.round(x.t0 % 60)).padStart(2, "0")}`).join(", ")}` : " (vidéo trop courte)"} — ${LEGAL_SEQ.cycled ? `⚠ plus de ${LEGAL_SEQ.size} passages : la liste recommence (jamais deux fois de suite la même)` : "toutes différentes"}`);
 const inLegal = (a, b) => legalAt.some((x) => a < x.t1 + 0.2 && b > x.t0 - 0.2);
+// GRANDE CARTE (≈ demi-écran) : à côté du visage — sur la carte d'analyse quand elle est affichée, sinon sur le côté
+// libre le plus grand (ou sous le visage). Jamais sur le visage, les sous-titres, le bandeau de titre. Pas de place
+// (visage en très gros plan) : ancienne carte, sur le bandeau de titre.
+const CONTENT_TOP = Math.min(L.normalBox.y, L.splitBox.y, L.panel.y);
+const CONTENT_BOT = (SUBS_BAND ? SUBS_BAND.y0 : L.ticker.y) - 12;
+const cut = (r) => { const y1 = Math.min(r.y + r.h, CONTENT_BOT); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(y1 - r.y) }; };
+function legalRect(g) {
+  if (SHORTS) return null;
+  const st = [...new Set(merged.filter((m) => m.t0 < g.t1 && m.t1 > g.t0).map((m) => m.state))];
+  const Fs = st.map(faceOf).filter(Boolean);
+  if (st.length && st.every((x) => x === "split") && !STACKED && !hitsFace(panelR, FACE_S)) return cut(panelR);
+  const top = CONTENT_TOP, bot = CONTENT_BOT, x0 = 50, x1 = W - 50;
+  const half = Math.round(W * 0.5);
+  if (!Fs.length) { // aucun visage connu : moitié de l'écran, du côté de la carte d'analyse
+    const side = vertical ? { x: x0, y: Math.round((top + bot) / 2), w: x1 - x0, h: Math.round((bot - top) / 2) }
+      : { x: panelR.x + panelR.w / 2 < W / 2 ? x0 : x1 - (half - 50), y: top, w: half - 50, h: bot - top };
+    return side;
+  }
+  const U = { x0: Math.min(...Fs.map((f) => f.x0)), x1: Math.max(...Fs.map((f) => f.x1)), y0: Math.min(...Fs.map((f) => f.y0)), y1: Math.max(...Fs.map((f) => f.y1)) };
+  const cands = [];
+  const wr = Math.min(half, x1 - U.x1), wl = Math.min(half, U.x0 - x0);
+  const panelLeft = panelR.x + panelR.w / 2 < W / 2;
+  if (wr >= 440) cands.push({ x: x1 - wr, y: top, w: wr, h: bot - top, pref: panelLeft ? 0 : 1 });
+  if (wl >= 440) cands.push({ x: x0, y: top, w: wl, h: bot - top, pref: panelLeft ? 1 : 0 });
+  const hb = Math.min(Math.round((bot - top) * 0.5), bot - U.y1);
+  if (hb >= 200) cands.push({ x: x0, y: bot - hb, w: x1 - x0, h: hb, pref: 0 });
+  const ok = cands.filter((r) => r.h >= 200 && !hitsFace(r, U)).sort((p, q) => q.w * q.h * (1 + q.pref * 0.05) - p.w * p.h * (1 + p.pref * 0.05))[0];
+  return ok ? cut(ok) : null;
+}
+legalAt.forEach((g, k) => {
+  g.rect = legalRect(g);
+  if (g.rect || SHORTS) return;
+  // pas de place à cet instant (visage en gros plan) : on attend, jusqu'à 25 s, le moment où la carte d'analyse est
+  // affichée à côté de la vidéo — la mention y prend sa place en grand
+  const next = legalAt[k + 1] ? legalAt[k + 1].t0 : D;
+  for (let t = g.t0 + 0.5; t <= g.t0 + 25 && t + LEGAL_LEN <= Math.min(D - 0.3, next - 5); t += 0.5) {
+    const r = legalRect({ t0: t + 0.3, t1: t + LEGAL_LEN });
+    const r2 = r && legalRect({ t0: t, t1: t + LEGAL_LEN });
+    if (r && r2 && r2.w === r.w && r2.h === r.h) { g.t0 = t; g.t1 = t + LEGAL_LEN; g.rect = r2; break; }
+  }
+});
+if (LEGAL_ON && legalAt.length) console.log(`Protection juridique, horaires définitifs : ${legalAt.map((x) => `${Math.floor(x.t0 / 60)}:${String(Math.floor(x.t0 % 60)).padStart(2, "0")}`).join(", ")}`);
+const inRect = (e, r) => !!r && e.x < r.x + r.w && e.x + e.w > r.x && e.y < r.y + r.h && e.y + e.h > r.y;
+if (LEGAL_ON && legalAt.length) console.log(`Protection juridique : ${legalAt.filter((g) => g.rect).length} grande(s) carte(s) à côté du visage${legalAt.some((g) => !g.rect) ? `, ${legalAt.filter((g) => !g.rect).length} sur le bandeau de titre (pas de place hors du visage)` : ""}`);
 const FULL = `m 0 0 l ${W} 0 l ${W} ${H} l 0 ${H}`;
 const dirX = rtl ? -1 : 1; // sens de lecture / des balayages
 const SUB_COLORS = [P.gold, P.cyan, "#FF7AB6", "#9DFF5C"];
@@ -620,11 +695,50 @@ if (plan.hook) {
     const avail = HOOK_ZONE.y1 - HOOK_ZONE.y0;
     while (hh > avail && em > 34) { em -= 4; lines = wrapClamp(plan.hook, hw - 90, em, 3); hh = lines.length * lh(em) + 40; }
   }
-  const cx = box.x + box.w / 2, cy = HOOK_ZONE ? (HOOK_ZONE.y0 + HOOK_ZONE.y1) / 2 : box.y + box.h / 2;
-  ass.add(7, t0, t1, `{\\an7\\pos(${cx - hw / 2},${cy - hh / 2})\\bord6${c3(P.gold)}${c1(P.dark, 0.92)}\\shad0\\fad(150,260)\\t(0,300,\\bord10)\\t(300,600,\\bord6)\\p1}${rrect(hw, hh, 34)}{\\p0}`);
+  let cx = box.x + box.w / 2, cy = HOOK_ZONE ? (HOOK_ZONE.y0 + HOOK_ZONE.y1) / 2 : box.y + box.h / 2;
+  let hwF = hw, offFace = false;
+  if (!HOOK_ZONE && FACE_N) {
+    // JAMAIS sur le visage : 1) à côté de la vidéo s'il y a la place (écran horizontal), 2) sous le visage,
+    // 3) au-dessus (zone du bandeau de titre, pas encore affiché pendant la question)
+    const F = FACE_N, zones = [];
+    const sL = { x: 50, w: box.x - 30 - 50 }, sR = { x: box.x + box.w + 30, w: W - 50 - (box.x + box.w + 30) };
+    for (const sd of rtl ? [sR, sL] : [sL, sR]) if (sd.w >= 560) zones.push({ cx: sd.x + sd.w / 2, w: Math.min(sd.w, 900), y0: CONTENT_TOP, y1: CONTENT_BOT, mid: box.y + box.h / 2 });
+    zones.push({ cx, w: hw, y0: F.y1, y1: CONTENT_BOT });
+    zones.push({ cx: bannerR.x + bannerR.w / 2, w: Math.min(hw, bannerR.w), y0: bannerR.y, y1: Math.max(bannerR.y + bannerR.h, Math.min(F.y0, CONTENT_BOT)) });
+    let best = null;
+    for (const z of zones) {
+      const avail = z.y1 - z.y0;
+      if (avail < 90) continue;
+      let e2 = L.hookSize, l2 = wrapPx(plan.hook, z.w - 90, e2, 4), pad = 64;
+      const hOf = () => (l2 ? l2.length * lh(e2) + pad : 1e9);
+      while (hOf() > avail && e2 > 34) { e2 -= 4; if (e2 < 56) pad = 40; l2 = wrapPx(plan.hook, z.w - 90, e2, 4) || wrapClamp(plan.hook, z.w - 90, e2, 3); }
+      if (hOf() > avail) continue;
+      const cand = { z, em: e2, lines: l2, hh: hOf() };
+      if (e2 >= 48) { best = cand; break; }
+      if (!best || e2 > best.em) best = cand;
+    }
+    if (best) {
+      ({ em, lines, hh } = best);
+      hwF = best.z.w; cx = best.z.cx;
+      const c0 = best.z.mid ?? (best.z.y0 + best.z.y1) / 2;
+      cy = Math.max(best.z.y0 + hh / 2, Math.min(best.z.y1 - hh / 2, c0));
+      offFace = true;
+      console.log(`Question d'ouverture : placée hors du visage (x ${Math.round(cx - hwF / 2)}→${Math.round(cx + hwF / 2)}, y ${Math.round(cy - hh / 2)}→${Math.round(cy + hh / 2)})`);
+    } else console.log("⚠ Question d'ouverture : aucune place hors du visage → non affichée (le visage reste dégagé).");
+    if (!best) lines = [];
+  }
+  if (lines.length) ass.add(7, t0, t1, `{\\an7\\pos(${cx - hwF / 2},${cy - hh / 2})\\bord6${c3(P.gold)}${c1(P.dark, 0.92)}\\shad0\\fad(150,260)\\t(0,300,\\bord10)\\t(300,600,\\bord6)\\p1}${rrect(hwF, hh, 34)}{\\p0}`);
   const keys = keyWords(plan.hook, 1);
   lines.forEach((ln, k) => placeWords({ layer: 8, t0, t1, line: ln, em, edge: rtl ? cx + lineW(ln, em) / 2 : cx - lineW(ln, em) / 2, yc: cy + (k - (lines.length - 1) / 2) * lh(em), keys, hi: P.gold, base: P.white, tags: `\\fs${fs(em)}\\bord0\\shad3${c4(P.black, 0.7)}`, stagger: 0.09, fadeOut: 260 }));
   if (HOOK_ZONE) emojiOverlays.push({ file: emojiFile(plan.hookEmoji), kind: "hook", t0, t1, x: cx + hw / 2 - 70, y: cy + hh / 2 - 70, size: 110 });
+  else if (offFace) { // emoji sur un coin de la carte, du côté opposé au visage ; aucun coin libre → pas d'emoji
+    const fcx = (FACE_N.x0 + FACE_N.x1) / 2, fcy = (FACE_N.y0 + FACE_N.y1) / 2;
+    const corners = [[cx + hwF / 2 - 70, cy + hh / 2 - 70], [cx - hwF / 2 - 40, cy + hh / 2 - 70], [cx + hwF / 2 - 70, cy - hh / 2 - 40], [cx - hwF / 2 - 40, cy - hh / 2 - 40]]
+      .map(([x, y]) => ({ x: Math.max(4, Math.min(W - 114, x)), y: Math.max(4, Math.min(H - 114, y)) }))
+      .filter((c) => !hitsFace({ x: c.x, y: c.y - 14, w: 110, h: 124 }, FACE_N))
+      .sort((p, q) => Math.hypot(q.x - fcx, q.y - fcy) - Math.hypot(p.x - fcx, p.y - fcy));
+    if (corners[0]) emojiOverlays.push({ file: emojiFile(plan.hookEmoji), kind: "hook", t0, t1, x: corners[0].x, y: corners[0].y, size: 110 });
+  } else if (FACE_N) { /* question non affichée : pas d'emoji non plus */ }
   else emojiOverlays.push({ file: emojiFile(plan.hookEmoji), kind: "hook", t0, t1, x: cx - 80, y: cy - hh / 2 - 150, size: 160 });
 }
 
@@ -634,15 +748,32 @@ merged.filter((s) => s.state !== "split").forEach((s) => {
   if (s.t0 < HOOK_END) return;
   const w = winNormal;
   const size = vertical ? 130 : 140;
-  emojiOverlays.push({
-    file: emojiFile(b.emoji), kind: "sticker", t0: s.t0 + 0.2, t1: Math.min(s.t1, s.t0 + 3.6),
-    ...(STICKER_AT ? { x: STICKER_AT.x, y: STICKER_AT.y, size: 110 } : { x: layoutRTL ? w.x - size * 0.35 : w.x + w.w - size * 0.65, y: w.y - size * 0.45, size }),
-  });
+  const F = SHORTS ? null : faceOf(s.state);
+  // sticker : coin haut de la fenêtre ; s'il touche le visage → l'autre coin ; les deux → pas de sticker
+  const stA = { x: layoutRTL ? w.x - size * 0.35 : w.x + w.w - size * 0.65, y: w.y - size * 0.45 };
+  const stB = { x: layoutRTL ? w.x + w.w - size * 0.65 : w.x - size * 0.35, y: w.y - size * 0.45 };
+  const stOk = STICKER_AT ? { x: STICKER_AT.x, y: STICKER_AT.y, size: 110 }
+    : [stA, stB, { x: layoutRTL ? w.x - size - 14 : w.x + w.w + 14, y: w.y + 6 }, { x: layoutRTL ? w.x + w.w + 14 : w.x - size - 14, y: w.y + 6 }]
+      .map((c) => ({ ...c, size }))
+      .find((c) => c.x >= 6 && c.x + size <= W - 6 && !hitsFace({ x: c.x, y: c.y - 14, w: size, h: size + 14 }, F)); // (3e/4e choix : juste à côté de la fenêtre)
+  if (stOk) emojiOverlays.push({ file: emojiFile(b.emoji), kind: "sticker", t0: s.t0 + 0.2, t1: Math.min(s.t1, s.t0 + 3.6), ...stOk });
   if (!SHORTS) [0, 1].forEach((k) => { // (shorts : pas d'emojis volants, ils traverseraient les zones protégées)
-    emojiOverlays.push({
-      file: emojiFile(b.emoji), kind: "float", t0: s.t0 + 0.5 + k * 0.45, t1: Math.min(s.t1, s.t0 + 0.5 + k * 0.45 + 2.2),
-      x: (k ? w.x + w.w * 0.18 : w.x + w.w * 0.78), y: w.y + w.h - 150, size: 78,
-    });
+    let fx = (k ? w.x + w.w * 0.18 : w.x + w.w * 0.78);
+    const fy = w.y + w.h - 150, ft0 = s.t0 + 0.5 + k * 0.45;
+    let life = 2.2;
+    // l'emoji monte de 150 px/s : s'il passerait sur le visage, il s'arrête avant ; pas la place → il monte juste à
+    // côté de la fenêtre ; pas la place non plus → pas d'emoji
+    const under = (x) => F && x - 22 < F.x1 && x + 78 + 22 > F.x0;
+    if (under(fx)) {
+      const rise = fy - (F.y1 + 6);
+      if (rise >= 90) life = Math.min(life, rise / 150);
+      else {
+        const out = k ? w.x - 78 - 30 : w.x + w.w + 30;
+        if (out < 28 || out + 78 + 28 > W || under(out)) return;
+        fx = out;
+      }
+    }
+    emojiOverlays.push({ file: emojiFile(b.emoji), kind: "float", t0: ft0, t1: Math.min(s.t1, ft0 + life), x: fx, y: fy, size: 78 });
   });
 });
 
@@ -775,7 +906,48 @@ const LEGAL_COL = (() => {
   const kick = esc(legalKicker(lang));
   return { kEm, kick, w: Math.round(Math.max(vertical ? 150 : 170, tw(kick, kEm) + 36)) };
 })();
+// grande carte (≈ demi-écran, à côté du visage) : bouclier + « mention légale » en tête, texte centré en grand
+function legalBig(g) {
+  const { x: bx, y: by, w: bw, h: bh } = g.rect;
+  const t0 = g.t0, t1 = g.t1;
+  const fad = `\\fad(260,320)`;
+  const mvy = 26; // légère montée à l'apparition
+  const mv = (x, y) => `\\move(${Math.round(x)},${Math.round(y + mvy)},${Math.round(x)},${Math.round(y)},0,280)`;
+  ass.add(13, t0, t1, `{\\an7${mv(bx, by)}\\bord4${c3(P.gold, 0.35)}${c1(P.dark, 0.97)}\\shad0${fad}\\p1}${rrect(bw, bh, 30)}{\\p0}`);
+  const headH = Math.round(Math.min(150, Math.max(96, bh * 0.24)));
+  ass.add(14, t0, t1, `{\\an7${mv(bx, by)}\\bord0\\shad0${c1(P.gold, 0.12)}${fad}\\p1}${rrect(bw, headH, 30)}{\\p0}`);
+  const kEm = Math.round(Math.min(40, Math.max(26, headH * 0.3)));
+  const kick = esc(legalKicker(lang));
+  const sh = Math.round(headH * 0.56), sw = Math.round(sh * 0.84);
+  const kW = tw(kick, kEm), gap = 18, rowW = sw + gap + kW;
+  const rowX = bx + bw / 2 - rowW / 2, cyH = by + headH / 2;
+  const sx = Math.round(rtl ? rowX + kW + gap : rowX), sy = Math.round(cyH - sh / 2);
+  const shield = `m ${sw / 2} 0 l ${sw} ${sh * 0.17} l ${sw} ${sh * 0.48} b ${sw} ${sh * 0.76} ${sw * 0.74} ${sh * 0.92} ${sw / 2} ${sh} b ${sw * 0.26} ${sh * 0.92} 0 ${sh * 0.76} 0 ${sh * 0.48} l 0 ${sh * 0.17}`;
+  ass.add(15, t0, t1, `{\\an7${mv(sx, sy)}\\bord0\\shad0${c1(P.gold)}${fad}\\p1}${shield}{\\p0}`);
+  const ck = `m ${sw * 0.27} ${sh * 0.5} l ${sw * 0.43} ${sh * 0.66} l ${sw * 0.75} ${sh * 0.33}`;
+  ass.add(16, t0, t1, `{\\an7${mv(sx, sy)}\\1a&HFF&\\bord${Math.max(2, Math.round(sh / 16))}${c3(P.dark)}\\shad0${fad}\\p1}${ck}{\\p0}`);
+  const kx = rtl ? rowX + kW / 2 : rowX + sw + gap + kW / 2;
+  ass.add(15, t0, t1, `{\\an5${mv(kx, cyH)}\\fs${fs(kEm)}\\bord0\\shad0${c1(P.gold)}${fad}}${kick}`);
+  // texte : le plus grand qui tient
+  const tW = bw - 90, tH = bh - headH - 70;
+  const sizes = [72, 66, 60, 54, 48, 44, 40, 36, 32, 28, 24];
+  let em = sizes[sizes.length - 1], lines = null;
+  for (const e of sizes) {
+    const l = wrapPx(g.text, tW, e, 8);
+    if (l && l.length * lh(e) <= tH && l.every((ln) => tw(ln, e) <= tW)) { em = e; lines = l; break; }
+  }
+  if (!lines) lines = wrapClamp(g.text, tW, em, Math.max(1, Math.floor(tH / lh(em))));
+  const cyT = by + headH + 14 + tH / 2;
+  lines.forEach((ln, k) => {
+    const yc = cyT + (k - (lines.length - 1) / 2) * lh(em);
+    ass.add(15, t0 + 0.12, t1, `{\\an5${mv(bx + bw / 2, yc)}\\fs${fs(em)}\\bord0\\shad0${c1(P.white)}\\fad(300,320)}${ln}`);
+  });
+  // fine jauge de temps restant (bas de la carte)
+  const gx = bx + 40, gw = bw - 80;
+  ass.add(15, t0, t1, `{\\an${rtl ? 9 : 7}\\pos(${rtl ? gx + gw : gx},${by + bh - 22})\\bord0\\shad0${c1(P.gold, 0.6)}\\fscx100\\t(0,${LEGAL_LEN * 1000},\\fscx0)${fad}\\p1}m 0 0 l ${gw} 0 l ${gw} 5 l 0 5{\\p0}`);
+}
 legalAt.forEach((g) => {
+  if (g.rect) { legalBig(g); return; }
   const { x: bx, y: by, w: bw, h: bh } = bannerR;
   const t0 = g.t0, t1 = g.t1;
   const col = LEGAL_COL;
@@ -890,7 +1062,20 @@ const mOutro = OUTRO_LOGO ? mask("o", OUTRO_LOGO.s, OUTRO_LOGO.s, Math.round(OUT
 
 // ---------- emojis disponibles ----------
 // SAFE_MODE (2e essai après un échec) : pas d'emojis incrustés, moins d'impulsions → graphe ffmpeg minimal
-const usableEmoji = process.env.SAFE_MODE ? [] : emojiOverlays.filter((e) => existsSync(e.file) && e.t0 < D && !(e.kind === "sticker" && inLegal(e.t0, e.t1))).map((e) => ({ ...e, t1: Math.min(e.t1, D) }));
+const emojiBox = (e) => (e.kind === "float" ? { x: e.x - 22, y: e.y - 150 * Math.max(0.2, e.t1 - e.t0), w: e.size + 44, h: e.size + 150 * Math.max(0.2, e.t1 - e.t0) } : { x: e.x, y: e.y - 14, w: e.size, h: e.size + 14 });
+const underLegal = (e) => legalAt.filter((g) => g.rect && e.t0 < g.t1 + 0.2 && e.t1 > g.t0 - 0.2 && inRect(emojiBox(e), g.rect));
+// DERNIER CONTRÔLE : quel que soit le cas de figure, un emoji dont la trajectoire touche le visage est retiré
+const onFace = (e) => {
+  if (SHORTS || e.kind === "card") return false;
+  const sts = [...new Set(merged.filter((m) => m.t0 < e.t1 && m.t1 > e.t0).map((m) => m.state))];
+  return sts.some((st) => hitsFace(emojiBox(e), faceOf(st)));
+};
+const faceDropped = emojiOverlays.filter(onFace);
+if (faceDropped.length) console.log(`Visage protégé : ${faceDropped.length} emoji(s) retiré(s) (ils auraient touché le visage)`);
+const usableEmoji = process.env.SAFE_MODE ? [] : emojiOverlays
+  .filter((e) => !onFace(e))
+  .filter((e) => existsSync(e.file) && e.t0 < D && !(e.kind === "sticker" && inLegal(e.t0, e.t1)) && !((e.kind === "float" || e.kind === "sticker") && underLegal(e).length))
+  .map((e) => ({ ...e, t1: Math.min(e.t1, D), hide: underLegal(e).map((g) => [g.t0 - 0.05, g.t1 + 0.05]) }));
 if (process.env.SAFE_MODE) console.log("Mode sûr : emojis désactivés, impulsions limitées.");
 
 // ---------- fichiers de sortie intermédiaires ----------
@@ -961,7 +1146,7 @@ usableEmoji.forEach((e, k) => {
   let ex = `${Math.round(e.x)}`, ey = `${Math.round(e.y)}`;
   if (e.kind === "sticker" || e.kind === "hook") ey = `${Math.round(e.y)}-14*abs(sin(5*(t-${T0})))`;
   if (e.kind === "float") { ey = `${Math.round(e.y)}-150*(t-${T0})`; ex = `${Math.round(e.x)}+22*sin(4*(t-${T0}))`; }
-  f.push(`[${last}][e${k}]overlay=x='${ex}':y='${ey}':eof_action=pass:enable='between(t,${T0},${e.t1.toFixed(3)})'[oe${k}]`);
+  f.push(`[${last}][e${k}]overlay=x='${ex}':y='${ey}':eof_action=pass:enable='between(t,${T0},${e.t1.toFixed(3)})${(e.hide || []).map(([h0, h1]) => `*not(between(t,${h0.toFixed(3)},${h1.toFixed(3)}))`).join("")}'[oe${k}]`);
   last = `oe${k}`;
 });
 if (OUTRO_LOGO) {
