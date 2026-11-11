@@ -19,7 +19,7 @@ const IN = process.env.EXPLAINER_TRANSCRIPT || "content/transcript.json";
 const OUT = process.env.EXPLAINER_SPEC || "content/explainer.json";
 const FORMAT = (process.env.EXPLAINER_FORMAT || "vertical").toLowerCase();
 const QUALITY = (String(process.env.EXPLAINER_QUALITY || "1080").match(/\d+/) || ["1080"])[0];
-const MIN_SCENE = 3.2, IDEAL_MAX = 7.5, HARD_MAX = 10, OUTRO = 4.5, LEAD = 0.12;
+const MIN_SCENE = 3.2, IDEAL_MAX = 7.5, HARD_MAX = 10, OUTRO = 6, OUTRO_H = 12, LEAD = 0.12;   // écran de fin : 6 s en vertical ; 12 s en horizontal (YouTube y pose ses éléments de fin : 5 à 20 s)
 const TYPES = ["hook", "headline", "quote", "stat", "timeline", "list", "versus", "countries"];
 
 const RTL = (l) => l === "ar";
@@ -28,6 +28,7 @@ const L = {
   outroHl: { ar: "كاملاً", fr: "Abonnez-vous", en: "Subscribe", it: "Iscriviti" },
   button: { ar: "اشترك الآن", fr: "S'abonner", en: "Subscribe", it: "Iscriviti" },
   kicker: { ar: "تحليل", fr: "Analyse", en: "Analysis", it: "Analisi" },
+  also: { ar: "شاهد أيضاً", fr: "À voir aussi", en: "Watch next", it: "Guarda anche" },
   listen: { ar: "نستمع", fr: "Écoutons", en: "Listen", it: "Ascoltiamo" },
   langName: { ar: "arabe littéraire simple (فصحى مبسطة)", fr: "français", en: "English", it: "italiano" },
 };
@@ -417,7 +418,7 @@ async function main() {
   const ch = process.env.EXPLAINER_LOGO === "non" ? { nom: "", logo: null, why: "logo désactivé" } : channelFor(lang);
   const withOutro = process.env.EXPLAINER_OUTRO !== "non";
   let total = total0;
-  if (withOutro) { scenes.push({ type: "outro", t0: total0, t1: total0 + OUTRO, data: { title: pick(L.outroTitle, lang), highlight: pick(L.outroHl, lang), sub: clean(ch.nom, 40), button: pick(L.button, lang) } }); total += OUTRO; }
+  if (withOutro) { scenes.push({ type: "outro", t0: total0, t1: total0 + OUTRO, data: { title: pick(L.outroTitle, lang), highlight: pick(L.outroHl, lang), sub: clean(ch.nom, 40), button: pick(L.button, lang), also: pick(L.also, lang) } }); total += OUTRO; }
 
   const long = Math.round((base * 16) / 9 / 2) * 2;
   // un seul plan (une seule série d'appels IA) pour tous les formats demandés
@@ -437,10 +438,17 @@ async function main() {
     logo, logoAlpha: logo ? hasAlpha(logo) : false, channel: ch.nom || "", crf: base >= 2160 ? 21 : 19, scenes };
   mkdirSync(path.dirname(OUT), { recursive: true });
   for (const f of ["vertical", "horizontal"]) { const p = OUT.replace(/\.json$/, `-${f}.json`); if (existsSync(p)) rmSync(p); }
-  for (const f of formats) writeFileSync(OUT.replace(/\.json$/, `-${f}.json`), JSON.stringify({ ...spec, format: f, w: f === "horizontal" ? long : base, h: f === "horizontal" ? base : long }, null, 1));
+  // chaque format a son propre écran de fin (durée différente) : même plan, seule la dernière scène change
+  const PART = Number(process.env.EXPLAINER_PART_S || 240) * 30, matrix = [];
+  for (const f of formats) {
+    const extra = withOutro && f === "horizontal" ? OUTRO_H - OUTRO : 0;
+    const sc = scenes.map((x) => (x.type === "outro" ? { ...x, t1: x.t1 + extra } : x));
+    const one = { ...spec, format: f, w: f === "horizontal" ? long : base, h: f === "horizontal" ? base : long, duration: Math.round((total + extra) * 30) / 30, scenes: sc };
+    writeFileSync(OUT.replace(/\.json$/, `-${f}.json`), JSON.stringify(one, null, 1));
+    const N = Math.round(one.duration * 30), nParts = Math.max(1, Math.ceil(N / PART));
+    for (let k = 0; k < nParts; k++) matrix.push({ format: f, part: String(k + 1).padStart(3, "0"), f0: Math.floor((N * k) / nParts), f1: Math.floor((N * (k + 1)) / nParts) });
+  }
   writeFileSync(OUT, JSON.stringify(spec, null, 1));
-  const N = Math.round(spec.duration * 30), PART = Number(process.env.EXPLAINER_PART_S || 240) * 30, nParts = Math.max(1, Math.ceil(N / PART)), matrix = [];
-  for (const f of formats) for (let k = 0; k < nParts; k++) matrix.push({ format: f, part: String(k + 1).padStart(3, "0"), f0: Math.floor((N * k) / nParts), f1: Math.floor((N * (k + 1)) / nParts) });
   writeFileSync("content/matrix.json", JSON.stringify(matrix));
   const md = [`# Faceless live arabic — plan`, ``, `- Durée voix : ${duration.toFixed(1)} s · langue : ${lang} · format : ${formats.join(" + ")} (${base}p)`, `- Palette : **${th.code}** — ${th.why}`, `- Chaîne / logo : ${ch.why || "—"}`,
     `- Écriture : ${raw ? "IA" : "sans IA (phrases prononcées affichées telles quelles)"} `,

@@ -40,7 +40,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 /* ---------- fond vivant : un seul canevas (demi-résolution, agrandi : doux et très rapide à dessiner) ---------- */
 #bgc{position:absolute;inset:0;width:100%;height:100%}
 /* ---------- scènes ---------- */
-#scenes{position:absolute;inset:0}
+#scenes{position:absolute;inset:0;isolation:isolate}   /* les scènes ont leur propre pile : flash, reflets, fondu final et logo restent au-dessus */
 .scene{position:absolute;inset:0;visibility:hidden;will-change:transform,opacity,clip-path}
 .safe{position:absolute;left:calc(var(--u)*78);right:calc(var(--u)*78);top:var(--safe-top);bottom:calc(var(--safe-bot) + var(--u)*10);
   display:flex;flex-direction:column;justify-content:center}
@@ -160,13 +160,43 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .live i{width:100%;height:100%;border-radius:50%;background:#ff3b3b;box-shadow:0 0 calc(var(--u)*22) #ff3b3b}
 .frame .shine{z-index:40}
 /* fin */
-.outro{align-items:center;text-align:center}
-.logoBig{width:calc(var(--u)*430);height:calc(var(--u)*430);position:relative;display:grid;place-items:center;margin-bottom:calc(var(--u)*60)}
-.logoBig img{width:78%;height:78%;object-fit:contain;filter:drop-shadow(0 calc(var(--u)*20) calc(var(--u)*50) rgba(0,0,0,.6))}
-.logoBig .rg{position:absolute;inset:0;border-radius:50%;border:calc(var(--u)*3) solid var(--accent)}
-.btn{margin-top:calc(var(--u)*56);padding:calc(var(--u)*30) calc(var(--u)*84);border-radius:999px;
-  font:800 calc(var(--u)*52)/1.3 var(--f-title);background:linear-gradient(100deg,var(--accent),var(--accent2));color:var(--deep);
-  box-shadow:0 0 calc(var(--u)*80) var(--glow);position:relative;overflow:hidden}
+/* ---------- écran de fin de chaîne : rosace géométrique qui se dessine, logo, nom, bouton, cadres « à voir aussi » ---------- */
+.end{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+  padding:var(--safe-top) calc(var(--u)*78) calc(var(--safe-bot) * .75)}
+.h .end{flex-direction:row;gap:calc(var(--u)*110);padding:calc(var(--u)*80) calc(var(--u)*150)}
+.end .veil{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 44%,rgba(0,0,0,.42) 0%,rgba(0,0,0,.72) 80%)}
+.h .end .veil{background:radial-gradient(ellipse at 50% 50%,rgba(0,0,0,.45) 0%,rgba(0,0,0,.72) 85%)}
+.brand{position:relative;display:flex;flex-direction:column;align-items:center;min-width:0}
+.h .brand{flex:1}
+.emblem{position:relative;width:calc(var(--u)*560);height:calc(var(--u)*560);display:grid;place-items:center;margin-bottom:calc(var(--u)*34)}
+.h .emblem{width:calc(var(--u)*430);height:calc(var(--u)*430);margin-bottom:calc(var(--u)*22)}
+.emblem svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.emblem svg *{fill:none;stroke:var(--accent);vector-effect:non-scaling-stroke}
+.emblem .halo{position:absolute;inset:14%;border-radius:50%;background:radial-gradient(circle,var(--glow) 0%,transparent 68%)}
+.emblem .lg{position:relative;width:44%;height:44%;border-radius:50%;overflow:hidden;box-shadow:0 calc(var(--u)*24) calc(var(--u)*70) rgba(0,0,0,.6),0 0 0 calc(var(--u)*4) var(--accent),0 0 calc(var(--u)*60) var(--glow)}
+.emblem .lg img{width:100%;height:100%;object-fit:cover;display:block}
+.logo-free .emblem .lg{border-radius:0;overflow:visible;box-shadow:none}
+.logo-free .emblem .lg img{object-fit:contain;filter:drop-shadow(0 calc(var(--u)*18) calc(var(--u)*40) rgba(0,0,0,.6))}
+.emblem .lg .shine{position:absolute;top:-20%;bottom:-20%;width:45%;left:0;background:linear-gradient(100deg,transparent,rgba(255,255,255,.55),transparent);transform:skewX(-18deg)}
+.emblem .mono{font:900 calc(var(--u)*120)/1 var(--f-title);color:var(--accent)}
+.cname{font:900 calc(var(--u)*92)/1.15 var(--f-title);letter-spacing:.01em;text-wrap:balance;max-width:100%}
+.ar .cname{line-height:1.4}
+.h .cname{font-size:calc(var(--u)*72)}
+.end .rule{margin:calc(var(--u)*26) auto;transform-origin:50% 50%;width:calc(var(--u)*220)}
+.ctxt{font:600 calc(var(--u)*50)/1.4 var(--f-body);opacity:.92;text-wrap:balance}
+.h .ctxt{font-size:calc(var(--u)*40)}
+.btn{margin-top:calc(var(--u)*46);padding:calc(var(--u)*26) calc(var(--u)*80);border-radius:999px;
+  font:800 calc(var(--u)*50)/1.3 var(--f-title);background:linear-gradient(100deg,var(--accent),var(--accent2));color:var(--deep);
+  box-shadow:0 0 calc(var(--u)*70) var(--glow),0 calc(var(--u)*14) calc(var(--u)*40) rgba(0,0,0,.45);position:relative;overflow:hidden}
+.h .btn{font-size:calc(var(--u)*40);margin-top:calc(var(--u)*32);padding:calc(var(--u)*20) calc(var(--u)*64)}
+.btn .shine{position:absolute;top:-20%;bottom:-20%;width:38%;left:0;background:linear-gradient(100deg,transparent,rgba(255,255,255,.6),transparent);transform:skewX(-18deg)}
+.next{position:relative;flex:0 0 calc(var(--u)*640);min-width:0;display:flex;flex-direction:column;align-items:stretch;gap:calc(var(--u)*30);perspective:calc(var(--u)*1600)}
+.next .kick{text-align:start}
+.slot{position:relative;aspect-ratio:16/9;border-radius:calc(var(--u)*22);background:linear-gradient(145deg,rgba(255,255,255,.1),rgba(255,255,255,.02));
+  box-shadow:inset 0 0 0 calc(var(--u)*3) var(--accent),0 calc(var(--u)*30) calc(var(--u)*80) rgba(0,0,0,.5),0 0 calc(var(--u)*40) var(--glow);overflow:hidden}
+.slot::after{content:"";position:absolute;inset:calc(var(--u)*12);border-radius:calc(var(--u)*14);box-shadow:inset 0 0 0 calc(var(--u)*1.5) rgba(255,255,255,.2)}
+.slot .shine{position:absolute;top:-20%;bottom:-20%;width:30%;left:0;background:linear-gradient(100deg,transparent,rgba(255,255,255,.18),transparent);transform:skewX(-18deg)}
+#fadeout{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none}
 /* habillage fixe */
 #hud{position:absolute;inset:0;pointer-events:none}
 #logo{position:absolute;top:calc(var(--u)*64);inset-inline-end:calc(var(--u)*64);width:calc(var(--u)*128);height:calc(var(--u)*128);object-fit:cover;border-radius:50%;
@@ -186,6 +216,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
   <canvas id="bgc"></canvas>
   <div id="scenes"></div>
   <div id="flash"></div><div id="glare"></div><div id="iris"></div>
+  <div id="fadeout"></div>
   <div id="hud"><img id="logo" hidden><div id="prog"><i></i></div></div>
 </div>
 <script>
@@ -202,10 +233,15 @@ let PENDING=[];let S=null,U=1,W=1080,H=1920,RTL=false,SC=[],total=1;
 /* Texte découpé en MOTS (jamais en lettres : l'arabe reste lié). hl = mots à mettre en lumière. */
 function words(text,hl,delay=0,step=.07){
   const hs=String(hl||"").split(/\s+/).filter(Boolean).map(x=>x.toLowerCase());
-  return String(text||"").split(/\s+/).filter(Boolean).map((w,i)=>{
-    const key=w.toLowerCase().replace(/[.,;:!?،؛؟«»"“”()]/g,"");
-    const isHl=hs.includes(key);
-    return `<span class="w${isHl?" hl":""}" data-a="word" data-d="${(delay+i*step).toFixed(3)}">${esc(w)}</span>`;
+  const strip=w=>w.toLowerCase().replace(/[.,;:!?،؛؟«»"“”()…]/g,"");
+  /* Sens d'écriture : chaque mot est un bloc animé. Des mots consécutifs écrits dans l'AUTRE sens que la phrase
+     (« Gulf think-tank », « Donald Trump », « 25 % » dans une phrase arabe ; un nom arabe dans une phrase française)
+     restent dans UN SEUL bloc — sinon le navigateur inverserait leur ordre. */
+  const AR=/[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFC]/,LAT=/[A-Za-z\u00C0-\u024F]/;
+  const foreign=w=>RTL?(!AR.test(w)&&(LAT.test(w)||/\d/.test(w))):AR.test(w);
+  const groups=[];for(const w of String(text||"").split(/\s+/).filter(Boolean)){const f=foreign(w),g=groups[groups.length-1];if(f&&g&&g.f)g.w.push(w);else groups.push({f,w:[w]})}
+  return groups.map((g,i)=>{const isHl=g.w.some(w=>hs.includes(strip(w)));
+    return `<span class="w${isHl?" hl":""}" ${g.f?`dir="${RTL?"ltr":"rtl"}" `:""}data-a="word" data-d="${(delay+i*step).toFixed(3)}">${esc(g.w.join(" "))}</span>`;
   }).join(" ");
 }
 const A=(a,d,extra="")=>`data-a="${a}" data-d="${d}" ${extra}`;
@@ -228,7 +264,15 @@ const BUILD={
     ar=(c0.w*(m0.iw||1))/(c0.h*(m0.ih||1)),vert=H>W,big=sc&&sc.big,R=clamp(ar,vert?(big?.62:.95):1.25,vert?1.78:(big?1.9:1.9));
     const med=M.map((m,k)=>{const c=m.crop||{x:0,y:0,w:1,h:1};return `<img ${m.kind==="vid"?`data-dir="${esc(m.dir)}" data-n="${m.n|0}" data-fps="${m.fps||30}" src="${esc(m.dir)}/00001.jpg"`:`src="${esc(m.image)}"`} data-a="media" data-k="${k}" data-m="${M.length}" data-c="${[c.x,c.y,c.w,c.h].join(",")}" data-iw="${m.iw||0}" data-ih="${m.ih||0}">`}).join("");
     return `<div class="safe persp${big?" bigclip":""}">${head(d)}<div class="shotrow"><div class="frame" style="aspect-ratio:${R.toFixed(3)}" ${A("tilt",.12)}>${med}<div class="shine" data-a="shine" data-d=".7"></div>${big?`<div class="live"><i data-a="pulse"></i></div>`:""}</div>${d.title&&!big?`<div class="shottxt"><div class="rule" ${A("draw",.5)}></div><div class="title md">${words(d.title,d.highlight,.55,.06)}</div></div>`:""}</div></div>${src(d)}`},
-  outro:d=>`<div class="safe outro">${S.logo?`<div class="logoBig"><div class="rg" data-a="ringOut" data-d=".1"></div><div class="rg" data-a="ringOut" data-d=".55"></div><img src="${esc(S.logo)}" ${A("pop",.1)}></div>`:""}<div class="title md">${words(d.title,d.highlight,.4,.08)}</div>${d.sub?`<div class="sub" ${A("rise",.8)}>${esc(d.sub)}</div>`:""}${d.button?`<div class="btn" ${A("press",1)}><div class="shine" data-a="shine" data-d="1.5" style="position:absolute;top:-20%;bottom:-20%;width:38%;left:0;background:linear-gradient(100deg,transparent,rgba(255,255,255,.6),transparent);transform:skewX(-18deg)"></div>${esc(d.button)}</div>`:""}</div>`,
+  outro:d=>{const P=(n,r,rot)=>Array.from({length:n},(_,k)=>{const a=(k/n)*6.2832+rot;return (100+r*Math.cos(a)).toFixed(2)+","+(100+r*Math.sin(a)).toFixed(2)});
+    const star=(n,step,r,rot)=>{const p=P(n,r,rot),o=[];for(let k=0,i=0;k<n;k++,i=(i+step)%n)o.push(p[i]);return o.join(" ")};
+    const ticks=Array.from({length:48},(_,k)=>{const a=k/48*6.2832,r0=k%4?93:90;return `M${(100+r0*Math.cos(a)).toFixed(2)},${(100+r0*Math.sin(a)).toFixed(2)} L${(100+96*Math.cos(a)).toFixed(2)},${(100+96*Math.sin(a)).toFixed(2)}`}).join(" ");
+    const draw=(dl,len)=>`pathLength="1" stroke-dasharray="1" stroke-dashoffset="1" data-a="sdraw" data-d="${dl}" data-len="${len}"`;
+    const ros=`<svg viewBox="0 0 200 200"><g data-a="rot" data-v="5"><polygon points="${star(4,1,88,-1.5708)}" stroke-width="1.8" stroke-linejoin="round" ${draw(0,1.6)}/><polygon points="${star(4,1,88,-.7854)}" stroke-width="1.8" stroke-linejoin="round" ${draw(.2,1.6)}/><polygon points="${star(8,1,64,-1.5708+.3927)}" stroke-width="1" stroke-opacity=".6" stroke-linejoin="round" ${draw(.55,1.3)}/><circle cx="100" cy="100" r="52" stroke-width="1.2" stroke-opacity=".7" transform="rotate(-90 100 100)" ${draw(.5,1.3)}/></g><g data-a="rot" data-v="-9"><path d="${ticks}" stroke-width="1.4" stroke-opacity=".75" data-a="fade" data-d=".9"/><circle cx="100" cy="100" r="98.5" stroke-width="1" stroke-opacity=".5" stroke-dasharray=".5 3"/></g></svg>`;
+    const mono=esc(String(d.sub||"").trim().slice(0,1).toUpperCase());
+    const brand=`<div class="brand"><div class="emblem"><div class="halo" data-a="breath"></div>${ros}${S.logo?`<div class="lg" ${A("pop",.45)}><img src="${esc(S.logo)}"><div class="shine" data-a="loopshine" data-d="1.6"></div></div>`:(mono?`<div class="mono" ${A("pop",.45)}>${mono}</div>`:"")}</div>${d.sub?`<div class="cname">${words(d.sub,"",1.0,.09)}</div>`:""}<div class="rule" ${A("draw",1.35)}></div><div class="ctxt">${words(d.title,d.highlight,1.5,.07)}</div>${d.button?`<div class="btn" ${A("press",2.0)}><div class="shine" data-a="loopshine" data-d="3.4"></div>${esc(d.button)}</div>`:""}</div>`;
+    const next=H>W?"":`<div class="next"><div class="kick" ${A("rise",1.1)}>${esc(d.also||"")}</div><div class="slot" ${A("flip",1.25)}><div class="shine" data-a="loopshine" data-d="2.6"></div></div><div class="slot" ${A("flip",1.5)}><div class="shine" data-a="loopshine" data-d="3.1"></div></div></div>`;
+    return `<div class="end"><div class="veil" data-a="veil"></div>${brand}${next}</div>`},
 };
 
 /* ---------- fond dessiné sur canevas ---------- */
@@ -343,6 +387,11 @@ function animate(s,lt,t){
         if(vid){const N=+n.dataset.n,fr=Math.max(1,Math.min(N,Math.floor(Math.max(0,ls)*(+n.dataset.fps))%Math.max(1,s.sc.big?1e9:N)+1)),u=`${vid}/${String(fr).padStart(5,"0")}.jpg`;
           if(n.dataset.cur!==u){n.dataset.cur=u;n.src=u;PENDING.push(n.decode().catch(()=>{}))}}
         break}
+      case"veil":st.opacity=E.out(seg(lt,0,.9));break;
+      case"sdraw":p=E.io(seg(lt,d,d+parseFloat(n.dataset.len)));n.setAttribute("stroke-dashoffset",(1-p).toFixed(4));break;
+      case"rot":n.setAttribute("transform",`rotate(${(lt*parseFloat(n.dataset.v)).toFixed(3)} 100 100)`);break;
+      case"breath":st.opacity=E.out(seg(lt,.3,1.6))*(.75+.25*Math.sin(lt*1.3));st.transform=`scale(${1+.06*Math.sin(lt*1.3)})`;break;
+      case"loopshine":{const q=lt<d?-1:((lt-d)%4.2)/1.2;st.left=(-50+q*200)+"%";st.opacity=q>=0&&q<=1?1:0;break}
       case"pulse":st.opacity=.35+.65*(.5+.5*Math.sin(t*5));break;
       case"kb":{const q=seg(lt,0,s.sc.t1-s.sc.t0+OV);st.transform=`scale(${1.08+.14*q}) translate3d(${(q-.5)*-3}%,${(q-.5)*-2}%,0)`;break}
       case"ringOut":{const q=((lt-d)%1.8)/1.8;const on=lt>d;st.opacity=on?(1-q)*.8:0;st.transform=`scale(${1+q*.75})`;break}
@@ -383,6 +432,7 @@ window.seek=function(t){
   const ir=document.getElementById("iris");if(iris){const d=iris.r/100*Math.hypot(W,H)*2*.72;ir.style.width=ir.style.height=d+"px";ir.style.marginLeft=ir.style.marginTop=(-d/2)+"px";ir.style.opacity=iris.o}else ir.style.opacity=0;
   document.querySelector("#prog i").style.transform=`scaleX(${t/total})`;
   const lg=document.getElementById("logo");if(!lg.hidden){const last=SC[SC.length-1];const hide=last&&last.sc.type==="outro"?seg(t,last.sc.t0-.2,last.sc.t0+.3):0;lg.style.opacity=E.out(seg(t,.3,1))*(1-hide);lg.style.transform=`scale(${.7+.3*E.back(seg(t,.3,1))})`}
+  {const last=SC[SC.length-1];document.getElementById("fadeout").style.opacity=last&&last.sc.type==="outro"&&Math.abs(last.sc.t1-total)<.05?E.in(seg(t,total-.7,total-.05)):0}
   return PENDING.length?Promise.all(PENDING).then(()=>1):1;
 };
 </script>
