@@ -1,4 +1,4 @@
-// scripts/lib/gulf-themes.mjs — habillage par pays du Golfe pour « Voice to Explainer ».
+// scripts/lib/gulf-themes.mjs — habillage par pays du Golfe pour « Faceless live arabic ».
 // Le pays est détecté dans le texte prononcé (mots-clés ar/fr/en/it) : un seul pays dominant → sa palette ;
 // plusieurs pays (ou aucun) → palette « Golfe » bleu nuit + or (celle du logo Gulf think-tank).
 // Chaque scène peut en plus porter son propre pays : ses accents changent, le fond reste celui de la vidéo.

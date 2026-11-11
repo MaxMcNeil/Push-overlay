@@ -1,4 +1,4 @@
-name: Voice to Explainer
+name: Faceless live arabic
 
 # Un fichier VOIX (mp3, m4a, wav…) → une vidéo « explainer » animée : cartes, titres, citations, chiffres, frises,
 # habillage aux couleurs du ou des pays du Golfe dont parle la voix. Aucune musique, aucun emoji.
@@ -6,7 +6,7 @@ name: Voice to Explainer
 #   + (facultatif) captures d'écran / photos : TOUTES insérées, recadrées, au moment où tu en parles
 #   + (facultatif) vidéos : montrées pendant que tu parles ; si tu dis « إسمع / استمعوا / خلينا نسمع / écoutez / listen »,
 #     la vidéo suivante (ordre des noms de fichiers) est jouée AVEC SON SON, ta voix attend puis reprend.
-# LANCEMENT MANUEL UNIQUEMENT : Actions → Voice to Explainer → Run workflow.
+# LANCEMENT MANUEL UNIQUEMENT : Actions → Faceless live arabic → Run workflow.
 on:
   workflow_dispatch:
     inputs:
@@ -286,11 +286,11 @@ jobs:
           gh release delete out-explainer --repo "$REPO" -y --cleanup-tag >/dev/null 2>&1 || true
           ok=0
           for i in 1 2 3; do
-            gh release create out-explainer --repo "$REPO" --title "🎙️ RÉSULTAT — Voix → Explainer" --notes-file /tmp/notes.md --prerelease --target "${{ github.sha }}" "${FILES[@]}" && ok=1 && break
+            gh release create out-explainer --repo "$REPO" --title "🎙️ RÉSULTAT — Faceless live arabic" --notes-file /tmp/notes.md --prerelease --target "${{ github.sha }}" "${FILES[@]}" && ok=1 && break
             sleep $((i * 15)); gh release delete out-explainer --repo "$REPO" -y --cleanup-tag >/dev/null 2>&1 || true
           done
           [ "$ok" = 1 ] || { echo "::error::Publication impossible après 3 essais."; exit 1; }
-          bash scripts/release-status.sh "$SRC_TAG" ok "Vidéo prête : [🎙️ RÉSULTAT — Voix → Explainer](https://github.com/$REPO/releases/tag/out-explainer)" || true
+          bash scripts/release-status.sh "$SRC_TAG" ok "Vidéo prête : [🎙️ RÉSULTAT — Faceless live arabic](https://github.com/$REPO/releases/tag/out-explainer)" || true
 
   # ------------------------------------------------------------------ état « ❌ ÉCHEC » sur la release déposée
   signal-failure:
@@ -326,7 +326,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           set -uo pipefail
-          busy=$(gh run list --repo "$REPO" --workflow voice-to-explainer.yml --limit 20 --json databaseId,status -q "[.[]|select(.status!=\"completed\" and .databaseId!=$RUN_ID)]|length" || echo 1)
+          busy=$(gh run list --repo "$REPO" --workflow faceless-live-arabic.yml --limit 20 --json databaseId,status -q "[.[]|select(.status!=\"completed\" and .databaseId!=$RUN_ID)]|length" || echo 1)
           [ "$busy" = "0" ] || { echo "Un autre montage est en cours ou en attente : médias conservés (il fera son propre nettoyage)."; exit 0; }
           gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 || { echo "Release $TAG déjà supprimée."; exit 0; }
           NOW=$(gh release view "$TAG" --repo "$REPO" --json assets -q '[.assets[]|select(.name|test("\\.(jpe?g|png|webp|mp4|mov|mkv|webm|m4v|avi)$";"i"))|"\(.id)"]|sort|join(",")' || echo "?")

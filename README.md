@@ -184,7 +184,7 @@ Prérequis : `ffmpeg` (avec libass), Node 20, Python 3 + Pillow, polices Poppins
 - Pas de b-roll ni de cartes géographiques automatiques (aucune banque d'images embarquée) : zoom, split-screen, flèches, emojis et graphismes sont générés.
 - Les anciens scripts d'overlay OBS (`generate-overlay.mjs`, `templates/`, `docs/`) sont conservés mais ne sont plus lancés par le workflow.
 
-## Voice to Explainer (un fichier voix → une vidéo animée)
+## Faceless live arabic (un fichier voix → une vidéo animée)
 
 Tu donnes **seulement ta voix** ; le workflow fabrique une vidéo « explainer » haut de gamme : accroche, titres, citations,
 chiffres, frises, listes, face-à-face, carte de fin — sans musique, **sans aucun emoji**, textes grands et lisibles.
@@ -197,7 +197,7 @@ chiffres, frises, listes, face-à-face, carte de fin — sans musique, **sans au
   « إسمع / إسمعوا / استمع / استمعوا (جيدا، معي) / خلينا نسمع » (ou « écoutez », « listen », « ascoltate »), la vidéo
   suivante (**ordre des noms de fichiers** : `01-…mp4`, `02-…mp4`) est jouée **avec son son** ; ta voix attend, puis reprend.
 
-**Lancer** : *Actions → Voice to Explainer → Run workflow*.
+**Lancer** : *Actions → Faceless live arabic → Run workflow*.
 
 | Champ | Rôle |
 |---|---|
@@ -210,7 +210,7 @@ chiffres, frises, listes, face-à-face, carte de fin — sans musique, **sans au
 | `mots_declencheurs` | oui / non |
 | `nettoyage_medias` | oui : 30 min après un run **réussi**, les captures / photos / vidéos déposées sont supprimées (la voix reste ; rien n'est supprimé si le run a échoué, si tu as changé les fichiers entre-temps ou si un autre montage attend) |
 
-**Résultat** : release **🎙️ RÉSULTAT — Voix → Explainer** (`out-explainer`, remplace la précédente) + le plan scène par scène
+**Résultat** : release **🎙️ RÉSULTAT — Faceless live arabic** (`out-explainer`, remplace la précédente) + le plan scène par scène
 (`EXPLAINER.md`). Logo : règle habituelle (chaîne de la langue de la voix, sinon aucun).
 
 **Sécurités** : rien n'est affiché qui ne soit dit dans la voix (un chiffre ou une date absents de la transcription sont

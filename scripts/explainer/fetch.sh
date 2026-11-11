@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Récupère le fichier VOIX (et les photos éventuelles) pour « Voice to Explainer ».
+# Récupère le fichier VOIX (et les photos éventuelles) pour « Faceless live arabic ».
 #   SOURCE = tag de release, lien Google Drive, lien direct, ou vide (= dernière release dont le tag commence par voix/voice/audio)
 #   PHOTOS = tag d'une release de captures / photos / vidéos (facultatif ; celles jointes à la release de la voix sont aussi prises)
 # Produit : input/voice.wav (mono 48 kHz, vérifié), input/video.mp4 (même son + image noire : pour scripts/transcribe.mjs),
