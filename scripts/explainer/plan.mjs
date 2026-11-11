@@ -19,16 +19,15 @@ const IN = process.env.EXPLAINER_TRANSCRIPT || "content/transcript.json";
 const OUT = process.env.EXPLAINER_SPEC || "content/explainer.json";
 const FORMAT = (process.env.EXPLAINER_FORMAT || "vertical").toLowerCase();
 const QUALITY = (String(process.env.EXPLAINER_QUALITY || "1080").match(/\d+/) || ["1080"])[0];
-const MIN_SCENE = 3.2, IDEAL_MAX = 7.5, HARD_MAX = 10, OUTRO = 6, OUTRO_H = 12, LEAD = 0.12;   // écran de fin : 6 s en vertical ; 12 s en horizontal (YouTube y pose ses éléments de fin : 5 à 20 s)
+const MIN_SCENE = 3.2, IDEAL_MAX = 7.5, HARD_MAX = 10, OUTRO = 6, OUTRO_H = 8, LEAD = 0.12;   // écran de fin : 6 s en vertical, 8 s en horizontal
 const TYPES = ["hook", "headline", "quote", "stat", "timeline", "list", "versus", "countries"];
 
 const RTL = (l) => l === "ar";
 const L = {
   outroTitle: { ar: "تابعوا التحليل كاملاً", fr: "Abonnez-vous pour la suite", en: "Subscribe for more", it: "Iscriviti per il seguito" },
   outroHl: { ar: "كاملاً", fr: "Abonnez-vous", en: "Subscribe", it: "Iscriviti" },
-  button: { ar: "اشترك الآن", fr: "S'abonner", en: "Subscribe", it: "Iscriviti" },
+  button: { ar: "للاشتراك\nو جديد القناة", fr: "S'abonner", en: "Subscribe", it: "Iscriviti" },
   kicker: { ar: "تحليل", fr: "Analyse", en: "Analysis", it: "Analisi" },
-  also: { ar: "شاهد أيضاً", fr: "À voir aussi", en: "Watch next", it: "Guarda anche" },
   listen: { ar: "نستمع", fr: "Écoutons", en: "Listen", it: "Ascoltiamo" },
   langName: { ar: "arabe littéraire simple (فصحى مبسطة)", fr: "français", en: "English", it: "italiano" },
 };
@@ -418,7 +417,7 @@ async function main() {
   const ch = process.env.EXPLAINER_LOGO === "non" ? { nom: "", logo: null, why: "logo désactivé" } : channelFor(lang);
   const withOutro = process.env.EXPLAINER_OUTRO !== "non";
   let total = total0;
-  if (withOutro) { scenes.push({ type: "outro", t0: total0, t1: total0 + OUTRO, data: { title: pick(L.outroTitle, lang), highlight: pick(L.outroHl, lang), sub: clean(ch.nom, 40), button: pick(L.button, lang), also: pick(L.also, lang) } }); total += OUTRO; }
+  if (withOutro) { scenes.push({ type: "outro", t0: total0, t1: total0 + OUTRO, data: { title: pick(L.outroTitle, lang), highlight: pick(L.outroHl, lang), sub: clean(ch.nom, 40), button: pick(L.button, lang) } }); total += OUTRO; }
 
   const long = Math.round((base * 16) / 9 / 2) * 2;
   // un seul plan (une seule série d'appels IA) pour tous les formats demandés
