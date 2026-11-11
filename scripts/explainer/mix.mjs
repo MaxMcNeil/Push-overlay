@@ -61,7 +61,17 @@ function main() {
   wav(buf, sfx);
   // voix : coupe-bas (souffle, chocs de micro), niveau YouTube (−16 LUFS)
   const voice = Number(spec.voice || total), norm = `${tmp}-voice.wav`;
-  execFileSync("ffmpeg", ["-y", "-v", "error", "-i", VOICE, "-af", `aresample=${SR},aformat=channel_layouts=mono,highpass=f=70,loudnorm=I=-16:TP=-1.5:LRA=11,aresample=${SR}`, "-c:a", "pcm_s16le", norm]);
+  // « radio » (défaut) : traitement de studio d'émission — souffle réduit, grave chaleureux (profondeur), médiums boueux
+  // creusés, présence et air pour l'intelligibilité, sifflantes adoucies, compression qui rapproche la voix, niveau YouTube.
+  // « naturel » : simple nettoyage + niveau. Si le traitement studio échoue (ffmpeg ancien), repli automatique sur « naturel ».
+  const base = `aresample=${SR},aformat=channel_layouts=mono`, tail = `loudnorm=I=-16:TP=-1.5:LRA=9,aresample=${SR}`;
+  const studio = ["highpass=f=75", "afftdn=nr=10:nf=-52", "equalizer=f=115:t=q:w=0.9:g=3.5", "equalizer=f=290:t=q:w=1.2:g=-2.5", "equalizer=f=3300:t=q:w=1.4:g=2.5",
+    "treble=g=2:f=9500", "deesser=i=0.3", "acompressor=threshold=-22dB:ratio=3.5:attack=6:release=140:knee=6:makeup=3.5", "alimiter=limit=0.9"].join(",");
+  const STYLE = (process.env.EXPLAINER_VOICE || "radio").toLowerCase();
+  const run = (af) => execFileSync("ffmpeg", ["-y", "-v", "error", "-i", VOICE, "-af", af, "-c:a", "pcm_s16le", norm], { stdio: ["ignore", "ignore", "pipe"] });
+  let voiceStyle = STYLE === "naturel" ? "naturel" : "radio";
+  try { run(voiceStyle === "radio" ? `${base},${studio},${tail}` : `${base},highpass=f=70,${tail}`); }
+  catch (e) { if (voiceStyle !== "radio") throw e; console.log(`⚠ traitement studio indisponible (${String(e.stderr || e.message).trim().slice(-120)}) : voix « naturel »`); voiceStyle = "naturel"; run(`${base},highpass=f=70,${tail}`); }
   // vidéos « à écouter » : la voix est découpée autour d'elles (elle attend pendant la vidéo, puis reprend)
   const cuts = (Array.isArray(spec.cuts) ? spec.cuts : []).filter((c) => c.dur > 0).sort((a, b) => a.voiceAt - b.voiceAt);
   const ins = ["-i", norm, "-i", sfx, "-i", VIDEO], parts = [], labels = [];
@@ -88,6 +98,6 @@ function main() {
   const j = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_streams", "-show_format", "-of", "json", OUT]).toString());
   const v = j.streams.find((x) => x.codec_type === "video"), au = j.streams.find((x) => x.codec_type === "audio"), d = Number(j.format.duration);
   if (!v || !au || Math.abs(d - total) > 0.5) throw new Error(`vidéo finale incohérente (image ${!!v}, son ${!!au}, ${d.toFixed(1)} s au lieu de ${total.toFixed(1)} s)`);
-  console.log(`✔ ${OUT} — ${v.width}x${v.height}, ${d.toFixed(1)} s, ${(statSync(OUT).size / 1e6).toFixed(1)} Mo, effets sonores : ${MODE}`);
+  console.log(`✔ ${OUT} — ${v.width}x${v.height}, ${d.toFixed(1)} s, ${(statSync(OUT).size / 1e6).toFixed(1)} Mo, voix : ${voiceStyle}, effets sonores : ${MODE}`);
 }
 try { main(); } catch (e) { console.error("❌ " + e.message); process.exit(1); }

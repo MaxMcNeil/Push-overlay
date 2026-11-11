@@ -38,6 +38,11 @@ on:
         type: choice
         options: [discret, normal, non]
         default: discret
+      voix:
+        description: "Traitement de ta voix : radio = son de studio d'émission (profondeur, présence, compression) ; naturel = nettoyage seul"
+        type: choice
+        options: [radio, naturel]
+        default: radio
       mots_declencheurs:
         description: "Mots déclencheurs (« إسمع », « خلينا نسمع », « écoutez »…) : jouent la vidéo suivante avec son son"
         type: choice
@@ -244,6 +249,7 @@ jobs:
       - name: Assembler les tranches, ajouter la voix et les effets sonores
         env:
           EXPLAINER_SFX: ${{ inputs.effets_sonores }}
+          EXPLAINER_VOICE: ${{ inputs.voix }}
           MATRIX: ${{ needs.plan.outputs.matrix }}
         run: |
           set -euo pipefail

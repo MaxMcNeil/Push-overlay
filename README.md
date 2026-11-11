@@ -206,6 +206,7 @@ chiffres, frises, listes, face-à-face, carte de fin — sans musique, **sans au
 | `qualite` | 1080, 1440 ou 2160 (4K, environ 4 fois plus long) |
 | `pays` | `auto` : un seul pays du Golfe dans la voix → ses couleurs (sa, ae, qa, kw, om, bh) ; plusieurs → palette Golfe bleu nuit + or. Une scène consacrée à un pays prend ses accents |
 | `photos` | tag d'une autre release de captures / photos / vidéos (facultatif) |
+| `voix` | **radio** (défaut) : son de studio d'émission — grave chaleureux, présence, sifflantes adoucies, compression, souffle réduit ; `naturel` : nettoyage seul. Les vidéos « à écouter » gardent leur son d'origine |
 | `effets_sonores` | discret (défaut), normal, non — synthétisés, aucun droit d'auteur |
 | `mots_declencheurs` | oui / non |
 | `nettoyage_medias` | oui : 30 min après un run **réussi**, les captures / photos / vidéos déposées sont supprimées (la voix reste ; rien n'est supprimé si le run a échoué, si tu as changé les fichiers entre-temps ou si un autre montage attend) |
