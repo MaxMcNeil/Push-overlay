@@ -183,3 +183,44 @@ Prérequis : `ffmpeg` (avec libass), Node 20, Python 3 + Pillow, polices Poppins
 - Repli sans LLM : phrases propres tirées de la vidéo, cartes = extrait de la parole (pas d'analyse inédite).
 - Pas de b-roll ni de cartes géographiques automatiques (aucune banque d'images embarquée) : zoom, split-screen, flèches, emojis et graphismes sont générés.
 - Les anciens scripts d'overlay OBS (`generate-overlay.mjs`, `templates/`, `docs/`) sont conservés mais ne sont plus lancés par le workflow.
+
+## Voice to Explainer (un fichier voix → une vidéo animée)
+
+Tu donnes **seulement ta voix** ; le workflow fabrique une vidéo « explainer » haut de gamme : accroche, titres, citations,
+chiffres, frises, listes, face-à-face, carte de fin — sans musique, **sans aucun emoji**, textes grands et lisibles.
+
+**Déposer** : *Releases → Draft a new release* → tag qui commence par **`voix`** (ex. `voix-001`) → joins :
+- **la voix** (mp3, m4a, wav, ogg, opus… ; une vidéo nommée `voix…` marche aussi : seul le son est pris) ;
+- *(facultatif)* **captures d'écran / photos** : **toutes** sont insérées, recadrées (barres du téléphone, menus retirés)
+  et placées au moment où tu en parles ; s'il y en a plus que de scènes, elles s'enchaînent en fondu ;
+- *(facultatif)* **vidéos** : montrées (sans leur son) pendant que tu parles. **Mot déclencheur** — si tu dis
+  « إسمع / إسمعوا / استمع / استمعوا (جيدا، معي) / خلينا نسمع » (ou « écoutez », « listen », « ascoltate »), la vidéo
+  suivante (**ordre des noms de fichiers** : `01-…mp4`, `02-…mp4`) est jouée **avec son son** ; ta voix attend, puis reprend.
+
+**Lancer** : *Actions → Voice to Explainer → Run workflow*.
+
+| Champ | Rôle |
+|---|---|
+| `source` | tag de la release (vide = la dernière `voix…`) ou lien Google Drive du fichier voix |
+| `format` | vertical, horizontal ou **les deux** (une seule transcription et un seul passage IA pour les deux) |
+| `qualite` | 1080, 1440 ou 2160 (4K, environ 4 fois plus long) |
+| `pays` | `auto` : un seul pays du Golfe dans la voix → ses couleurs (sa, ae, qa, kw, om, bh) ; plusieurs → palette Golfe bleu nuit + or. Une scène consacrée à un pays prend ses accents |
+| `photos` | tag d'une autre release de captures / photos / vidéos (facultatif) |
+| `effets_sonores` | discret (défaut), normal, non — synthétisés, aucun droit d'auteur |
+| `mots_declencheurs` | oui / non |
+| `nettoyage_medias` | oui : 30 min après un run **réussi**, les captures / photos / vidéos déposées sont supprimées (la voix reste ; rien n'est supprimé si le run a échoué, si tu as changé les fichiers entre-temps ou si un autre montage attend) |
+
+**Résultat** : release **🎙️ RÉSULTAT — Voix → Explainer** (`out-explainer`, remplace la précédente) + le plan scène par scène
+(`EXPLAINER.md`). Logo : règle habituelle (chaîne de la langue de la voix, sinon aucun).
+
+**Sécurités** : rien n'est affiché qui ne soit dit dans la voix (un chiffre ou une date absents de la transcription sont
+refusés) ; sans IA disponible, les phrases prononcées s'affichent mot pour mot (le montage sort toujours) ; un texte trop
+long est réduit automatiquement, jamais coupé hors de l'écran ; une tranche de rendu qui échoue est refaite seule.
+**Clés dédiées (facultatif)** : secrets `EXPLAINER_GEMINI_API_KEY` et `EXPLAINER_GROQ_API_KEY`. Si une clé dédiée existe, ce
+workflow n'utilise qu'elle pour ce fournisseur ; sinon il prend les clés habituelles du dépôt. Attention : les quotas gratuits
+sont comptés par projet Google (Gemini) et par compte (Groq), pas par clé.
+Clés IA utilisées : Groq (transcription), puis **un** appel pour le plan et **un** appel Gemini pour tous les médias.
+**Voix longues (1 h et plus, jusqu'à 3 h)** : le plan IA est demandé par blocs d'environ 10 min (un bloc refusé n'arrête
+rien), puis le rendu est réparti sur plusieurs machines en parallèle (une par tranche de 4 min) et réassemblé. Le débit est
+ajusté pour que chaque fichier reste sous la limite de 2 Go des releases. Si une tranche échoue : *Re-run failed jobs*
+ne refait que celle-là (ni la transcription ni l'IA ne sont relancées).

@@ -1,0 +1,339 @@
+name: Voice to Explainer
+
+# Un fichier VOIX (mp3, m4a, wav…) → une vidéo « explainer » animée : cartes, titres, citations, chiffres, frises,
+# habillage aux couleurs du ou des pays du Golfe dont parle la voix. Aucune musique, aucun emoji.
+# Dépôt : Releases → nouveau tag qui commence par « voix » (ex. voix-001) → joins le fichier audio
+#   + (facultatif) captures d'écran / photos : TOUTES insérées, recadrées, au moment où tu en parles
+#   + (facultatif) vidéos : montrées pendant que tu parles ; si tu dis « إسمع / استمعوا / خلينا نسمع / écoutez / listen »,
+#     la vidéo suivante (ordre des noms de fichiers) est jouée AVEC SON SON, ta voix attend puis reprend.
+# LANCEMENT MANUEL UNIQUEMENT : Actions → Voice to Explainer → Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Tag de la release qui contient la voix, ou lien Google Drive (vide = dernière release « voix… »)"
+        required: false
+        default: ""
+      format:
+        description: "Format (les deux = une seule transcription et un seul plan IA pour les deux vidéos)"
+        type: choice
+        options: [vertical, horizontal, les deux]
+        default: vertical
+      qualite:
+        description: "Qualité (4K = rendu environ 4 fois plus long)"
+        type: choice
+        options: ["1080", "1440", "2160 (4K)"]
+        default: "1080"
+      pays:
+        description: "Couleurs : auto = détecté dans la voix (un pays → ses couleurs ; plusieurs → palette Golfe)"
+        type: choice
+        options: [auto, gcc, sa, ae, qa, kw, om, bh]
+        default: auto
+      photos:
+        description: "Tag d'une release de captures d'écran / photos / vidéos (facultatif ; celles jointes à la release de la voix sont prises aussi)"
+        required: false
+        default: ""
+      effets_sonores:
+        description: "Effets sonores (synthétisés, sans droits)"
+        type: choice
+        options: [discret, normal, non]
+        default: discret
+      mots_declencheurs:
+        description: "Mots déclencheurs (« إسمع », « خلينا نسمع », « écoutez »…) : jouent la vidéo suivante avec son son"
+        type: choice
+        options: [oui, non]
+        default: oui
+      nettoyage_medias:
+        description: "Supprimer les captures / photos / vidéos déposées 30 min après la fin du run (la voix reste)"
+        type: choice
+        options: [oui, non]
+        default: oui
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  # CLÉS DÉDIÉES à ce workflow (facultatives) : secrets EXPLAINER_GEMINI_API_KEY et EXPLAINER_GROQ_API_KEY.
+  # Si une clé dédiée existe, elle est la SEULE utilisée ici pour ce fournisseur (les clés partagées avec Build Video
+  # et les Shorts ne sont pas touchées). Sans clé dédiée : les clés habituelles du dépôt, comme avant.
+  GEMINI_API_KEY: ${{ secrets.EXPLAINER_GEMINI_API_KEY || secrets.GEMINI_API_KEY }}
+  GEMINI_API_KEYS: ${{ secrets.EXPLAINER_GEMINI_API_KEY == '' && secrets.GEMINI_API_KEYS || '' }}
+  GEMINI_API_KEYS_PLUS: ${{ secrets.EXPLAINER_GEMINI_API_KEY == '' && secrets.GEMINI_API_KEYS_PLUS || '' }}
+  GROQ_API_KEY: ${{ secrets.EXPLAINER_GROQ_API_KEY || secrets.GROQ_API_KEY }}
+  GROQ_API_KEYS: ${{ secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS || '' }}
+  GROQ_API_KEYS_PLUS: ${{ secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS_PLUS || '' }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+jobs:
+  # ------------------------------------------------------------------ 1) voix → transcription → plan (tous les appels IA sont ici, une seule fois)
+  plan:
+    runs-on: ubuntu-24.04   # figé (Chrome et ffmpeg testés sur cette image)
+    timeout-minutes: 300
+    outputs:
+      tag: ${{ steps.src.outputs.tag }}
+      photos_tag: ${{ steps.src.outputs.photos_tag }}
+      medias: ${{ steps.src.outputs.medias }}
+      voice_name: ${{ steps.src.outputs.voice_name }}
+      snapshot: ${{ steps.snap.outputs.snapshot }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Outils (ffmpeg…) — avec cache
+        uses: ./.github/actions/setup-media
+        with:
+          build-tools: "true"
+
+      - name: Récupérer la voix et les médias (captures, photos, vidéos)
+        id: src
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SOURCE: ${{ inputs.source }}
+          PHOTOS: ${{ inputs.photos }}
+          RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
+        run: |
+          bash scripts/explainer/fetch.sh
+          T=$(grep -E '^tag=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2- || true)
+          bash scripts/release-status.sh "$T" run "Montage en cours… [suivre](https://github.com/$REPO/actions/runs/${{ github.run_id }})" || true
+
+      - name: État des médias déposés (pour le nettoyage)
+        id: snap
+        if: steps.src.outputs.photos_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          S=$(gh release view "${{ steps.src.outputs.photos_tag }}" --repo "$REPO" --json assets -q '[.assets[]|select(.name|test("\\.(jpe?g|png|webp|mp4|mov|mkv|webm|m4v|avi)$";"i"))|"\(.id)"]|sort|join(",")' || true)
+          echo "snapshot=$S" >> "$GITHUB_OUTPUT"
+
+      - name: Cache whisper.cpp (repli si Groq indisponible)
+        id: whisper-cache
+        uses: actions/cache@v5
+        with:
+          path: whisper.cpp
+          key: whispercpp-build-v4-${{ runner.os }}
+
+      - name: Compiler whisper.cpp (si pas en cache)
+        if: steps.whisper-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
+          cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+            -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
+          cmake --build whisper.cpp/build -j"$(nproc)" --config Release
+          cd whisper.cpp
+          bash models/download-ggml-model.sh small
+          bash models/download-ggml-model.sh large-v3-turbo-q5_0 || echo "modèle turbo indisponible : whisper small sera utilisé"
+
+      - name: Transcription de la voix (par morceaux de 10 min)
+        run: |
+          rm -f content/script.txt content/transcript.json
+          node scripts/transcribe.mjs
+        timeout-minutes: 240
+
+      - name: Plan des scènes (IA par blocs, une seule fois pour tous les formats ; repli sans IA garanti)
+        id: plan
+        env:
+          EXPLAINER_FORMAT: ${{ inputs.format }}
+          EXPLAINER_QUALITY: ${{ inputs.qualite }}
+          EXPLAINER_PAYS: ${{ inputs.pays }}
+          EXPLAINER_TRIGGERS: ${{ inputs.mots_declencheurs }}
+        run: |
+          node scripts/explainer/plan.mjs
+          echo "matrix=$(cat content/matrix.json)" >> "$GITHUB_OUTPUT"
+          cat output/EXPLAINER.md >> "$GITHUB_STEP_SUMMARY"
+        timeout-minutes: 50
+
+      - name: Transmettre le plan et les médias aux machines de rendu
+        uses: actions/upload-artifact@v6
+        with:
+          name: explainer-work
+          path: |
+            content/explainer-*.json
+            content/logo.*
+            content/clips
+            content/transcript.json
+            input/photos
+            input/clips
+            input/voice.wav
+            output/EXPLAINER.md
+          if-no-files-found: error
+          retention-days: 2
+
+  # ------------------------------------------------------------------ 2) rendu des images : une machine par tranche de 4 min, en parallèle
+  render:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        part: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: explainer-work
+
+      - name: Chrome et ffmpeg (préinstallés sur l'image ; installés seulement s'ils manquent)
+        run: |
+          command -v ffmpeg >/dev/null || { for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg && break; sleep 10; done; }
+          ffmpeg -version | head -1
+          for c in /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium /usr/bin/chromium-browser; do [ -x "$c" ] && { echo "Chrome : $c ($($c --version 2>/dev/null || true))"; exit 0; }; done
+          echo "::warning::Chrome absent de l'image : téléchargement"
+          P=$(npx --yes @puppeteer/browsers install chrome@stable --path "$HOME/chrome" | awk '{print $2}' | tail -1)
+          [ -x "$P" ] || { echo "::error::Impossible d'installer Chrome"; exit 1; }
+          echo "CHROME_PATH=$P" >> "$GITHUB_ENV"
+
+      - name: Rendu ${{ matrix.part.format }} — tranche ${{ matrix.part.part }}
+        env:
+          EXPLAINER_F0: ${{ matrix.part.f0 }}
+          EXPLAINER_F1: ${{ matrix.part.f1 }}
+          SPEC: content/explainer-${{ matrix.part.format }}.json
+          PART: parts/${{ matrix.part.format }}-${{ matrix.part.part }}.mp4
+        run: |
+          node scripts/explainer/render.mjs "$SPEC" "$PART" \
+            || { echo "::warning::rendu échoué : nouvel essai avec un seul Chrome"; EXPLAINER_WORKERS=1 node scripts/explainer/render.mjs "$SPEC" "$PART"; }
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: explainer-part-${{ matrix.part.format }}-${{ matrix.part.part }}
+          path: parts/*.mp4
+          if-no-files-found: error
+          retention-days: 2
+
+  # ------------------------------------------------------------------ 3) assemblage, voix + effets sonores, publication
+  assemble:
+    needs: [plan, render]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: ffmpeg
+        run: |
+          command -v ffmpeg >/dev/null || { for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg && break; sleep 10; done; }
+          ffmpeg -version | head -1
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: explainer-work
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: explainer-part-*
+          path: parts
+          merge-multiple: true
+
+      - name: Assembler les tranches, ajouter la voix et les effets sonores
+        env:
+          EXPLAINER_SFX: ${{ inputs.effets_sonores }}
+          MATRIX: ${{ needs.plan.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          mkdir -p output; n=0
+          for f in vertical horizontal; do
+            [ -f "content/explainer-$f.json" ] || continue
+            want=$(jq --arg f "$f" '[.[]|select(.format==$f)]|length' <<<"$MATRIX"); got=$(ls parts/$f-*.mp4 2>/dev/null | wc -l)
+            [ "$got" = "$want" ] || { echo "::error::Format $f : $got tranches rendues sur $want."; exit 1; }
+            ls "$PWD"/parts/$f-*.mp4 | sort | sed "s/^/file '/; s/$/'/" > "parts/$f.txt"   # chemins absolus : ffmpeg lit la liste depuis son dossier
+            ffmpeg -y -v error -f concat -safe 0 -i "parts/$f.txt" -c copy -movflags +faststart "output/video-$f.mp4"
+            node scripts/explainer/mix.mjs input/voice.wav "content/explainer-$f.json" "output/video-$f.mp4" "output/explainer-$f.mp4"
+            rm -f "output/video-$f.mp4" parts/$f-*.mp4; n=$((n + 1))
+          done
+          [ "$n" -ge 1 ] || { echo "::error::Aucune vidéo assemblée."; exit 1; }
+
+      - name: Garder le plan (Artifacts)
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: explainer-plan
+          path: |
+            output/EXPLAINER.md
+            content/explainer-*.json
+            content/transcript.json
+          if-no-files-found: ignore
+          retention-days: 5
+
+      - name: Publier le résultat (remplace le précédent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SRC_TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          STAMP=$(date -u +%Y%m%d-%H%M); FILES=()
+          for f in vertical horizontal; do [ -f "output/explainer-$f.mp4" ] && { mv "output/explainer-$f.mp4" "output/explainer-$f-$STAMP.mp4"; FILES+=("output/explainer-$f-$STAMP.mp4"); }; done
+          [ "${#FILES[@]}" -ge 1 ] || { echo "::error::Aucune vidéo à publier."; exit 1; }
+          for x in "${FILES[@]}"; do [ "$(stat -c %s "$x")" -lt 2000000000 ] || { echo "::error::$(basename "$x") dépasse 2 Go (limite des releases)."; exit 1; }; done
+          { echo "Vidéo générée à partir de la voix « ${SRC_TAG:-lien} » — run [#${{ github.run_number }}](https://github.com/$REPO/actions/runs/${{ github.run_id }})"; echo; head -n 300 output/EXPLAINER.md; } > /tmp/notes.md
+          gh release delete out-explainer --repo "$REPO" -y --cleanup-tag >/dev/null 2>&1 || true
+          ok=0
+          for i in 1 2 3; do
+            gh release create out-explainer --repo "$REPO" --title "🎙️ RÉSULTAT — Voix → Explainer" --notes-file /tmp/notes.md --prerelease --target "${{ github.sha }}" "${FILES[@]}" && ok=1 && break
+            sleep $((i * 15)); gh release delete out-explainer --repo "$REPO" -y --cleanup-tag >/dev/null 2>&1 || true
+          done
+          [ "$ok" = 1 ] || { echo "::error::Publication impossible après 3 essais."; exit 1; }
+          bash scripts/release-status.sh "$SRC_TAG" ok "Vidéo prête : [🎙️ RÉSULTAT — Voix → Explainer](https://github.com/$REPO/releases/tag/out-explainer)" || true
+
+  # ------------------------------------------------------------------ état « ❌ ÉCHEC » sur la release déposée
+  signal-failure:
+    needs: [plan, render, assemble]
+    if: failure() || cancelled()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Signaler l'échec sur la release déposée
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          bash scripts/release-status.sh "${{ needs.plan.outputs.tag }}" fail "Le montage a échoué : [voir le détail](https://github.com/$REPO/actions/runs/${{ github.run_id }}). Tes fichiers sont conservés. Relance possible sans tout refaire : bouton « Re-run failed jobs »." || true
+
+  # 30 min après un run RÉUSSI : les captures, photos et vidéos déposées sont supprimées (la voix reste). Rien n'est supprimé si le run a
+  # échoué, si tu as changé les photos entre-temps, ou si un autre montage est en cours ou en attente.
+  nettoyage:
+    needs: [plan, assemble]
+    if: success() && inputs.nettoyage_medias != 'non' && needs.plan.outputs.photos_tag != '' && needs.plan.outputs.medias != '0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Attendre 30 minutes
+        run: sleep 1800
+      - name: Supprimer les médias déposés
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.photos_tag }}
+          SNAP: ${{ needs.plan.outputs.snapshot }}
+          VOICE_NAME: ${{ needs.plan.outputs.voice_name }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          busy=$(gh run list --repo "$REPO" --workflow voice-to-explainer.yml --limit 20 --json databaseId,status -q "[.[]|select(.status!=\"completed\" and .databaseId!=$RUN_ID)]|length" || echo 1)
+          [ "$busy" = "0" ] || { echo "Un autre montage est en cours ou en attente : médias conservés (il fera son propre nettoyage)."; exit 0; }
+          gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 || { echo "Release $TAG déjà supprimée."; exit 0; }
+          NOW=$(gh release view "$TAG" --repo "$REPO" --json assets -q '[.assets[]|select(.name|test("\\.(jpe?g|png|webp|mp4|mov|mkv|webm|m4v|avi)$";"i"))|"\(.id)"]|sort|join(",")' || echo "?")
+          [ "$NOW" = "$SNAP" ] || { echo "Les médias de $TAG ont changé depuis le montage : rien n'est supprimé."; exit 0; }
+          gh release view "$TAG" --repo "$REPO" --json assets -q '.assets[].name' | grep -Ei '\.(jpe?g|png|webp|mp4|mov|mkv|webm|m4v|avi)$' | while IFS= read -r n; do
+            [ "$n" = "$VOICE_NAME" ] && continue      # la voix n'est jamais supprimée
+            gh release delete-asset "$TAG" "$n" --repo "$REPO" -y && echo "Média supprimé : $n" || echo "::warning::$n non supprimé"
+          done || true
+          left=$(gh release view "$TAG" --repo "$REPO" --json assets -q '.assets|length' || echo 1)
+          if [ "$left" = "0" ]; then gh release delete "$TAG" --repo "$REPO" -y --cleanup-tag && echo "Release $TAG vide : supprimée."; fi

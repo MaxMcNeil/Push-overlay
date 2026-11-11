@@ -53,7 +53,7 @@ async function geminiModels(key) {
   return list;
 }
 
-/** Gemini : renvoie le texte. ctx.audio = part inlineData facultative. */
+/** Gemini : renvoie le texte. ctx.audio = part inlineData facultative ; ctx.parts = autres parts (images) facultatives. */
 export async function callGemini(sys, user, ctx = {}) {
   const keys = rotate(geminiKeys());
   if (!keys.length) throw new Error("aucune clé Gemini");
@@ -82,7 +82,7 @@ export async function callGemini(sys, user, ctx = {}) {
             headers: { "content-type": "application/json", "x-goog-api-key": keys[ki] },
             body: JSON.stringify({
               systemInstruction: { parts: [{ text: sys }] },
-              contents: [{ role: "user", parts: [...(ctx.audio ? [ctx.audio] : []), { text: user }] }],
+              contents: [{ role: "user", parts: [...(ctx.audio ? [ctx.audio] : []), ...(Array.isArray(ctx.parts) ? ctx.parts : []), { text: user }] }],
               generationConfig: { temperature: ctx.temperature ?? 0.7, responseMimeType: ctx.json === false ? "text/plain" : "application/json", maxOutputTokens: ctx.maxTokens || 8192,
                 ...(thinking !== undefined ? { thinkingConfig: { thinkingBudget: thinking } } : {}) },
             }),
