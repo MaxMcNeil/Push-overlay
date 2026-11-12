@@ -162,12 +162,13 @@ jobs:
           path: |
             content/explainer-*.json
             content/logo.*
-            content/clips
             content/transcript.json
             input/photos
             input/clips
             input/voice.wav
             output/EXPLAINER.md
+            output/youtube-metadata.txt
+            output/youtube.json
           if-no-files-found: error
           retention-days: 2
 
@@ -287,6 +288,8 @@ jobs:
           STAMP=$(date -u +%Y%m%d-%H%M); FILES=()
           for f in vertical horizontal; do [ -f "output/explainer-$f.mp4" ] && { mv "output/explainer-$f.mp4" "output/explainer-$f-$STAMP.mp4"; FILES+=("output/explainer-$f-$STAMP.mp4"); }; done
           [ "${#FILES[@]}" -ge 1 ] || { echo "::error::Aucune vidéo à publier."; exit 1; }
+          # fiche YouTube (titre, description, tags, hashtags) : jointe au résultat — le workflow du live la reprend telle quelle
+          [ -s output/youtube-metadata.txt ] && FILES+=("output/youtube-metadata.txt") || echo "::warning::Fiche YouTube absente : le live gardera son titre habituel."
           for x in "${FILES[@]}"; do [ "$(stat -c %s "$x")" -lt 2000000000 ] || { echo "::error::$(basename "$x") dépasse 2 Go (limite des releases)."; exit 1; }; done
           { echo "Vidéo générée à partir de la voix « ${SRC_TAG:-lien} » — run [#${{ github.run_number }}](https://github.com/$REPO/actions/runs/${{ github.run_id }})"; echo; head -n 300 output/EXPLAINER.md; } > /tmp/notes.md
           gh release delete out-explainer --repo "$REPO" -y --cleanup-tag >/dev/null 2>&1 || true

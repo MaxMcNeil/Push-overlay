@@ -4,7 +4,7 @@
 // Plusieurs Chrome en parallèle (un par cœur), chacun sa tranche ; une tranche qui échoue est refaite seule.
 //   node scripts/explainer/render.mjs [spec.json] [sortie.mp4]
 import { spawn, execFileSync } from "child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, statSync, mkdtempSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, statSync, mkdtempSync, readdirSync } from "fs";
 import os from "os";
 import path from "path";
 import { pathToFileURL } from "url";
@@ -89,8 +89,31 @@ const url = (p) => (p && !/^[a-z][a-z0-9+.-]*:/i.test(p) ? pathToFileURL(path.re
 export function localize(spec) {
   const s = JSON.parse(JSON.stringify(spec)); s.logo = url(s.logo);
   for (const sc of s.scenes) { const d = sc.data || {}; if (d.photo) d.photo = url(d.photo); if (d.image) d.image = url(d.image);
-    for (const m of d.media || []) { if (m.image) m.image = url(m.image); if (m.dir) m.dir = url(m.dir); } }
+    for (const m of d.media || []) { if (m.image) m.image = url(m.image); if (m.dir) { m._dir = m.dir; m.dir = url(m.dir); } } }
   return s;
+}
+// Images des vidéos à monter : extraites ici, une seule fois, uniquement pour les vidéos visibles dans la tranche rendue.
+// L'image exacte de chaque instant est ensuite affichée par le gabarit (synchro parfaite, rendu identique d'une machine à l'autre).
+export function ensureFrames(spec) {
+  const seen = new Map();
+  for (const sc of spec.scenes) for (const m of (sc.data && sc.data.media) || []) {
+    if (m.kind !== "vid" || !m.src) continue;
+    if (!seen.has(m.src)) {
+      const out = path.resolve(m._dir);
+      let n = existsSync(out) ? readdirSync(out).filter((x) => x.endsWith(".jpg")).length : 0;
+      if (!n) {
+        if (!existsSync(m.src)) throw new Error(`vidéo absente : ${m.src}`);
+        rmSync(out, { recursive: true, force: true }); mkdirSync(out, { recursive: true });
+        const side = m.side || 960;
+        execFileSync("ffmpeg", ["-y", "-v", "error", "-i", m.src, "-t", String(m.max || 20), "-an", "-vf", `fps=30,scale='if(gte(iw,ih),min(${side},iw),-2)':'if(gte(iw,ih),-2,min(${side},ih))'`, "-q:v", "4", path.join(out, "%05d.jpg")], { stdio: ["ignore", "ignore", "inherit"] });
+        n = readdirSync(out).filter((x) => x.endsWith(".jpg")).length;
+        if (!n) throw new Error(`aucune image extraite de ${m.src}`);
+        console.log(`  vidéo ${path.basename(m.src)} : ${n} images extraites`);
+      }
+      seen.set(m.src, n);
+    }
+    m.n = seen.get(m.src);
+  }
 }
 // seules les scènes visibles dans la tranche sont chargées (une vidéo d'une heure a des centaines de scènes)
 const slice = (spec, f0, f1) => ({ ...spec, scenes: spec.scenes.filter((sc) => sc.t1 > f0 / spec.fps - 1.5 && sc.t0 < f1 / spec.fps + 1.5) });
@@ -112,6 +135,7 @@ export async function render(raw, out, F0 = 0, F1 = Infinity) {
   mkdirSync(path.dirname(out), { recursive: true });
   const spec = localize(raw), fps = spec.fps, ALL = Math.max(1, Math.round(spec.duration * fps));
   const A = Math.max(0, Math.min(ALL - 1, Math.round(F0) || 0)), B = Math.max(A + 1, Math.min(ALL, isFinite(F1) ? Math.round(F1) : ALL)), N = B - A;
+  ensureFrames(slice(spec, A, B));
   const n = Math.min(WORKERS, Math.max(1, Math.floor(N / (fps * 4))));     // pas de tranche plus courte que 4 s
   const tmp = mkdtempSync(path.join(os.tmpdir(), "expl-parts-"));
   const t0 = Date.now(); let done = 0, lastLog = 0, info = null;
@@ -140,7 +164,7 @@ export async function render(raw, out, F0 = 0, F1 = Infinity) {
 
 /** Une seule image (aperçus, tests). */
 export async function still(raw, times, dir) {
-  mkdirSync(dir, { recursive: true }); const spec = localize(raw);
+  mkdirSync(dir, { recursive: true }); const spec = localize(raw); ensureFrames(spec);
   const ch = new Chrome();
   try {
     await ch.start(spec.w, spec.h); const info = await ch.open(spec);

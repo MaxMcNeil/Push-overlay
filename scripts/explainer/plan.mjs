@@ -13,7 +13,7 @@ import { pathToFileURL } from "url";
 const rel = (f) => path.relative(process.cwd(), path.resolve(f)).split(path.sep).join("/");
 import { providers, parseJson } from "../lib/llm.mjs";
 import { channelFor } from "../lib/channel.mjs";
-import { detectTheme, sceneAccent, countryChip, countMentions, CODES, THEMES } from "../lib/gulf-themes.mjs";
+import { detectTheme, sceneAccent, countryChip, countMentions, CODES, THEMES, COUNTRIES } from "../lib/gulf-themes.mjs";
 
 const IN = process.env.EXPLAINER_TRANSCRIPT || "content/transcript.json";
 const OUT = process.env.EXPLAINER_SPEC || "content/explainer.json";
@@ -71,6 +71,51 @@ function sane(words, duration) {
 }
 
 // ---------- IA ----------
+// ---------- fiche YouTube (titre, description, tags, hashtags) ----------
+const YT_SHAPE = `{"title":"...","description":"...","tags":["..."],"hashtags":["#..."]}`;
+const ytRules = (lang) => `RÈGLES DE LA FICHE YOUTUBE (langue : ${pick(L.langName, lang)})
+- "title" : 45 à 70 caractères, provocateur et original : il crée une tension ou une question à laquelle on veut la réponse, avec le nom ou le pays clé dans les premiers mots. Fidèle à ce qui est DIT : aucune promesse que la vidéo ne tient pas, aucun fait inventé. Pas d'emoji, pas de MAJUSCULES en bloc, pas de guillemets.
+- "description" : 120 à 200 mots. Les deux premières phrases reprennent les mots-clés principaux (elles s'affichent dans la recherche). Puis 3 à 5 points clés de la vidéo, un par ligne commençant par « - ». Puis une phrase qui invite à s'abonner et à commenter. Aucun emoji, aucun lien, aucun hashtag ni liste de mots-clés dans ce champ.
+- "tags" : 15 à 20 mots-clés de recherche (1 à 4 mots chacun) : sujets, pays, villes, personnes et organisations CITÉS, plus leurs écritures en anglais quand la voix est en arabe. Sans # et sans virgule à l'intérieur.
+- "hashtags" : 5 à 8 hashtags sans espace, du plus précis au plus général.`;
+const cleanMulti = (s, max) => String(s ?? "").replace(EMOJI, "").replace(/<[^>\n]{0,40}>/g, "").replace(/[<>`]/g, "").replace(/\r/g, "").split("\n").map((l) => l.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/[ \t]+/g, " ").trim()).join("\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, max);
+const cutChars = (s, n) => { const t = clean(s, 400).replace(/["«»“”]/g, "").trim(); if (t.length <= n) return t; const c = t.slice(0, n + 1); return c.slice(0, Math.max(c.lastIndexOf(" "), Math.floor(n * 0.6))).replace(/[\s,،;:.\-–]+$/, "") + "…"; };
+/** Fiche finale, toujours valide pour YouTube (titre ≤ 100 caractères, description ≤ 5000) — avec ou sans IA. */
+export function youtubeMeta(raw, { sents, scenes, lang, countries, channel }) {
+  let r = raw && typeof raw === "object" ? raw : {};
+  // une fiche écrite dans une autre langue que la voix est refusée en bloc (titre arabe attendu pour une voix arabe, et inversement)
+  const arab = (t) => (String(t).match(/[\u0600-\u06FF]/g) || []).length / Math.max(1, (String(t).match(/\p{L}/gu) || []).length);
+  if (typeof r.title === "string" && r.title.trim() && ((lang === "ar" && arab(r.title) < 0.4) || (lang !== "ar" && arab(r.title) > 0.4))) r = {};
+  const hook = scenes.find((x) => x.type === "hook")?.data?.title || sents[0]?.text || "";
+  const title = cutChars(r.title, 95) || cutChars(hook, 95) || channel || "Gulf think-tank";
+  let body = cleanMulti(r.description, 3200);
+  if (body.length < 60) {            // sans IA : les premières phrases prononcées + les titres des scènes
+    const pts = [...new Set(scenes.filter((x) => !["hook", "outro"].includes(x.type) && !x.big).map((x) => clean(x.data.title || x.data.label || "", 90)).filter(Boolean))].slice(0, 5);
+    body = [sents.slice(0, 3).map((x) => x.text).join(" ").slice(0, 600), pts.length ? pts.map((x) => `- ${x}`).join("\n") : ""].filter(Boolean).join("\n\n");
+  }
+  const names = countries.flatMap((c) => [COUNTRIES[c].name[lang] || COUNTRIES[c].name.en, COUNTRIES[c].name.en]);
+  const baseTags = [...names, ...(countries.length ? [lang === "ar" ? "الخليج العربي" : "Golfe", "GCC", "Gulf"] : []), channel].filter(Boolean);
+  const tags = [...new Set([...(Array.isArray(r.tags) ? r.tags : []).map((x) => clean(x, 40).replace(/[#,،]/g, " ").replace(/\s+/g, " ").trim()), ...baseTags].filter((x) => x && x.length >= 2))].slice(0, 22);
+  const tagify = (x) => "#" + clean(x, 40).replace(/^#+/, "").replace(/[^\p{L}\p{N}_ ]/gu, "").trim().replace(/\s+/g, "_");
+  const hashtags = [...new Set([...(Array.isArray(r.hashtags) ? r.hashtags : []), ...names.slice(0, 4), channel.replace(/[- ]+/g, "")].filter(Boolean).map(tagify).filter((x) => x.length >= 3 && x.length <= 40))]
+    .filter((x, i, a) => a.findIndex((y) => y.toLowerCase().replace(/_/g, "") === x.toLowerCase().replace(/_/g, "")) === i).slice(0, 8);
+  const description = [body, tags.join(", "), hashtags.join(" ")].filter(Boolean).join("\n\n").slice(0, 4800);
+  return { title, description, tags, hashtags, ai: !!(r.title && r.description) };
+}
+/** Voix longue (plusieurs blocs) ou fiche absente de la réponse : UN petit appel à part, sur les titres des scènes. */
+async function askYoutube(sents, scenes, lang, list = providers()) {
+  if (!list.length || process.env.EXPLAINER_NO_LLM === "1") return null;
+  const titles = scenes.filter((x) => !["outro"].includes(x.type) && !x.big).map((x) => clean(x.data.title || x.data.quote || x.data.label || [x.data.a, x.data.b].filter(Boolean).join(" / "), 90)).filter(Boolean);
+  const step = Math.max(1, Math.ceil(titles.length / 140));
+  const user = `Début de la voix off :\n${sents.slice(0, 14).map((x) => x.text).join(" ").slice(0, 1800)}\n\nFil de la vidéo (titres des scènes, dans l'ordre) :\n${titles.filter((_, i) => i % step === 0).map((x) => `- ${x}`).join("\n")}\n\nFin de la voix off :\n${sents.slice(-5).map((x) => x.text).join(" ").slice(0, 700)}`;
+  const sys = `Tu es le rédacteur YouTube d'une chaîne d'analyse géopolitique. Réponds UNIQUEMENT par un objet JSON ${YT_SHAPE}.\n${ytRules(lang)}`;
+  for (const [name, fn] of list) {
+    try { const j = parseJson(await fn(sys, user, { temperature: 0.8, maxTokens: 3000, deadline: Date.now() + 120000, timeoutMs: 100000 })); if (j && j.title && j.description) { console.log(`  fiche YouTube écrite par ${name}`); return j; } }
+    catch (e) { console.log(`  fiche YouTube — ${name} : ${String(e.message).slice(0, 120)}`); }
+  }
+  return null;
+}
+
 function prompt(sents, lang, th, dur, first = true, nBlocks = 1) {
   const sys = `Tu es directeur artistique d'une chaîne d'analyse géopolitique sur les pays du Golfe. Tu transformes une voix off en une suite de scènes animées élégantes (style documentaire haut de gamme) pour un public de 50 ans et plus : lisible, sobre, captivant.
 Réponds UNIQUEMENT par un objet JSON {"scenes":[...]}.
@@ -92,7 +137,8 @@ TYPES et champs
 - "list" : 2 à 4 éléments cités. kicker, title, items:[{name,role}]
 - "versus" : deux acteurs/idées. kicker, a, a_sub, b, b_sub, relation ("vs" opposition, "arrow" l'un mène à l'autre, "+" alliance), sub
 - "countries" : quand plusieurs pays du Golfe sont cités ensemble. kicker, title, codes:[codes pays]`;
-  const user = `Durée totale : ${dur.toFixed(1)} s${nBlocks > 1 ? ` (extrait : phrases ${sents[0].i} à ${sents[sents.length - 1].i} ; garde ces numéros)` : ""}. Palette détectée : ${th.code} (${th.why}).
+  const yt = nBlocks === 1 ? `\nAJOUTE dans le même objet JSON la fiche YouTube : "youtube":${YT_SHAPE}\n${ytRules(lang)}` : "";
+  const user = `${yt ? yt + "\n\n" : ""}Durée totale : ${dur.toFixed(1)} s${nBlocks > 1 ? ` (extrait : phrases ${sents[0].i} à ${sents[sents.length - 1].i} ; garde ces numéros)` : ""}. Palette détectée : ${th.code} (${th.why}).
 Phrases (numéro | début→fin en secondes | texte) :
 ${sents.map((s) => `${s.i} | ${s.t0.toFixed(1)}→${s.t1.toFixed(1)} | ${s.text}`).join("\n")}`;
   return { sys, user };
@@ -116,8 +162,10 @@ export async function askLLM(sents, lang, th, dur, list = providers()) {
       const part = []; let fail = false;
       for (let k = 0; k < subs.length && !fail; k++) {
         const { sys, user } = prompt(subs[k], lang, th, dur, b === 0 && k === 0, blocks.length + subs.length - 1);
+        // la fiche YouTube est demandée avec le plan seulement quand toute la voix tient dans cet appel
         try {
           const j = parseJson(await fn(sys, user, { temperature: 0.6, maxTokens: 16000, deadline: Math.min(deadline, Date.now() + 200000), timeoutMs: 150000 }));
+          if (j && j.youtube && typeof j.youtube === "object" && !out.youtube) out.youtube = j.youtube;
           if (j && Array.isArray(j.scenes) && j.scenes.length) part.push(...j.scenes); else { console.log(`  ${name} : réponse inutilisable`); fail = true; }
         } catch (e) { console.log(`  ${name} : ${String(e.message).slice(0, 160)}`); fail = true; }
       }
@@ -267,14 +315,12 @@ function listMedia() {
   const vids = ls(["input/clips", "content/clips-src"], /\.(mp4|mov|mkv|webm|m4v|avi)$/i).map((file) => ({ kind: "vid", file, p: probe(file) })).filter((x) => x.p && x.p.dur >= 0.5);
   return { imgs, vids };
 }
-/** Images d'une vidéo extraites en JPEG (le gabarit affiche l'image exacte de chaque instant : synchro parfaite). */
-function extractFrames(v, idx, maxDur, side) {
-  const dir = path.resolve("content/clips", String(idx).padStart(2, "0")); rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
-  const dur = Math.min(v.p.dur, maxDur);
-  execFileSync("ffmpeg", ["-y", "-v", "error", "-i", v.file, "-t", dur.toFixed(3), "-an", "-vf", `fps=30,scale='if(gte(iw,ih),min(${side},iw),-2)':'if(gte(iw,ih),-2,min(${side},ih))'`, "-q:v", "4", path.join(dir, "%05d.jpg")], { stdio: ["ignore", "ignore", "inherit"] });
-  const n = readdirSync(dir).filter((x) => x.endsWith(".jpg")).length;
-  if (!n) throw new Error("aucune image extraite");
-  return { dir: rel(dir), n, fps: 30, dur: n / 30 };
+/** Une vidéo à monter : on vérifie ici qu'elle se décode vraiment, mais ses images ne sont extraites qu'au moment du rendu,
+ *  sur la machine qui en a besoin (le plan transmis reste léger, même avec 20 vidéos). */
+function clipInfo(v, idx, maxDur, side) {
+  execFileSync("ffmpeg", ["-v", "error", "-xerror", "-i", v.file, "-t", "1.5", "-an", "-f", "null", "-"], { stdio: ["ignore", "ignore", "pipe"], timeout: 120000 });
+  const dur = Math.min(v.p.dur, maxDur), n = Math.max(1, Math.floor(dur * 30));
+  return { src: rel(v.file), dir: `content/clips/${String(idx).padStart(2, "0")}`, max: Number(dur.toFixed(3)), side, n, fps: 30, dur: n / 30 };
 }
 const thumb = (file, at = 0) => execFileSync("ffmpeg", ["-v", "error", ...(at ? ["-ss", at.toFixed(2)] : []), "-i", file, "-vf", "scale='min(640,iw)':'min(640,ih)':force_original_aspect_ratio=decrease", "-frames:v", "1", "-q:v", "7", "-f", "mjpeg", "-"], { maxBuffer: 1 << 24 });
 
@@ -345,7 +391,7 @@ export function placeMedia(scenes, items) {
     const s = scenes[i], d = s.data, first = list[0];
     const title = d.title || d.label || d.quote || [d.a, d.b].filter(Boolean).join(" · ") || first.caption;
     if (list.length === 1 && first.kind === "img" && first.photo && !first.crop) { s.type = "photo"; s.data = { kicker: d.kicker, context: d.context, source: first.caption || d.source, title: cutWords(title, 11), highlight: d.highlight, photo: rel(first.file) }; }
-    else { s.type = "shot"; s.data = { kicker: d.kicker, context: d.context, source: first.caption || d.source, title: cutWords(title, 11), highlight: d.highlight, media: list.map(mediaData) }; }
+    else { s.type = "shot"; s.data = { kicker: d.kicker, context: d.context, source: first.caption || d.source, title: cutWords(title, 14), highlight: d.highlight, media: list.map(mediaData) }; }
     used += list.length;
   }
   return used;
@@ -400,7 +446,7 @@ async function main() {
   const inserts = [], broll = [];
   vids.forEach((v, k) => {
     const heard = k < trig.length;
-    try { v.frames = extractFrames(v, k + 1, heard ? CLIP_MAX : 20, side); } catch (e) { notes.push(`⚠ vidéo illisible ignorée : ${path.basename(v.file)}`); return; }
+    try { v.frames = clipInfo(v, k + 1, heard ? CLIP_MAX : 20, side); } catch (e) { notes.push(`⚠ vidéo illisible ignorée : ${path.basename(v.file)}`); return; }
     if (heard) { const sn = sents[trig[k]], nx = sents[trig[k] + 1]; inserts.push({ vt: nx ? (sn.t1 + nx.t0) / 2 : duration, dur: v.frames.dur, media: mediaData(v), file: rel(v.file), audio: v.p.audio });
       if (v.p.dur > CLIP_MAX + 0.5) notes.push(`⚠ ${path.basename(v.file)} : ${v.p.dur.toFixed(0)} s, joué ${CLIP_MAX} s (coupe la vidéo avant de la déposer pour choisir le passage)`); }
     else broll.push(v);
@@ -449,7 +495,14 @@ async function main() {
   }
   writeFileSync(OUT, JSON.stringify(spec, null, 1));
   writeFileSync("content/matrix.json", JSON.stringify(matrix));
-  const md = [`# Faceless live arabic — plan`, ``, `- Durée voix : ${duration.toFixed(1)} s · langue : ${lang} · format : ${formats.join(" + ")} (${base}p)`, `- Palette : **${th.code}** — ${th.why}`, `- Chaîne / logo : ${ch.why || "—"}`,
+  // fiche YouTube : reprise du plan (0 appel de plus) ou un petit appel à part ; sans IA, fiche tirée de la voix elle-même
+  let ytRaw = raw && raw.youtube ? raw.youtube : null;
+  if (!ytRaw || !ytRaw.title || !ytRaw.description) ytRaw = (await askYoutube(sents, scenes, lang)) || ytRaw;
+  const yt = youtubeMeta(ytRaw, { sents, scenes, lang, countries: th.countries, channel: ch.nom || "" });
+  mkdirSync("output", { recursive: true });
+  writeFileSync("output/youtube-metadata.txt", `Titre: ${yt.title}\nDescription :\n${yt.description}\n`);
+  writeFileSync("output/youtube.json", JSON.stringify(yt, null, 1));
+  const md = [`# Faceless live arabic — plan`, ``, `## Fiche YouTube${yt.ai ? "" : " (écrite sans IA : à relire)"}`, ``, `**Titre** : ${yt.title}`, ``, "```", yt.description, "```", ``, `## Montage`, ``, `- Durée voix : ${duration.toFixed(1)} s · langue : ${lang} · format : ${formats.join(" + ")} (${base}p)`, `- Palette : **${th.code}** — ${th.why}`, `- Chaîne / logo : ${ch.why || "—"}`,
     `- Écriture : ${raw ? "IA" : "sans IA (phrases prononcées affichées telles quelles)"} `,
     `- Médias : ${imgs.length} capture(s)/photo(s) + ${broll.length} vidéo(s) d'illustration → **${placed}/${items.length} insérés**${imgs.some((x) => x.crop) ? ` (${imgs.filter((x) => x.crop).length} recadrés par l'IA)` : ""} · ${cuts.length} vidéo(s) à écouter insérée(s) sur mot déclencheur`, ...notes.map((n) => `- ${n}`), ``, `| # | début | durée | type | pays | texte |`, `|---|---|---|---|---|---|`,
     ...scenes.map((s, i) => `| ${i + 1} | ${s.t0.toFixed(1)} s | ${(s.t1 - s.t0).toFixed(1)} s | ${s.type}${s.data.media ? ` ×${s.data.media.length}` : ""}${s.offset ? " (suite)" : ""} | ${s.country || ""} | ${(s.big ? `▶ vidéo à écouter (${path.basename(cuts.find((c) => Math.abs(c.at - s.t0) < 0.01)?.file || "")})` : s.data.title || s.data.quote || s.data.label || [s.data.a, s.data.b].filter(Boolean).join(" / ") || (s.data.items || []).map((x) => x.date || x.name).join(" · ")).replace(/\|/g, "/")} |`)].join("\n");

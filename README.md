@@ -214,6 +214,12 @@ chiffres, frises, listes, face-à-face, carte de fin — sans musique, **sans au
 **Résultat** : release **🎙️ RÉSULTAT — Faceless live arabic** (`out-explainer`, remplace la précédente) + le plan scène par scène
 (`EXPLAINER.md`). Logo : règle habituelle (chaîne de la langue de la voix, sinon aucun).
 
+**Fiche YouTube** : le workflow écrit aussi le **titre** (provocateur, fidèle à la voix), la **description**, les **tags**
+(séparés par des virgules, dans la description) et les **hashtags** → fichier `youtube-metadata.txt` joint au résultat et
+affiché en tête du plan. Écrite dans le même appel IA que le plan quand la voix est courte, sinon un seul petit appel de
+plus. Le workflow `Prerecorded_Live_Now` de liveYOUTUBE-AUTO la met directement sur le direct. Pour la corriger avant le
+live : remplace le fichier dans la release `out-explainer` (même nom, lignes `Titre:` puis `Description :`).
+
 **Sécurités** : rien n'est affiché qui ne soit dit dans la voix (un chiffre ou une date absents de la transcription sont
 refusés) ; sans IA disponible, les phrases prononcées s'affichent mot pour mot (le montage sort toujours) ; un texte trop
 long est réduit automatiquement, jamais coupé hors de l'écran ; une tranche de rendu qui échoue est refaite seule.
