@@ -1,6 +1,5 @@
 {
   "ar": [
-    "candy",
     "emerald",
     "crimson",
     "mono-gold",
@@ -11,7 +10,8 @@
     "emerald",
     "royal",
     "sunset",
-    "neon-night"
+    "neon-night",
+    "emerald"
   ],
   "fr": [
     "royal",
