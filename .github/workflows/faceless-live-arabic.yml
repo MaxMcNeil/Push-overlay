@@ -15,10 +15,10 @@ on:
         required: false
         default: ""
       format:
-        description: "Format (les deux = une seule transcription et un seul plan IA pour les deux vidéos)"
+        description: "Format — les deux (défaut) : verticale pour le direct, horizontale pour la première YouTube ; une seule transcription et un seul plan IA"
         type: choice
-        options: [vertical, horizontal, les deux]
-        default: vertical
+        options: [les deux, vertical, horizontal]
+        default: les deux
       qualite:
         description: "Qualité (4K = rendu environ 4 fois plus long)"
         type: choice
