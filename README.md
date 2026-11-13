@@ -189,7 +189,7 @@ Prérequis : `ffmpeg` (avec libass), Node 20, Python 3 + Pillow, polices Poppins
 Tu donnes **seulement ta voix** ; le workflow fabrique une vidéo « explainer » haut de gamme : accroche, titres, citations,
 chiffres, frises, listes, face-à-face, carte de fin — sans musique, **sans aucun emoji**, textes grands et lisibles.
 
-**Déposer** : *Releases → Draft a new release* → tag qui commence par **`voix`** (ex. `voix-001`) → joins :
+**Déposer** : *Releases → Draft a new release* → **n'importe quel tag** → joins :
 - **la voix** — **n'importe quel nom**, le workflow la reconnaît : fichier son (mp3, m4a, wav, ogg, opus…) en priorité, sinon
   la vidéo à image fixe ou la plus longue (un enregistrement d'écran de téléphone n'est jamais pris pour ta voix). Le choix
   et sa raison sont notés en tête d'`EXPLAINER.md` (avertissement s'il n'est pas net). Les **autres fichiers son**
@@ -241,7 +241,7 @@ OSINT-teleprompter). IA : Groq (jamais la clé Gemini pour la recherche). Une re
 
 | Champ | Rôle |
 |---|---|
-| `source` | tag de la release (vide = la dernière `voix…`) ou lien Google Drive du fichier voix |
+| `source` | tag de la release, ou lien Google Drive (vide = ta release la plus récente avec un son ou une vidéo, **quel que soit son nom**) |
 | `format` | **les deux** (défaut : verticale pour le direct, horizontale pour YouTube), vertical ou horizontal — une seule transcription et un seul passage IA |
 | `qualite` | 1080, 1440 ou 2160 (4K, environ 4 fois plus long) |
 | `pays` | `auto` : un seul pays du Golfe dans la voix → ses couleurs (sa, ae, qa, kw, om, bh) ; plusieurs → palette Golfe bleu nuit + or. Une scène consacrée à un pays prend ses accents |

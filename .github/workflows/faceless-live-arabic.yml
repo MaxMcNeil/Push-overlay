@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       source:
-        description: "Tag de la release qui contient la voix, ou lien Google Drive (vide = dernière release « voix… »)"
+        description: "Tag de la release qui contient ta voix, ou lien Google Drive (vide = ta release la plus récente avec un son ou une vidéo, quel que soit son nom)"
         required: false
         default: ""
       format:
@@ -125,7 +125,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
-          S=$(gh release view "${{ steps.src.outputs.photos_tag }}" --repo "$REPO" --json assets -q '[.assets[]|select(.name|test("\\.(jpe?g|png|webp|mp4|mov|mkv|webm|m4v|avi)$";"i"))|"\(.id)"]|sort|join(",")' || true)
+          S=$(gh release view "${{ steps.src.outputs.photos_tag }}" --repo "$REPO" --json assets -q '[.assets[]|select(.name|test("\\.(jpe?g|jfif|png|webp|avif|heic|heif|gif|bmp|tiff?|mp4|mov|mkv|webm|m4v|avi|3gp|mp3|m4a|wav|ogg|opus|aac|flac)$";"i"))|"\(.id)"]|sort|join(",")' || true)
           echo "snapshot=$S" >> "$GITHUB_OUTPUT"
 
       - name: Cache whisper.cpp (repli si Groq indisponible)
@@ -397,9 +397,9 @@ jobs:
           busy=$(gh run list --repo "$REPO" --workflow faceless-live-arabic.yml --limit 20 --json databaseId,status -q "[.[]|select(.status!=\"completed\" and .databaseId!=$RUN_ID)]|length" || echo 1)
           [ "$busy" = "0" ] || { echo "Un autre montage est en cours ou en attente : médias conservés (il fera son propre nettoyage)."; exit 0; }
           gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 || { echo "Release $TAG déjà supprimée."; exit 0; }
-          NOW=$(gh release view "$TAG" --repo "$REPO" --json assets -q '[.assets[]|select(.name|test("\\.(jpe?g|png|webp|mp4|mov|mkv|webm|m4v|avi)$";"i"))|"\(.id)"]|sort|join(",")' || echo "?")
+          NOW=$(gh release view "$TAG" --repo "$REPO" --json assets -q '[.assets[]|select(.name|test("\\.(jpe?g|jfif|png|webp|avif|heic|heif|gif|bmp|tiff?|mp4|mov|mkv|webm|m4v|avi|3gp|mp3|m4a|wav|ogg|opus|aac|flac)$";"i"))|"\(.id)"]|sort|join(",")' || echo "?")
           [ "$NOW" = "$SNAP" ] || { echo "Les médias de $TAG ont changé depuis le montage : rien n'est supprimé."; exit 0; }
-          gh release view "$TAG" --repo "$REPO" --json assets -q '.assets[].name' | grep -Ei '\.(jpe?g|png|webp|mp4|mov|mkv|webm|m4v|avi)$' | while IFS= read -r n; do
+          gh release view "$TAG" --repo "$REPO" --json assets -q '.assets[].name' | grep -Ei '\.(jpe?g|jfif|png|webp|avif|heic|heif|gif|bmp|tiff?|mp4|mov|mkv|webm|m4v|avi|3gp|mp3|m4a|wav|ogg|opus|aac|flac)$' | while IFS= read -r n; do
             [ "$n" = "$VOICE_NAME" ] && continue      # la voix n'est jamais supprimée
             gh release delete-asset "$TAG" "$n" --repo "$REPO" -y && echo "Média supprimé : $n" || echo "::warning::$n non supprimé"
           done || true

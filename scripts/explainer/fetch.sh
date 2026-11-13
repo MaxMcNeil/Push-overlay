@@ -10,7 +10,7 @@ set -euo pipefail
 out() { echo "$1=$2" >> "${GITHUB_OUTPUT:-/dev/null}"; }
 die() { echo "::error::$*"; exit 1; }
 AUDIO_RE='\.(mp3|m4a|wav|ogg|oga|opus|aac|flac|wma|amr|3gp|mp4|mov|mkv|webm|m4v)$'
-IMG_RE='\.(jpe?g|png|webp)$'
+IMG_RE='\.(jpe?g|jfif|png|webp|avif|heic|heif|gif|bmp|tiff?)$'   # formats d'images du web et des téléphones
 rm -rf input/raw input/photos input/clips input/voice.* input/video.*; mkdir -p input/raw input/photos
 
 drive_id() { local u="$1"
@@ -28,7 +28,16 @@ from_drive() { local id; id=$(drive_id "$1")
   pip install -q --break-system-packages gdown 2>/dev/null || pip install -q gdown
   (cd input/raw && gdown -q "https://drive.google.com/uc?id=$id") || die "Téléchargement Google Drive refusé : partage le fichier « Tous les utilisateurs disposant du lien → Lecteur »."
 }
-latest_voice_tag() { gh release list --repo "$REPO" --limit 60 --json tagName,createdAt -q 'sort_by(.createdAt)|reverse|.[].tagName' | grep -Ei '^(voix|voice|audio)' | head -n1 || true; }
+# Champ « source » vide : la release la plus récemment TOUCHÉE (créée, ou fichier ajouté) qui contient un son ou une vidéo,
+# quel que soit son nom. Les releases de RÉSULTATS (out-…, renders) ne comptent jamais.
+latest_voice_tag() {
+  gh api "repos/$REPO/releases?per_page=50" -q '
+    [ .[] | select(.draft|not)
+      | select(.tag_name | test("^(out-|renders$)"; "i") | not)
+      | select([.assets[].name | test("\\.(mp3|m4a|wav|ogg|oga|opus|aac|flac|wma|amr|weba|mp4|mov|mkv|webm|m4v|avi|3gp)$"; "i")] | any)
+      | { tag: .tag_name, t: ([.published_at, .created_at] + [.assets[] | .updated_at, .created_at] | map(select(. != null)) | max) } ]
+    | sort_by(.t) | reverse | .[0].tag // empty' 2>/dev/null || true
+}
 from_release() { local tag="$1"
   gh release view "$tag" --repo "$REPO" >/dev/null 2>&1 || die "Release « $tag » introuvable. Vérifie le tag (Releases → le texte à côté de l'icône d'étiquette)."
   out tag "$tag"; SRC_TAG="$tag"
@@ -44,7 +53,7 @@ from_release() { local tag="$1"
 }
 
 SRC="$(echo "${SOURCE:-}" | xargs || true)"; SRC_TAG=""
-if [ -z "$SRC" ]; then SRC=$(latest_voice_tag); [ -n "$SRC" ] || die "Aucune source : remplis le champ « source » (tag de release ou lien Google Drive), ou crée une release dont le tag commence par « voix »."; echo "Source automatique : release $SRC"; fi
+if [ -z "$SRC" ]; then SRC=$(latest_voice_tag); [ -n "$SRC" ] || die "Aucune source : aucune release avec un son ou une vidéo. Dépose ta voix dans une release (n'importe quel nom), ou remplis le champ « source »."; echo "Source automatique : release « $SRC » (la dernière où tu as déposé un son ou une vidéo)"; echo "::notice::Source utilisée : release « $SRC » (la plus récente avec un son ou une vidéo). Pour en choisir une autre : champ « source »."; fi
 case "$SRC" in
   *drive.google.com*|*docs.google.com*) from_drive "$SRC" ;;
   http://*|https://*) curl -sSL --fail --retry 3 --max-time 1800 -o "input/raw/voice-$(basename "${SRC%%\?*}")" "$SRC" || die "Téléchargement impossible : $SRC" ;;
@@ -62,7 +71,7 @@ elif [ -n "$SRC_TAG" ]; then out photos_tag "$SRC_TAG"; fi
 # --- la voix : DÉTECTÉE, aucun nom imposé (scripts/explainer/pick-voice.mjs) : fichier son > vidéo à image fixe > la plus
 #     longue ; un enregistrement d'écran de téléphone est un extrait. Les AUTRES vidéos sont des extraits à monter
 #     (input/clips) ; les autres fichiers SON deviennent aussi des extraits (à faire écouter avec « اسمعوا »).
-mapfile -t CAND < <(find input/raw -maxdepth 1 -type f ! -iregex ".*\.\(jpe?g\|png\|webp\|txt\|md\|json\|pdf\)$" | sort)
+mapfile -t CAND < <(find input/raw -maxdepth 1 -type f ! -iregex ".*\.\(jpe?g\|jfif\|png\|webp\|avif\|heic\|heif\|gif\|bmp\|tiff?\|txt\|md\|json\|pdf\)$" | sort)
 [ "${#CAND[@]}" -gt 0 ] || die "Aucun fichier audio ou vidéo dans la release : dépose ta voix (mp3, m4a, wav, ou une vidéo)."
 PICK=$(node scripts/explainer/pick-voice.mjs "${CAND[@]}") || die "Détection de la voix impossible (fichiers illisibles ?)."
 VOICE=$(node -e 'const j=JSON.parse(process.argv[1]);process.stdout.write(j.voice||"")' "$PICK")
@@ -76,7 +85,7 @@ else echo "::warning::Voix choisie sans certitude : $WHY — si ce n'est pas ta 
   printf '⚠ Voix choisie SANS CERTITUDE : %s — si ce n'"'"'est pas ta voix, dépose-la en fichier son (mp3/m4a) ou seule dans la release.\n' "$WHY" > input/voice-choice.txt; fi
 out voice_name "$(basename "$VOICE")"
 echo "Voix : $(basename "$VOICE")"
-ffmpeg -y -v error -i "$VOICE" -map 0:a:0 -vn -ac 1 -ar 48000 -c:a pcm_s16le input/voice.wav || die "Fichier audio illisible ou abîmé : $(basename "$VOICE")."
+ffmpeg -nostdin -y -v error -i "$VOICE" -map 0:a:0 -vn -ac 1 -ar 48000 -c:a pcm_s16le input/voice.wav || die "Fichier audio illisible ou abîmé : $(basename "$VOICE")."
 DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 input/voice.wav | cut -d. -f1)
 [ "${DUR:-0}" -ge 3 ] || die "Voix trop courte (${DUR:-0} s) : il faut au moins 3 secondes de parole."
 MAX=${EXPLAINER_MAX_MIN:-180}
@@ -84,7 +93,7 @@ MAX=${EXPLAINER_MAX_MIN:-180}
 VOL=$(ffmpeg -v info -i input/voice.wav -af volumedetect -f null - 2>&1 | grep -oE 'max_volume: (-?[0-9.]+|-inf)' | awk '{print ($2=="-inf")?-99:$2}' || echo 0)
 VOL=${VOL:-0}
 awk "BEGIN{exit !($VOL < -55)}" && die "Le fichier audio est silencieux (niveau maximal $VOL dB)." || true
-ffmpeg -y -v error -f lavfi -i "color=c=black:s=320x180:r=2" -i input/voice.wav -shortest -c:v libx264 -preset ultrafast -tune stillimage -pix_fmt yuv420p -c:a aac -b:a 128k input/video.mp4
+ffmpeg -nostdin -y -v error -f lavfi -i "color=c=black:s=320x180:r=2" -i input/voice.wav -shortest -c:v libx264 -preset ultrafast -tune stillimage -pix_fmt yuv420p -c:a aac -b:a 128k input/video.mp4
 echo "Voix prête : ${DUR} s"; out duration "$DUR"
 
 # --- photos : converties en JPEG sûrs (orientation EXIF appliquée, taille bornée) ; une image illisible est ignorée
@@ -93,9 +102,15 @@ while IFS= read -r f; do
   # le nom d'origine est gardé (après le numéro) : il peut indiquer la source à créditer (« reuters-article.jpg »)
   b="${f##*/}"; b="${b%.*}"
   n=$((n + 1)); o=$(printf 'input/photos/%02d-%s.jpg' "$n" "$(printf '%s' "$b" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-60)")
-  ffmpeg -y -v error -i "$f" -frames:v 1 -vf "scale='min(2160,iw)':'min(2160,ih)':force_original_aspect_ratio=decrease" -q:v 3 "$o" 2>/dev/null || { echo "::warning::Photo illisible ignorée : $(basename "$f")"; rm -f "$o"; n=$((n - 1)); }
+  # ffmpeg d'abord ; repli ImageMagick (AVIF à grille, HEIC d'iPhone, GIF animé : 1re image) ; vraiment illisible → signalé
+  if ! ffmpeg -nostdin -y -v error -i "$f" -frames:v 1 -vf "scale='min(2160,iw)':'min(2160,ih)':force_original_aspect_ratio=decrease" -q:v 3 "$o" 2>/dev/null || [ ! -s "$o" ]; then
+    rm -f "$o"
+    if ! { command -v convert >/dev/null && convert "${f}[0]" -auto-orient -resize "2160x2160>" -quality 92 "$o" </dev/null 2>/dev/null && [ -s "$o" ]; }; then
+      echo "::warning::Image illisible ignorée : $(basename "$f")"; rm -f "$o"; n=$((n - 1))
+    fi
+  fi
   [ "$n" -ge 60 ] && { echo "::warning::Plus de 60 images : seules les 60 premières sont montées."; break; }
-done < <(find input/raw -type f -iregex ".*\.\(jpe?g\|png\|webp\)$" | sort)
+done < <(find input/raw -type f -iregex ".*\.\(jpe?g\|jfif\|png\|webp\|avif\|heic\|heif\|gif\|bmp\|tiff?\)$" | sort)
 echo "Captures / photos : $n"; out photos "$n"
 
 # --- vidéos à monter (tout sauf la voix) : copiées telles quelles, dans l'ordre des noms ; une vidéo illisible est ignorée
@@ -112,7 +127,7 @@ for f in "${EXTRA_AUDIO[@]}"; do
   [ "$c" -ge 20 ] && break
   c=$((c + 1)); b="${f##*/}"; b="${b%.*}"
   o="$(printf 'input/clips/%02d-%s.audio.mp4' "$c" "$(printf '%s' "$b" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-60)")"
-  ffmpeg -y -v error -i "$f" -filter_complex "[0:a]aformat=channel_layouts=mono,showwaves=s=1280x720:mode=cline:rate=30:colors=0xE8D9A8,format=yuv420p[v]" \
+  ffmpeg -nostdin -y -v error -i "$f" -filter_complex "[0:a]aformat=channel_layouts=mono,showwaves=s=1280x720:mode=cline:rate=30:colors=0xE8D9A8,format=yuv420p[v]" \
     -map "[v]" -map 0:a:0 -c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 160k -shortest "$o" \
     || { echo "::warning::Extrait audio illisible ignoré : $(basename "$f")"; rm -f "$o"; c=$((c - 1)); }
 done
