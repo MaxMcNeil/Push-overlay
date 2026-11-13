@@ -190,7 +190,10 @@ Tu donnes **seulement ta voix** ; le workflow fabrique une vidéo « explainer �
 chiffres, frises, listes, face-à-face, carte de fin — sans musique, **sans aucun emoji**, textes grands et lisibles.
 
 **Déposer** : *Releases → Draft a new release* → tag qui commence par **`voix`** (ex. `voix-001`) → joins :
-- **la voix** (mp3, m4a, wav, ogg, opus… ; une vidéo nommée `voix…` marche aussi : seul le son est pris) ;
+- **la voix** — **n'importe quel nom**, le workflow la reconnaît : fichier son (mp3, m4a, wav, ogg, opus…) en priorité, sinon
+  la vidéo à image fixe ou la plus longue (un enregistrement d'écran de téléphone n'est jamais pris pour ta voix). Le choix
+  et sa raison sont notés en tête d'`EXPLAINER.md` (avertissement s'il n'est pas net). Les **autres fichiers son**
+  (discours, déclaration…) deviennent des extraits « onde sonore » à faire écouter avec « اسمعوا » ;
 - *(facultatif)* **captures d'écran / photos** : **toutes** sont insérées, recadrées (barres du téléphone, menus retirés)
   et placées au moment où tu en parles ; s'il y en a plus que de scènes, elles s'enchaînent en fondu ;
 - *(facultatif)* **vidéos** — y compris des **enregistrements d'écran BRUTS du téléphone** : le workflow recadre sur le lecteur

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Récupère le fichier VOIX (et les photos éventuelles) pour « Faceless live arabic ».
 #   SOURCE = tag de release, lien Google Drive, lien direct, ou vide (= dernière release dont le tag commence par voix/voice/audio)
+#   La voix n'a pas besoin d'un nom particulier : elle est détectée (pick-voice.mjs).
 #   PHOTOS = tag d'une release de captures / photos / vidéos (facultatif ; celles jointes à la release de la voix sont aussi prises)
 # Produit : input/voice.wav (mono 48 kHz, vérifié), input/video.mp4 (même son + image noire : pour scripts/transcribe.mjs),
 #           input/photos/NN-nom.jpg (≤ 2160 px, orientation corrigée), input/clips/NN-nom.mp4 (vidéos à monter).
@@ -58,26 +59,21 @@ if [ -n "$PH" ] && [ "$PH" != "$SRC_TAG" ]; then
   else echo "::warning::Release de photos « $PH » introuvable : montage sans photos."; fi
 elif [ -n "$SRC_TAG" ]; then out photos_tag "$SRC_TAG"; fi
 
-# --- la voix : 1) un fichier AUDIO (mp3, m4a, wav, ogg, opus…) ; 2) sinon un fichier nommé voix…/voice…/audio… ;
-#     3) sinon l'unique vidéo de la release. Les AUTRES vidéos sont des extraits à monter (input/clips).
-has_audio() { ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$1" 2>/dev/null | grep -q audio; }
-VOICE=""
-mapfile -t CAND < <(find input/raw -maxdepth 1 -type f ! -iregex ".*\.\(jpe?g\|png\|webp\)$" -printf '%s\t%p\n' | sort -rn | cut -f2-)
-for f in "${CAND[@]}"; do if [[ "${f,,}" =~ \.(mp3|m4a|wav|ogg|oga|opus|aac|flac|wma|amr)$ ]] && has_audio "$f"; then VOICE="$f"; break; fi; done
-if [ -z "$VOICE" ]; then for f in "${CAND[@]}"; do b=$(basename "${f,,}"); if [[ "$b" =~ ^(voix|voice|audio|vocal) ]] && has_audio "$f"; then VOICE="$f"; break; fi; done; fi
-if [ -z "$VOICE" ]; then
-  WITH=(); for f in "${CAND[@]}"; do has_audio "$f" && WITH+=("$f"); done
-  if [ "${#WITH[@]}" -eq 1 ]; then VOICE="${WITH[0]}"
-  elif [ "${#WITH[@]}" -gt 1 ]; then
-    # voix déposée en vidéo (sans nom « voix… ») au milieu d'enregistrements d'écran avec son : la voix est de loin la plus
-    # longue (souvent plus d'une heure) ; si ce n'est pas net, on préfère s'arrêter que monter la mauvaise piste
-    dur_of() { ffprobe -v error -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null | cut -d. -f1; }
-    best=""; b1=0; b2=0
-    for f in "${WITH[@]}"; do d=$(dur_of "$f"); d=${d:-0}; if [ "$d" -gt "$b1" ]; then b2=$b1; b1=$d; best="$f"; elif [ "$d" -gt "$b2" ]; then b2=$d; fi; done
-    if [ "$b1" -ge 60 ] && [ "$b1" -ge $((b2 * 3)) ]; then VOICE="$best"; echo "::notice::Voix = la vidéo la plus longue ($(basename "$best"), ${b1} s) ; les autres vidéos sont des extraits à monter."
-    else die "Plusieurs vidéos avec du son et aucun fichier audio : je ne peux pas deviner laquelle est ta voix. Dépose la voix en mp3/m4a/wav, ou renomme-la « voix.mp4 »."; fi
-  else die "Aucun fichier audio lisible trouvé. Formats acceptés : mp3, m4a, wav, ogg, opus, aac, flac (ou une vidéo nommée « voix… » : son seul utilisé)."; fi
-fi
+# --- la voix : DÉTECTÉE, aucun nom imposé (scripts/explainer/pick-voice.mjs) : fichier son > vidéo à image fixe > la plus
+#     longue ; un enregistrement d'écran de téléphone est un extrait. Les AUTRES vidéos sont des extraits à monter
+#     (input/clips) ; les autres fichiers SON deviennent aussi des extraits (à faire écouter avec « اسمعوا »).
+mapfile -t CAND < <(find input/raw -maxdepth 1 -type f ! -iregex ".*\.\(jpe?g\|png\|webp\|txt\|md\|json\|pdf\)$" | sort)
+[ "${#CAND[@]}" -gt 0 ] || die "Aucun fichier audio ou vidéo dans la release : dépose ta voix (mp3, m4a, wav, ou une vidéo)."
+PICK=$(node scripts/explainer/pick-voice.mjs "${CAND[@]}") || die "Détection de la voix impossible (fichiers illisibles ?)."
+VOICE=$(node -e 'const j=JSON.parse(process.argv[1]);process.stdout.write(j.voice||"")' "$PICK")
+WHY=$(node -e 'const j=JSON.parse(process.argv[1]);process.stdout.write(j.why||"")' "$PICK")
+SURE=$(node -e 'const j=JSON.parse(process.argv[1]);process.stdout.write(j.sure?"1":"0")' "$PICK")
+mapfile -t EXTRA_AUDIO < <(node -e 'const j=JSON.parse(process.argv[1]);for(const f of j.extraAudio||[])console.log(f)' "$PICK")
+[ -n "$VOICE" ] || die "Aucun fichier avec du son (au moins 3 s) : dépose ta voix (mp3, m4a, wav, ou une vidéo avec son)."
+mkdir -p input
+if [ "$SURE" = "1" ]; then echo "Voix détectée : $WHY"; printf 'Voix détectée : %s\n' "$WHY" > input/voice-choice.txt
+else echo "::warning::Voix choisie sans certitude : $WHY — si ce n'est pas ta voix, mets-la seule dans la release ou en fichier son (mp3/m4a)."
+  printf '⚠ Voix choisie SANS CERTITUDE : %s — si ce n'"'"'est pas ta voix, dépose-la en fichier son (mp3/m4a) ou seule dans la release.\n' "$WHY" > input/voice-choice.txt; fi
 out voice_name "$(basename "$VOICE")"
 echo "Voix : $(basename "$VOICE")"
 ffmpeg -y -v error -i "$VOICE" -map 0:a:0 -vn -ac 1 -ar 48000 -c:a pcm_s16le input/voice.wav || die "Fichier audio illisible ou abîmé : $(basename "$VOICE")."
@@ -111,5 +107,14 @@ while IFS= read -r f; do
   else echo "::warning::Vidéo illisible ignorée : $(basename "$f")"; fi
   [ "$c" -ge 20 ] && { echo "::warning::Plus de 20 vidéos : seules les 20 premières sont montées."; break; }
 done < <(find input/raw -type f -iregex ".*\.\(mp4\|mov\|mkv\|webm\|m4v\|avi\)$" | sort)
+# --- autres fichiers SON (extraits audio : discours, déclaration…) → vidéo « onde sonore » à faire écouter sur mot déclencheur
+for f in "${EXTRA_AUDIO[@]}"; do
+  [ "$c" -ge 20 ] && break
+  c=$((c + 1)); b="${f##*/}"; b="${b%.*}"
+  o="$(printf 'input/clips/%02d-%s.audio.mp4' "$c" "$(printf '%s' "$b" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-60)")"
+  ffmpeg -y -v error -i "$f" -filter_complex "[0:a]aformat=channel_layouts=mono,showwaves=s=1280x720:mode=cline:rate=30:colors=0xE8D9A8,format=yuv420p[v]" \
+    -map "[v]" -map 0:a:0 -c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 160k -shortest "$o" \
+    || { echo "::warning::Extrait audio illisible ignoré : $(basename "$f")"; rm -f "$o"; c=$((c - 1)); }
+done
 echo "Vidéos à monter : $c"; out clips "$c"; out medias "$((n + c))"
 rm -rf input/raw

@@ -127,7 +127,8 @@ function parseSilence(log, dur) {
 /** Prépare un enregistrement d'écran. Retourne { file, p, notes[] } : le fichier propre (ou l'original si rien à faire). */
 export function prepClip(v, outDir = "content/clips-prep", force = null) {
   const notes = [];
-  if (process.env.EXPLAINER_CLIP_PREP === "non" || !v.p) return { file: v.file, p: v.p, notes, status: "plein" };
+  // extraits audio transformés en « onde sonore » par fetch.sh : rien à recadrer ni couper
+  if (process.env.EXPLAINER_CLIP_PREP === "non" || !v.p || /\.audio\.mp4$/i.test(v.file)) return { file: v.file, p: v.p, notes, status: "plein" };
   try {
     const fr = frames(v.file, v.p.w, v.p.h, v.p.dur);
     const box = force?.box || cropBox(fr), status = force?.box ? "recadree" : LAST;

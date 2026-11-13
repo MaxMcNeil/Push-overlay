@@ -512,6 +512,7 @@ async function main() {
 
   // --- médias fournis : captures / photos / vidéos. TOUS sont insérés.
   const { imgs, vids, bad } = listMedia(); const notes = bad.map((b) => `⚠ média illisible ou trop court, ignoré : ${b}`);
+  try { const vc = readFileSync("input/voice-choice.txt", "utf8").trim(); if (vc) notes.unshift(vc); } catch { /* voix venue d'un lien : rien à dire */ }
   const side = base >= 2160 ? 1440 : 960, CLIP_MAX = Number(process.env.EXPLAINER_CLIP_MAX_S || 180);   // ton enregistrement = le passage choisi : joué en entier (3 min max)
   // 1) mots déclencheurs (« écoutez », « خلينا نسمع »…) → vidéos jouées avec leur son, dans l'ordre des noms de fichiers
   const trig = process.env.EXPLAINER_TRIGGERS === "non" ? [] : triggerSentences(sents);
