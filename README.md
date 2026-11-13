@@ -194,10 +194,23 @@ chiffres, frises, listes, face-à-face, carte de fin — sans musique, **sans au
 - *(facultatif)* **captures d'écran / photos** : **toutes** sont insérées, recadrées (barres du téléphone, menus retirés)
   et placées au moment où tu en parles ; s'il y en a plus que de scènes, elles s'enchaînent en fondu ;
 - *(facultatif)* **vidéos** : montrées (sans leur son) pendant que tu parles. **Mot déclencheur** — si tu dis
-  « إسمع / إسمعوا / استمع / استمعوا (جيدا، معي) / خلينا نسمع » (ou « écoutez », « listen », « ascoltate »), la vidéo
-  suivante (**ordre des noms de fichiers** : `01-…mp4`, `02-…mp4`) est jouée **avec son son** ; ta voix attend, puis reprend.
+  « إسمع / إسمعوا / استمع / استمعوا (جيدا، معي) / خلينا نسمع » (ou « écoutez », « listen », « ascoltate »), une vidéo
+  est jouée **avec son son** ; ta voix attend, puis reprend. **La vidéo est choisie d'après son contenu** : ce que tu dis juste
+  avant le mot déclencheur est comparé au début de chaque vidéo (transcrit par Groq) et à son nom de fichier (un appel IA).
+  Repli : mots communs, puis ordre des noms de fichiers. Le plan (`EXPLAINER.md`) dit pour chaque vidéo comment elle a été choisie.
 
 **Lancer** : *Actions → Faceless live arabic → Run workflow*.
+
+**Recherche pour le montage** (champ `recherche`) : le workflow lit ta voix, repère les moments forts et écrit
+**`download search pour montages.txt`** (GitHub l'affiche « download.search.pour.montages.txt ») : pour chaque moment, avec son
+minutage dans ta voix — les **vidéos YouTube** à filmer en enregistrement d'écran, avec un lien qui démarre au **bon passage**
+(trouvé dans les sous-titres de la vidéo, sinon dans ses chapitres ; sinon les mots à chercher), les **articles de presse**
+(titre, média, date, lien) et des **photos libres de droits** (Wikimedia Commons) **téléchargées** dans la release
+**🔎 RECHERCHE** (`out-recherche`), crédits compris. Pour les monter : champ `photos` = `out-recherche`. Les photos de presse ne
+sont pas téléchargées (droits d'auteur : risque de réclamation) — leurs articles sont en lien.
+`oui` (défaut) : recherche + montage (le fichier est aussi joint au résultat) ; `seule` : recherche sans montage (tu filmes les
+passages, tu les déposes, puis tu relances avec `non`). Vidéos YouTube : secret `YOUTUBE_API_KEYS` (même clé que dans
+OSINT-teleprompter). IA : Groq (jamais la clé Gemini pour la recherche). Une recherche en panne n'empêche jamais le montage.
 
 | Champ | Rôle |
 |---|---|
@@ -209,6 +222,7 @@ chiffres, frises, listes, face-à-face, carte de fin — sans musique, **sans au
 | `voix` | **radio** (défaut) : son de studio d'émission — grave chaleureux, présence, sifflantes adoucies, compression, souffle réduit ; `naturel` : nettoyage seul. Les vidéos « à écouter » gardent leur son d'origine |
 | `effets_sonores` | discret (défaut), normal, non — synthétisés, aucun droit d'auteur |
 | `mots_declencheurs` | oui / non |
+| `recherche` | oui (recherche + montage), seule (recherche sans montage), non |
 | `nettoyage_medias` | oui : 30 min après un run **réussi**, les captures / photos / vidéos déposées sont supprimées (la voix reste ; rien n'est supprimé si le run a échoué, si tu as changé les fichiers entre-temps ou si un autre montage attend) |
 
 **Résultat** : release **🎙️ RÉSULTAT — Faceless live arabic** (`out-explainer`, remplace la précédente) + le plan scène par scène

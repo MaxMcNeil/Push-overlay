@@ -14,6 +14,7 @@ const rel = (f) => path.relative(process.cwd(), path.resolve(f)).split(path.sep)
 import { providers, parseJson } from "../lib/llm.mjs";
 import { channelFor } from "../lib/channel.mjs";
 import { detectTheme, sceneAccent, countryChip, countMentions, CODES, THEMES, COUNTRIES } from "../lib/gulf-themes.mjs";
+import { transcribeStart } from "../lib/asr.mjs";
 
 const IN = process.env.EXPLAINER_TRANSCRIPT || "content/transcript.json";
 const OUT = process.env.EXPLAINER_SPEC || "content/explainer.json";
@@ -398,6 +399,48 @@ export function placeMedia(scenes, items) {
 }
 /** Insère les vidéos « à écouter » : la scène en cours est coupée à l'instant voulu, la vidéo joue (avec son son), puis la
  *  scène reprend là où elle en était. Tous les horaires qui suivent sont décalés. Renvoie le plan audio. */
+/** Vidéos « à écouter » : quelle vidéo pour quel mot déclencheur ? D'après le CONTENU — ce que tu dis juste avant le mot
+ *  (« voilà ce qu'a dit le ministre… اسمعوا ») comparé au début de chaque vidéo (transcrit) et à son nom de fichier.
+ *  Un seul appel IA ; sans IA : mots communs ; en dernier recours : ordre des noms de fichiers (comme avant).
+ *  Renvoie [{ trig, vid, how }] — une vidéo au plus par mot déclencheur, une vidéo n'est jamais jouée deux fois. */
+const toks = (s) => new Set(normTrig(s).split(" ").filter((w) => w.length > 2));
+export async function matchTriggers(trig, vids, sents, { llm = providers(), asr = transcribeStart } = {}) {
+  if (!trig.length || !vids.length) return [];
+  const n = Math.min(trig.length, vids.length);
+  const order = trig.slice(0, n).map((t, k) => ({ trig: t, vid: k, how: "ordre des fichiers" }));
+  if (vids.length === 1 && trig.length === 1) return [{ ...order[0], how: "seule vidéo" }];
+  // contexte = ce qui est dit depuis le mot déclencheur précédent (au plus 3 phrases avant celui-ci)
+  const ctx = trig.map((t, k) => sents.slice(Math.max(0, t - 3, k ? trig[k - 1] + 1 : 0), t + 1).map((x) => x.text).join(" ").slice(-500));
+  const desc = [];
+  for (const v of vids) {
+    const name = path.basename(v.file).replace(/\.[^.]+$/, "").replace(/^\d+[-_. ]*/, "").replace(/[-_]+/g, " ");
+    const heard = v.heardText ?? (v.heardText = await asr(v.file).catch(() => ""));
+    desc.push({ name, heard });
+  }
+  const used = new Set(), out = new Map();
+  // 1) l'IA (texte seul : léger) associe chaque mot déclencheur à la vidéo dont le contenu correspond
+  const sys = `Tu es monteur vidéo. Le présentateur dit un mot déclencheur (« écoutez », « اسمعوا »…) pour faire écouter un extrait vidéo. Pour chaque mot déclencheur, on te donne ce qu'il dit JUSTE AVANT ; pour chaque vidéo, son nom de fichier et le début de ce qu'on y entend. Associe à chaque mot déclencheur la vidéo qu'il annonce (personne, sujet, événement, citation). Une vidéo ne sert qu'une fois. Si rien ne correspond clairement, mets "video": null. Réponds UNIQUEMENT en JSON : {"assign":[{"trigger":n,"video":n|null,"sur":0-100}]}`;
+  const user = `MOTS DÉCLENCHEURS :\n${ctx.map((c, k) => `T${k} : « …${c} »`).join("\n")}\n\nVIDÉOS :\n${desc.map((d, k) => `V${k} : fichier « ${d.name} » ; on entend : « ${d.heard || "(son non transcrit)"} »`).join("\n")}\n\nRéponds avec les numéros (trigger: 0 pour T0, video: 2 pour V2).`;
+  for (const [name, fn] of llm) {
+    try {
+      const j = parseJson(await fn(sys, user, { temperature: 0.1, maxTokens: 1500, deadline: Date.now() + 120000, timeoutMs: 90000 }));
+      for (const a of Array.isArray(j?.assign) ? j.assign : []) {
+        const t = Math.round(Number(a?.trigger)), v = a?.video === null ? NaN : Math.round(Number(a?.video));
+        if (!(t >= 0 && t < trig.length) || !(v >= 0 && v < vids.length) || used.has(v) || out.has(t) || Number(a?.sur ?? 100) < 50) continue;
+        out.set(t, { trig: trig[t], vid: v, how: `contenu (IA ${name})` }); used.add(v);
+      }
+      if (out.size) break;
+    } catch (e) { console.log(`  vidéos à écouter : IA ${name} indisponible (${String(e.message).slice(0, 80)})`); }
+  }
+  // 2) sans IA (ou pour ce qu'elle n'a pas tranché) : mots communs entre le contexte et le contenu de la vidéo
+  const pairs = [];
+  ctx.forEach((c, t) => { if (out.has(t)) return; const a = toks(c); desc.forEach((d, v) => { if (used.has(v)) return; const b = toks(`${d.name} ${d.heard}`); let sc = 0; for (const w of a) if (b.has(w)) sc++; if (sc >= 2) pairs.push({ t, v, sc }); }); });
+  for (const p of pairs.sort((x, y) => y.sc - x.sc)) if (!out.has(p.t) && !used.has(p.v)) { out.set(p.t, { trig: trig[p.t], vid: p.v, how: `contenu (mots communs : ${p.sc})` }); used.add(p.v); }
+  // 3) le reste : ordre des noms de fichiers parmi les vidéos encore libres (comportement d'avant)
+  const free = vids.map((_, v) => v).filter((v) => !used.has(v));
+  trig.forEach((t, k) => { if (!out.has(k) && free.length && out.size < vids.length) out.set(k, { trig: t, vid: free.shift(), how: "ordre des fichiers" }); });
+  return [...out.entries()].sort((a, b) => a[0] - b[0]).map(([, x]) => x);
+}
 export function insertClips(scenes, inserts, lang) {
   const cuts = []; let shift = 0;
   for (const ins of [...inserts].sort((a, b) => a.vt - b.vt)) {
@@ -444,12 +487,18 @@ async function main() {
   // 1) mots déclencheurs (« écoutez », « خلينا نسمع »…) → vidéos jouées avec leur son, dans l'ordre des noms de fichiers
   const trig = process.env.EXPLAINER_TRIGGERS === "non" ? [] : triggerSentences(sents);
   const inserts = [], broll = [];
-  vids.forEach((v, k) => {
-    const heard = k < trig.length;
-    try { v.frames = clipInfo(v, k + 1, heard ? CLIP_MAX : 20, side); } catch (e) { notes.push(`⚠ vidéo illisible ignorée : ${path.basename(v.file)}`); return; }
-    if (heard) { const sn = sents[trig[k]], nx = sents[trig[k] + 1]; inserts.push({ vt: nx ? (sn.t1 + nx.t0) / 2 : duration, dur: v.frames.dur, media: mediaData(v), file: rel(v.file), audio: v.p.audio });
-      if (v.p.dur > CLIP_MAX + 0.5) notes.push(`⚠ ${path.basename(v.file)} : ${v.p.dur.toFixed(0)} s, joué ${CLIP_MAX} s (coupe la vidéo avant de la déposer pour choisir le passage)`); }
-    else broll.push(v);
+  // quelle vidéo pour quel mot déclencheur : d'après le CONTENU (repli : ordre des noms de fichiers)
+  const okVids = vids.filter((v, k) => { try { v.frames = clipInfo(v, k + 1, CLIP_MAX, side); return true; } catch (e) { notes.push(`⚠ vidéo illisible ignorée : ${path.basename(v.file)}`); return false; } });
+  const assign = process.env.EXPLAINER_NO_LLM === "1" ? (trig.length ? okVids.slice(0, trig.length).map((_, k) => ({ trig: trig[k], vid: k, how: "ordre des fichiers" })) : [])
+    : await matchTriggers(trig, okVids, sents).catch((e) => { console.log(`  association des vidéos impossible (${e.message}) : ordre des fichiers`); return okVids.slice(0, trig.length).map((_, k) => ({ trig: trig[k], vid: k, how: "ordre des fichiers" })); });
+  const heardVid = new Map(assign.map((a) => [a.vid, a]));
+  okVids.forEach((v, k) => {
+    const a = heardVid.get(k);
+    if (!a) { v.frames = clipInfo(v, k + 1, 20, side); broll.push(v); return; }
+    const sn = sents[a.trig], nx = sents[a.trig + 1];
+    inserts.push({ vt: nx ? (sn.t1 + nx.t0) / 2 : duration, dur: v.frames.dur, media: mediaData(v), file: rel(v.file), audio: v.p.audio });
+    notes.push(`▶ « ${clean(sn.text, 60)} » → ${path.basename(v.file)} (choisie selon : ${a.how})`);
+    if (v.p.dur > CLIP_MAX + 0.5) notes.push(`⚠ ${path.basename(v.file)} : ${v.p.dur.toFixed(0)} s, joué ${CLIP_MAX} s (coupe la vidéo avant de la déposer pour choisir le passage)`);
   });
   if (trig.length > vids.length && vids.length) notes.push(`${trig.length} mots déclencheurs entendus pour ${vids.length} vidéo(s) : les ${trig.length - vids.length} derniers n'ont pas de vidéo`);
   // 2) captures, photos et vidéos restantes : reliées à ce qui est dit (un seul appel IA), recadrées, posées — aucune n'est écartée

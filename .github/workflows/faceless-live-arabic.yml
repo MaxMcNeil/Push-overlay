@@ -48,6 +48,11 @@ on:
         type: choice
         options: [oui, non]
         default: oui
+      recherche:
+        description: "Fichier « download search pour montages.txt » (vidéos YouTube + passage à filmer, presse, photos libres) : oui = avec le montage ; seule = recherche SEULE (pas de montage) ; non"
+        type: choice
+        options: [oui, seule, non]
+        default: oui
       nettoyage_medias:
         description: "Supprimer les captures / photos / vidéos déposées 30 min après la fin du run (la voix reste)"
         type: choice
@@ -69,6 +74,10 @@ env:
   GROQ_API_KEYS: ${{ secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS || '' }}
   GROQ_API_KEYS_PLUS: ${{ secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS_PLUS || '' }}
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  # recherche pour le montage (facultatif) : clé YouTube Data API (la même que dans OSINT-teleprompter)
+  YOUTUBE_API_KEYS: ${{ secrets.YOUTUBE_API_KEYS }}
+  YOUTUBE_API_KEYS_PLUS: ${{ secrets.YOUTUBE_API_KEYS_PLUS }}
+  YT_API_KEY: ${{ secrets.YT_API_KEY }}
 
 jobs:
   # ------------------------------------------------------------------ 1) voix → transcription → plan (tous les appels IA sont ici, une seule fois)
@@ -142,8 +151,43 @@ jobs:
           node scripts/transcribe.mjs
         timeout-minutes: 240
 
+      # « download search pour montages.txt » : vidéos YouTube (+ passage précis à filmer), presse (liens), photos libres
+      # (Wikimedia, téléchargées). Jamais bloquant : une recherche en panne n'empêche pas le montage.
+      - name: Recherche pour le montage (vidéos à filmer, presse, photos libres)
+        id: recherche
+        if: inputs.recherche != 'non'
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          pip install -q --break-system-packages youtube-transcript-api 2>/dev/null || pip install -q youtube-transcript-api || echo "::warning::sous-titres YouTube indisponibles : minutages par chapitres seulement"
+          node scripts/explainer/research.mjs
+          F="output/research/download search pour montages.txt"
+          [ -s "$F" ] || { echo "::warning::recherche vide"; exit 0; }
+          { echo "### 🔎 Recherche pour le montage"; echo '```'; head -n 80 "$F"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # release « out-recherche » (remplace la précédente) : le fichier + les photos libres, prêtes pour le champ « photos »
+          gh release delete out-recherche --repo "$REPO" -y --cleanup-tag >/dev/null 2>&1 || true
+          shopt -s nullglob; PH=(output/research/photos/*.jpg)
+          for i in 1 2 3; do
+            gh release create out-recherche --repo "$REPO" --title "🔎 RECHERCHE — vidéos à filmer, presse, photos libres" --prerelease --target "${{ github.sha }}" \
+              --notes "Pour la voix « ${{ steps.src.outputs.tag || 'lien' }} » — run [#${{ github.run_number }}](https://github.com/$REPO/actions/runs/${{ github.run_id }}). Ouvre le fichier .txt ; pour monter les photos : champ « photos » = out-recherche." \
+              "$F#download search pour montages.txt" "${PH[@]}" && break
+            sleep $((i * 10)); gh release delete out-recherche --repo "$REPO" -y --cleanup-tag >/dev/null 2>&1 || true
+          done
+
+      - name: Recherche seule terminée
+        if: inputs.recherche == 'seule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          bash scripts/release-status.sh "${{ steps.src.outputs.tag }}" ok "Recherche prête (pas de montage) : [🔎 RECHERCHE](https://github.com/$REPO/releases/tag/out-recherche). Ajoute tes enregistrements d'écran puis relance avec recherche = non." || true
+
       - name: Plan des scènes (IA par blocs, une seule fois pour tous les formats ; repli sans IA garanti)
         id: plan
+        if: inputs.recherche != 'seule'
         env:
           EXPLAINER_FORMAT: ${{ inputs.format }}
           EXPLAINER_QUALITY: ${{ inputs.qualite }}
@@ -156,6 +200,7 @@ jobs:
         timeout-minutes: 50
 
       - name: Transmettre le plan et les médias aux machines de rendu
+        if: inputs.recherche != 'seule'
         uses: actions/upload-artifact@v6
         with:
           name: explainer-work
@@ -169,12 +214,14 @@ jobs:
             output/EXPLAINER.md
             output/youtube-metadata.txt
             output/youtube.json
+            output/research/*.txt
           if-no-files-found: error
           retention-days: 2
 
   # ------------------------------------------------------------------ 2) rendu des images : une machine par tranche de 4 min, en parallèle
   render:
     needs: plan
+    if: inputs.recherche != 'seule'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
@@ -290,12 +337,13 @@ jobs:
           [ "${#FILES[@]}" -ge 1 ] || { echo "::error::Aucune vidéo à publier."; exit 1; }
           # fiche YouTube (titre, description, tags, hashtags) : jointe au résultat — le workflow du live la reprend telle quelle
           [ -s output/youtube-metadata.txt ] && FILES+=("output/youtube-metadata.txt") || echo "::warning::Fiche YouTube absente : le live gardera son titre habituel."
+          EXTRA=(); [ -s "output/research/download search pour montages.txt" ] && EXTRA=("output/research/download search pour montages.txt#download search pour montages.txt")
           for x in "${FILES[@]}"; do [ "$(stat -c %s "$x")" -lt 2000000000 ] || { echo "::error::$(basename "$x") dépasse 2 Go (limite des releases)."; exit 1; }; done
           { echo "Vidéo générée à partir de la voix « ${SRC_TAG:-lien} » — run [#${{ github.run_number }}](https://github.com/$REPO/actions/runs/${{ github.run_id }})"; echo; head -n 300 output/EXPLAINER.md; } > /tmp/notes.md
           gh release delete out-explainer --repo "$REPO" -y --cleanup-tag >/dev/null 2>&1 || true
           ok=0
           for i in 1 2 3; do
-            gh release create out-explainer --repo "$REPO" --title "🎙️ RÉSULTAT — Faceless live arabic" --notes-file /tmp/notes.md --prerelease --target "${{ github.sha }}" "${FILES[@]}" && ok=1 && break
+            gh release create out-explainer --repo "$REPO" --title "🎙️ RÉSULTAT — Faceless live arabic" --notes-file /tmp/notes.md --prerelease --target "${{ github.sha }}" "${FILES[@]}" "${EXTRA[@]}" && ok=1 && break
             sleep $((i * 15)); gh release delete out-explainer --repo "$REPO" -y --cleanup-tag >/dev/null 2>&1 || true
           done
           [ "$ok" = 1 ] || { echo "::error::Publication impossible après 3 essais."; exit 1; }
