@@ -556,10 +556,10 @@ async function analyseMedia(items, sents, lang) {
       sub.forEach((x, i) => { try { const src = x.kind === "vid" ? (x.orig || x.file) : x.file, at = x.kind === "vid" ? Math.min((x.origDur || x.p.dur) / 2, 4) : 0;
         parts.push({ text: `Média ${i} (${x.kind === "vid" ? "vidéo (enregistrement d'écran possible), image extraite" : "image"}) — fichier « ${path.basename(x.orig || x.file)} » :` }, { inlineData: { mimeType: "image/jpeg", data: thumb(src, at).toString("base64") } }); } catch { /* miniature impossible */ } });
       try {
-        const j = parseJson(await gem[1](sys, `Phrases :\n${sents.map((s) => `${s.i} | ${s.text}`).join("\n")}`, { parts, temperature: 0.2, maxTokens: 4000, thinking: 0, deadline: Date.now() + Math.min(150000, left), timeoutMs: 80000 }));
+        const j = parseJson(await gem[1](sys, `Phrases :\n${sents.map((s) => `${s.i} | ${s.text}`).join("\n")}`, { parts, temperature: 0.2, maxTokens: 6000, deadline: Date.now() + Math.min(150000, left), timeoutMs: 80000 }));
         applyMedia(sub, j, sents);
       } catch (e) {
-        console.log(`  médias lot ${batches.indexOf(sub) + 1}/${batches.length} : échec (${String(e.message).slice(0, 90)})${job.tries ? "" : " → retenté à la fin"}`);
+        console.log(`  médias lot ${batches.indexOf(sub) + 1}/${batches.length} : échec (${String(e.message).slice(0, 260)})${job.tries ? "" : " → retenté à la fin"}`);
         if (!job.tries++) todo.push(job);
       }
     }

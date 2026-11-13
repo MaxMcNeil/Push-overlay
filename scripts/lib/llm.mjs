@@ -123,6 +123,14 @@ export async function callGemini(sys, user, ctx = {}) {
               console.log(`  ${tag} : audio refusé (${body.slice(0, 120)}) → sans audio`);
               ctx = { ...ctx, audio: null }; ki--; continue;
             }
+            // 400 qui n'est PAS un problème de clé (requête refusée par CE modèle : image, réglage…) : la clé reste bonne,
+            // on essaie le modèle suivant au lieu de déclarer la clé morte pour tout le run
+            if (res.status === 400 && !/API.?key|API_KEY|expired|invalid.{0,20}key|PERMISSION|billing/i.test(body)) {
+              console.log(`  ${tag} : requête refusée par ce modèle (HTTP 400 : ${body.replace(/^\{ ?"error": ?\{ ?"code": ?400, ?"message": ?/, "").slice(0, 220)}) → modèle suivant`);
+              lastErr = new Error(`${tag} : HTTP 400 ${body}`);
+              if (thinking !== undefined) { thinking = undefined; ki--; continue; }
+              continue modelLoop;
+            }
             if (res.status === 400 || res.status === 403) {
               dead.add(ki);
               console.log(`  ${tag} : CLÉ REFUSÉE (HTTP ${res.status}). Recrée-la sur https://aistudio.google.com/apikey (« Create API key in new project »).`);
@@ -192,7 +200,7 @@ export async function callGroq(sys, user, ctx = {}) {
   const keys = rotate(groqKeys());
   if (!keys.length) throw new Error("aucune clé Groq");
   const models = await groqModels(rotate(groqKeys())[0] || "");
-  let mi = 0, noEffort = false;
+  let mi = 0, noEffort = false, jsonOff = ctx.json === false;
   let model = models[0];
   let lastErr = new Error("Groq indisponible");
   for (let round = 0; round < 3; round++) {
@@ -205,7 +213,7 @@ export async function callGroq(sys, user, ctx = {}) {
           // l'offre gratuite compte max_tokens dans la limite par minute (≈ 12 000) : on plafonne la réponse
           model, temperature: ctx.temperature ?? 0.6, max_tokens: Math.min(ctx.maxTokens || 4096, Number(process.env.GROQ_MAX_TOKENS || 4096)),
           ...(/gpt-oss/.test(model) && !noEffort ? { reasoning_effort: "low" } : {}), // réflexion courte : la réponse garde sa place
-          ...(ctx.json === false ? {} : { response_format: { type: "json_object" } }),
+          ...(jsonOff ? {} : { response_format: { type: "json_object" } }),
           messages: [{ role: "system", content: sys }, { role: "user", content: user }],
         }),
         signal: AbortSignal.timeout(Math.max(15000, Math.min(ctx.timeoutMs || 3 * 60 * 1000, (ctx.deadline ? ctx.deadline - Date.now() : Infinity) - 5000))),
@@ -218,7 +226,14 @@ export async function callGroq(sys, user, ctx = {}) {
       }
       if (res.status === 413) throw new Error("Groq : texte trop long pour l'offre gratuite (413)");
       if (!res.ok) {
-        const body = (await res.text()).slice(0, 180);
+        const full = await res.text(), body = full.slice(0, 180);
+        // mode JSON strict de Groq : réponse un peu hors format refusée. Le texte produit est dans « failed_generation » :
+        // on le rend (plan.mjs le répare/valide) ; sinon on redemande sans le mode strict.
+        if (res.status === 400 && /json_validate_failed/.test(full)) {
+          let fg = ""; try { fg = JSON.parse(full)?.error?.failed_generation || ""; } catch {}
+          if (fg.length > 20) { console.log(`  Groq ${model} : JSON imparfait récupéré (sera vérifié)`); return fg; }
+          if (!jsonOff) { jsonOff = true; console.log(`  Groq ${model} : JSON strict refusé → nouvel essai sans le mode strict`); ki--; continue; }
+        }
         lastErr = new Error(`Groq ${model} : HTTP ${res.status} ${body}`); console.log(`  ${lastErr.message}`);
         if (res.status === 400 && /reasoning_effort/i.test(body) && !noEffort) { noEffort = true; ki--; continue; }
         if ((res.status === 404 || res.status === 400) && /model|decommission|not exist|not found/i.test(body) && mi < models.length - 1) {
