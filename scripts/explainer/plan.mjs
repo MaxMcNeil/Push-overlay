@@ -198,9 +198,15 @@ function fallbackData(text, lang, first, noStat = false) {
     if (m) {
       const value = Number(m[1].replace(/[,٫]/, ".")), pct = !!m[2], year = !pct && Number.isInteger(value) && value >= 1900 && value <= 2100;
       if (isFinite(value) && !year && value > 0) {
-        const words = raw.split(" "), at = Math.max(0, words.findIndex((w) => digitsOf(w).includes(m[1].replace(/[,٫].*/, ""))));
-        const label = clause(words.filter((w) => !/\d/.test(digitsOf(w)) && !/^(%|٪|المئة|المائة|بالمئة|بالمائة|cent|percent|cento)$/i.test(w)).join(" ").replace(/\s(في|pour|per)(?=\s|$)/gu, " ").split(" ").slice(Math.max(0, at - 4), at + 4).join(" "), 6);
-        if (wc(label) >= 2) return { type: "stat", data: { kicker: kick, value, decimals: Number.isInteger(value) ? 0 : 1, prefix: "", suffix: pct ? "%" : "", label, highlight: "", fill: 0.62 + (value % 7) * 0.05 } };
+        // unité dite juste après le nombre (« 166 مليار ريال », « 500 ألف برميل ») = suffixe du chiffre ; le reste = légende
+        const words = raw.replace(/\s(?:في|ب)\s?(?:المئة|المائة)/gu, " %").split(" "), at = words.findIndex((w) => digitsOf(w).includes(m[1].replace(/[,٫].*/, "")));
+        const UNIT = /^(مليار|مليارات|مليون|ملايين|ألف|الف|آلاف|دولار|دولارا|ريال|ريالا|درهم|دينار|برميل|طن|سنة|سنوات|يوما|يوم|شهرا|أشهر|milliards?|millions?|mille|dollars?|euros?|barils?|ans|jours|mois|billion|million|thousand|barrels?|years?|days?|miliardi|milioni|dollari|barili|anni|giorni)$/iu;
+        let u = []; if (at >= 0 && !pct) for (let k = at + 1; k < words.length && u.length < 2 && UNIT.test(words[k].replace(/[.,،]/g, "")); k++) u.push(words[k].replace(/[.,،]/g, ""));
+        const PCTW = /^(%|٪|المئة|المائة|بالمئة|بالمائة|cent|percent|cento)$/i;
+        const rest = words.filter((w, k) => k !== at && !(k > at && k <= at + u.length) && !/\d/.test(digitsOf(w)) && !PCTW.test(w));
+        const before = rest.slice(Math.max(0, at - 6), at), after = rest.slice(at, at + 5);
+        const label = clause((before.length >= 3 ? before : [...before, ...after]).join(" "), 6).replace(/\s(?:في|من|إلى|الى|على|بنسبة|بنحو|نحو|بمقدار|بقيمة|à|de|of|to|by)$/u, "");
+        if (at >= 0 && wc(label) >= 2) return { type: "stat", data: { kicker: kick, value, decimals: Number.isInteger(value) ? 0 : 1, prefix: "", suffix: pct ? "%" : (u.length ? " " + u[0] : ""), label, highlight: "", fill: 0.62 + (value % 7) * 0.05 } };
       }
     }
   }

@@ -294,6 +294,7 @@ const src=d=>d.source?`<div class="src" ${A("fade",.5)}>${esc(d.source)}</div>`:
 const ARROW=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M5 13l7 7 7-7"/></svg>`;
 const PLUS=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg>`;
 
+const ASIDE_RECENT=[];
 const BUILD={
   hook:d=>`<div class="safe">${head(d)}<div class="rule" ${A("draw",.12)}></div><div class="title xl">${words(d.title,d.highlight,.18,.085)}</div>${d.sub?`<div class="sub" ${A("rise",.75)}>${esc(d.sub)}</div>`:""}</div>${src(d)}`,
   headline:d=>`<div class="safe">${head(d)}<div class="rule" ${A("draw",.12)}></div><div class="title">${words(d.title,d.highlight,.16,.07)}</div>${d.sub?`<div class="sub" ${A("rise",.6)}>${esc(d.sub)}</div>`:""}</div>${src(d)}`,
@@ -307,8 +308,14 @@ const BUILD={
   _aside:(d,sc)=>{const P=(n,r,rot)=>Array.from({length:n},(_,k)=>{const a=(k/n)*6.2832+rot;return (100+r*Math.cos(a)).toFixed(2)+","+(100+r*Math.sin(a)).toFixed(2)});
     const star=(n,r,rot)=>P(n,r,rot).join(" ");
     const ring=`<svg viewBox="0 0 200 200"><g data-a="rot" data-v="4"><polygon points="${star(4,88,-1.5708)}" stroke-width="1.4" stroke-opacity=".55"/><polygon points="${star(4,88,-.7854)}" stroke-width="1.4" stroke-opacity=".55"/><circle cx="100" cy="100" r="62" stroke-width="1" stroke-opacity=".4"/></g><g data-a="rot" data-v="-7"><circle cx="100" cy="100" r="96" stroke-width="1" stroke-opacity=".35" stroke-dasharray="1 5"/><polygon points="${star(8,74,0)}" stroke-width=".8" stroke-opacity=".3"/></g></svg>`;
-    const word=(String(d.highlight||"").trim()||String(d.kicker||"").trim()).replace(/[.,;:!?،؛؟«»"“”()…]/g,"").trim();
-    const core=sc.chip?`<div class="flag" ${A("pop",.35)}><div class="nm big">${esc(sc.chip.name)}</div><div class="bars">${(sc.chip.colors||[]).map(c=>`<i style="background:${esc(c)}"></i>`).join("")}</div></div>`
+    let word=(String(d.highlight||"").trim()||String(d.kicker||"").trim()).replace(/[.,;:!?،؛؟«»"“”()…]/g,"").trim();
+    /* jamais le même mot (ou le même pays) dans le panneau que sur les 4 scènes précédentes : on prend alors le mot
+       le plus parlant du titre qui n'a pas encore servi */
+    const norm=x=>String(x).replace(/^(ال|وال|بال|لل)/,"").toLowerCase(),seen=ASIDE_RECENT.map(norm);
+    let chip=sc.chip;if(chip&&seen.includes(norm(chip.name)))chip=null;
+    if(!chip&&(!word||seen.includes(norm(word)))){const alt=String(d.title||d.quote||"").replace(/[.,;:!?،؛؟«»"“”()…%]/g," ").split(/\s+/).filter(w=>w.length>=4&&!/\d/.test(w)&&!seen.includes(norm(w))).sort((a,b)=>b.length-a.length)[0];word=alt||(chip?"":word)}
+    ASIDE_RECENT.push(chip?chip.name:word);if(ASIDE_RECENT.length>4)ASIDE_RECENT.shift();
+    const core=chip?`<div class="flag" ${A("pop",.35)}><div class="nm big">${esc(chip.name)}</div><div class="bars">${(chip.colors||[]).map(c=>`<i style="background:${esc(c)}"></i>`).join("")}</div></div>`
       :word?`<div class="big" ${A("pop",.35)}>${esc(word.split(/\s+/).slice(0,3).join(" "))}</div>`:"";
     return `<div class="aside"><div class="glow" data-a="breath"></div><div class="ring" ${A("pop",.05)}>${ring}</div>${core}</div>`},
   shot:(d,sc)=>{const M=(d.media&&d.media.length?d.media:[{kind:"img",image:d.image,iw:d.iw,ih:d.ih,crop:d.crop}]),m0=M[0],c0=m0.crop||{x:0,y:0,w:1,h:1},
