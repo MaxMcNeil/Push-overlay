@@ -165,6 +165,17 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 /* extrait en grand, vertical : la vidéo entière tient à l'écran avec ses sous-titres (jamais réduite par l'ajustement) */
 .v .bigclip .shotrow{align-items:center}
 .v .bigclip .shotrow .frame{width:auto;height:min(calc(100vh - var(--safe-top) - var(--safe-bot) - var(--u)*190),calc((100vw - var(--u)*156) / var(--r)))}
+/* EXTRAIT EN GRAND = mode « cinéma » : la vidéo occupe tout l'écran en hauteur (ou en largeur), fond = la même vidéo
+   floutée (rendue en petit puis agrandie : flou gratuit en temps de calcul), sous-titres en surimpression en bas. */
+.cine{position:absolute;inset:0;display:grid;place-items:center;overflow:hidden}
+.cine .cbg{position:absolute;left:0;top:0;width:12.5%;height:12.5%;overflow:hidden;transform:scale(8.2);transform-origin:0 0;filter:blur(1.5px) brightness(.36) saturate(1.25)}
+.cine .cbg img{position:absolute;left:0;top:0;max-width:none}
+.cine .cveil{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 50%,transparent 40%,rgba(0,0,0,.55) 100%)}
+.cine .frame{width:min(calc(100vw - var(--u)*48),calc((100vh - var(--u)*48) * var(--r)));height:auto;flex:none}
+.cine .csub{position:absolute;left:calc(var(--u)*40);right:calc(var(--u)*40);bottom:calc(var(--u)*70);margin:0;z-index:60;min-height:0}
+.v .cine .csub{bottom:calc(var(--u)*200)}
+.cine .csub span{font-size:calc(var(--u)*54)}
+.cine .src{position:absolute;bottom:calc(var(--u)*18);inset-inline-end:calc(var(--u)*40);z-index:61}
 .live{position:absolute;top:calc(var(--u)*22);inset-inline-start:calc(var(--u)*22);z-index:50;width:calc(var(--u)*30);height:calc(var(--u)*30);display:grid;place-items:center}
 .live i{width:100%;height:100%;border-radius:50%;background:#ff3b3b;box-shadow:0 0 calc(var(--u)*22) #ff3b3b}
 .frame .shine{z-index:40}
@@ -303,6 +314,8 @@ const BUILD={
   shot:(d,sc)=>{const M=(d.media&&d.media.length?d.media:[{kind:"img",image:d.image,iw:d.iw,ih:d.ih,crop:d.crop}]),m0=M[0],c0=m0.crop||{x:0,y:0,w:1,h:1},
     ar=(c0.w*(m0.iw||1))/(c0.h*(m0.ih||1)),vert=H>W,big=sc&&sc.big,R=big?clamp(ar,.5,1.9):clamp(ar,vert?.95:1.25,vert?1.78:1.9);
     const med=M.map((m,k)=>{const c=m.crop||{x:0,y:0,w:1,h:1};return `<img ${m.kind==="vid"?`data-dir="${esc(m.dir)}" data-n="${m.n|0}" data-fps="${m.fps||30}" src="${esc(m.dir)}/00001.jpg"`:`src="${esc(m.image)}"`} data-a="media" data-k="${k}" data-m="${M.length}" data-c="${[c.x,c.y,c.w,c.h].join(",")}" data-iw="${m.iw||0}" data-ih="${m.ih||0}">`}).join("");
+    if(big){const bgm=M[0],bc=bgm.crop||{x:0,y:0,w:1,h:1};
+      return `<div class="cine"><div class="cbg"><img data-dir="${esc(bgm.dir)}" data-n="${bgm.n|0}" data-fps="${bgm.fps||30}" src="${esc(bgm.dir)}/00001.jpg" data-a="media" data-k="0" data-m="1" data-c="${[bc.x,bc.y,bc.w,bc.h].join(",")}" data-iw="${bgm.iw||0}" data-ih="${bgm.ih||0}"></div><div class="cveil"></div><div class="frame" style="aspect-ratio:${R.toFixed(3)};--r:${R.toFixed(3)}" ${A("tilt",.12)}>${med}<div class="shine" data-a="shine" data-d=".7"></div><div class="live"><i data-a="pulse"></i></div></div>${m0.subs&&m0.subs.length?`<div class="csub" data-a="csub" data-subs="${esc(JSON.stringify(m0.subs))}"><span></span></div>`:""}${src(d)}</div>`}
     return `<div class="safe persp${big?" bigclip":""}">${head(d)}<div class="shotrow"><div class="frame" style="aspect-ratio:${R.toFixed(3)};--r:${R.toFixed(3)}" ${A("tilt",.12)}>${med}<div class="shine" data-a="shine" data-d=".7"></div>${big?`<div class="live"><i data-a="pulse"></i></div>`:""}</div>${big&&m0.subs&&m0.subs.length?`<div class="csub" data-a="csub" data-subs="${esc(JSON.stringify(m0.subs))}"><span></span></div>`:""}${d.title&&!big?`<div class="shottxt"><div class="rule" ${A("draw",.5)}></div><div class="title md">${words(d.title,d.highlight,.55,.06)}</div></div>`:""}</div></div>${src(d)}`},
   outro:d=>{const P=(n,r,rot)=>Array.from({length:n},(_,k)=>{const a=(k/n)*6.2832+rot;return (100+r*Math.cos(a)).toFixed(2)+","+(100+r*Math.sin(a)).toFixed(2)});
     const star=(n,step,r,rot)=>{const p=P(n,r,rot),o=[];for(let k=0,i=0;k<n;k++,i=(i+step)%n)o.push(p[i]);return o.join(" ")};
@@ -477,7 +490,7 @@ window.seek=function(t){
   });
   {const tk=document.getElementById("ticker");if(tk.classList.contains("on")){const run=tk.querySelector(".trun"),lab=tk.querySelector(".tlab"),wRun=run.scrollWidth/3||1,lw=lab.offsetWidth;
     const x=((t*95*U)%wRun);run.style.transform=RTL?`translate3d(${x}px,0,0)`:`translate3d(${-x}px,0,0)`;run.style[RTL?"right":"left"]=lw+"px";
-    const last=SC[SC.length-1];tk.style.opacity=clamp(1-(last&&last.sc.type==="outro"?seg(t,last.sc.t0-.2,last.sc.t0+.4):0)-(SC[0]&&SC[0].sc.big?1-seg(t,SC[0].sc.t1-.3,SC[0].sc.t1+.4):0))}}
+    const last=SC[SC.length-1];tk.style.opacity=clamp(1-(last&&last.sc.type==="outro"?seg(t,last.sc.t0-.2,last.sc.t0+.4):0)-SC.reduce((m,x)=>x.sc.big?Math.max(m,Math.min(seg(t,x.sc.t0-.4,x.sc.t0+.2),1-seg(t,x.sc.t1-.3,x.sc.t1+.4))):m,0))}}
   document.getElementById("flash").style.opacity=flash;
   const gl=document.getElementById("glare");if(glare){gl.style.opacity=glare.o;gl.style.left=(glare.x-13)+"%"}else gl.style.opacity=0;
   const ir=document.getElementById("iris");if(iris){const d=iris.r/100*Math.hypot(W,H)*2*.72;ir.style.width=ir.style.height=d+"px";ir.style.marginLeft=ir.style.marginTop=(-d/2)+"px";ir.style.opacity=iris.o}else ir.style.opacity=0;

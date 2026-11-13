@@ -187,9 +187,36 @@ function autoHl(title) {
   if (w.length < 2) return "";
   return w.find((x) => /\d/.test(digitsOf(x))) || [...w].sort((a, b) => b.length - a.length)[0];
 }
-function fallbackData(text, lang, first) {
-  const t = cutWords(text, 13).replace(/[.,،؛;:]+$/, "");
-  return { type: first ? "hook" : "headline", data: { kicker: pick(L.kicker, lang), title: t, highlight: autoHl(t) } };
+/** Scène SANS IA (bloc non couvert, moitié d'une scène trop longue) : jamais la phrase entière coupée par « … ».
+ *  On garde la PROPOSITION la plus forte (2 à 9 mots, coupée aux virgules / « لكن » / « بل » / « mais »…) ;
+ *  un pourcentage ou un nombre PRONONCÉ devient une scène chiffre animée. */
+function fallbackData(text, lang, first, noStat = false) {
+  const kick = pick(L.kicker, lang), raw = clean(text);
+  if (!first && !noStat) {
+    const m = digitsOf(raw).match(/(\d+(?:[.,٫]\d+)?)\s*(%|٪|في ?المئة|بالمئة|بالمائة|في ?المائة|pour ?cent|percent|per ?cento)/i)
+      || digitsOf(raw).match(/(?<![\d.,])(\d{2,4}(?:[.,٫]\d+)?)(?![\d.,])/);
+    if (m) {
+      const value = Number(m[1].replace(/[,٫]/, ".")), pct = !!m[2], year = !pct && Number.isInteger(value) && value >= 1900 && value <= 2100;
+      if (isFinite(value) && !year && value > 0) {
+        const words = raw.split(" "), at = Math.max(0, words.findIndex((w) => digitsOf(w).includes(m[1].replace(/[,٫].*/, ""))));
+        const label = clause(words.filter((w) => !/\d/.test(digitsOf(w)) && !/^(%|٪|المئة|المائة|بالمئة|بالمائة|cent|percent|cento)$/i.test(w)).join(" ").replace(/\s(في|pour|per)(?=\s|$)/gu, " ").split(" ").slice(Math.max(0, at - 4), at + 4).join(" "), 6);
+        if (wc(label) >= 2) return { type: "stat", data: { kicker: kick, value, decimals: Number.isInteger(value) ? 0 : 1, prefix: "", suffix: pct ? "%" : "", label, highlight: "", fill: 0.62 + (value % 7) * 0.05 } };
+      }
+    }
+  }
+  const t = clause(raw, 9);
+  return { type: first ? "hook" : "headline", data: { kicker: kick, title: t, highlight: autoHl(t) } };
+}
+function clause(text, max) {
+  const parts = String(text).split(/[،,;؛:.!?؟]+|\s(?=(?:لكن|ولكن|بل|حيث|لأن|mais|car|donc|but|because|ma|perché)\s)/u).map((x) => clean(x)).filter((x) => wc(x) >= 2);
+  if (!parts.length) return cutWords(text, max).replace(/…$/, "");
+  const score = (x) => { const w = x.split(" "); return w.filter((y) => y.length >= 5).length + (/\d/.test(digitsOf(x)) ? 2 : 0) - Math.max(0, w.length - max) * 2 - (w.length < 3 ? 1 : 0); };
+  const best = parts.sort((a, b) => score(b) - score(a))[0].split(" ");
+  // trop long : fenêtre de max mots la plus riche (pas d'ellipse)
+  const lead = /^(و|ف|ثم|بل|لكن|ولكن|et|mais|and|but|e|ma)$/iu; while (best.length > 3 && lead.test(best[0])) best.shift();
+  if (best.length <= max) return best.join(" ").replace(/[.,،؛;:]+$/, "");
+  let bi = 0, bs = -1; for (let i = 0; i + max <= best.length; i++) { const sc = best.slice(i, i + max).filter((y) => y.length >= 5).length; if (sc > bs) { bs = sc; bi = i; } }
+  return best.slice(bi, bi + max).join(" ");
 }
 function hlOf(h, ...hay) {
   const pool = hay.join(" ").toLowerCase().split(/\s+/).map((w) => w.replace(/[.,;:!?،؛؟«»"“”()…]/g, ""));
@@ -295,7 +322,7 @@ export function build(sents, rawScenes, lang, duration) {
   ranges.forEach((x, i) => {
     const text = spoken(sents, x.from, x.to);
     let v = x.r ? validate(x.r, text, lang, i === 0) : (() => { const f = fallbackData(text, lang, i === 0); return { type: f.type, data: f.data }; })();
-    if (v.type === prevType && !["headline", "hook"].includes(v.type)) { const f = fallbackData(x.r?.title || x.r?.label || text, lang, false); v = { type: "headline", data: { ...v.data, ...f.data } }; }
+    if (v.type === prevType && !["headline", "hook"].includes(v.type)) { const f = fallbackData(x.r?.title || x.r?.label || text, lang, false, true); v = { type: "headline", data: { ...v.data, ...f.data } }; }
     prevType = v.type;
     const t0 = i === 0 ? 0 : Math.max(0, sents[x.from].t0 - LEAD);
     const code = String(x.r?.country || "").toLowerCase();
@@ -706,7 +733,7 @@ export function insertClips(scenes, inserts, lang) {
     let i = scenes.findIndex((s) => s.t0 <= at && at < s.t1); if (i < 0) i = scenes.length - 1;
     const s = scenes[i];
     // la coupure reste dans la pause (jamais au milieu d'un mot) ; un bout de scène de moins d'1 s est rendu à la voisine
-    const source = ins.credit ? `${SRC_LABEL[lang] || SRC_LABEL.en} : ${ins.credit}` : (ins.label || "");
+    const source = ins.credit ? `${SRC_LABEL[lang] || SRC_LABEL.en} : ${ins.credit}` : "";   // jamais le nom du fichier (« default », « low.salary.ksa »…)
     const clip = { type: "shot", t0: at, t1: at + ins.dur, big: true, opener: !!ins.opener, transition: ins.opener ? "open" : "zoom", data: { kicker: ins.opener ? "" : pick(L.listen, lang), source, media: [ins.media] } };
     let idx;
     if (at === s.t1) idx = i + 1; else if (at === s.t0) idx = i;
