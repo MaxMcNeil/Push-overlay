@@ -514,12 +514,13 @@ async function analyseMedia(items, sents, lang) {
     // vidéos : image de l'enregistrement d'ORIGINE (avant recadrage) — on y lit le nom de la chaîne, du média, l'URL
     sub.forEach((x, i) => { try { const src = x.kind === "vid" ? (x.orig || x.file) : x.file, at = x.kind === "vid" ? Math.min((x.origDur || x.p.dur) / 2, 4) : 0;
       parts.push({ text: `Média ${i} (${x.kind === "vid" ? "vidéo (enregistrement d'écran possible), image extraite" : "image"}) — fichier « ${path.basename(x.orig || x.file)} » :` }, { inlineData: { mimeType: "image/jpeg", data: thumb(src, at).toString("base64") } }); } catch { /* miniature impossible : ce média sera posé dans l'ordre */ } });
-    const sys = `Tu es monteur. On te donne des captures d'écran, photos et vidéos (une image extraite, souvent un enregistrement d'écran de téléphone) et la voix off découpée en phrases numérotées. Réponds UNIQUEMENT en JSON : {"medias":[{"media":n,"sentence":n,"box":[ymin,xmin,ymax,xmax],"caption":"...","credit":"...","photo":true|false}]}.
+    const sys = `Tu es monteur. On te donne des captures d'écran, photos et vidéos (une image extraite, souvent un enregistrement d'écran de téléphone) et la voix off découpée en phrases numérotées. Réponds UNIQUEMENT en JSON : {"medias":[{"media":n,"sentence":n,"box":[ymin,xmin,ymax,xmax],"caption":"...","credit":"...","photo":true|false,"ecran":true|false}]}.
 - "sentence" : numéro de la phrase où ce média illustre le mieux ce qui est DIT (titre d'article, nom, chiffre, lieu, personne citée). Chaque média DOIT recevoir une phrase : s'il n'y a pas de lien évident, choisis la phrase la plus proche par le thème. Évite de mettre plusieurs médias sur la même phrase.
 - "box" : zone utile en millièmes (0 à 1000). Capture d'écran : retire barre d'état du téléphone, barre de navigation, menus, boutons, publicités, marges vides ; garde titre, texte clé, illustration. VIDÉO enregistrée depuis un téléphone : la zone EXACTE du lecteur vidéo (l'image de la vidéo seule, sans titre, commentaires, boutons, barres du téléphone). Photo ou vidéo plein cadre : [0,0,1000,1000].
 - "caption" : 2 à 6 mots en ${pick(L.langName, lang)} disant ce que montre le média (sujet VISIBLE). N'invente rien. Aucun emoji.
 - "credit" : la SOURCE à créditer, telle qu'elle est VISIBLE (nom du média, du site, de l'agence, de la chaîne YouTube, du compte, logo, URL) ou dans le nom du fichier ; écrite comme le média s'écrit lui-même (ex. « Al Jazeera », « Reuters », « العربية »). Vide si aucune source n'est lisible : n'invente jamais.
-- "photo" : true si c'est une photographie sans texte important, false pour capture d'écran, article, document, publication.`;
+- "photo" : true si c'est une photographie sans texte important, false pour capture d'écran, article, document, publication.
+- "ecran" (vidéos seulement) : true UNIQUEMENT si c'est l'ENREGISTREMENT D'UN ÉCRAN de téléphone ou d'ordinateur où l'on voit l'interface autour de la vidéo (barre d'état avec l'heure et la batterie, boutons j'aime / partager, titre ou commentaires sous le lecteur, barre de navigation). false pour une vidéo normale plein cadre, même avec des bandeaux, des titres incrustés ou un décor fixe (reportage, interview, motion design, journal TV).`;
     const j = parseJson(await gem[1](sys, `Phrases :\n${sents.map((s) => `${s.i} | ${s.text}`).join("\n")}`, { parts, temperature: 0.2, maxTokens: 6000, deadline: Date.now() + 170000, timeoutMs: 140000 }));
     for (const r of Array.isArray(j?.medias) ? j.medias : []) {
       const x = sub[Math.round(Number(r?.media))]; if (!x) continue;
@@ -533,6 +534,7 @@ async function analyseMedia(items, sents, lang) {
         if (x.kind === "vid" && box.w >= 0.3 && box.h >= 0.12 && box.w * box.h < 0.92) x.vbox = box;
       }
       x.caption = cutWords(r.caption, 7); x.photo = r.photo === true;
+      if (x.kind === "vid" && typeof r.ecran === "boolean") x.ecran = r.ecran;
       const cr = clean(r.credit, 40); if (cr && !/^(inconnu|unknown|aucun|none|n\/a|-)$/i.test(cr)) x.credit = cr;
     }
     console.log(`  médias analysés par Gemini : ${items.filter((x) => x.sentence !== null).length}/${items.length} reliés à une phrase, ${items.filter((x) => x.crop).length} recadrés, ${items.filter((x) => x.credit).length} source(s) à créditer`);
@@ -705,6 +707,20 @@ async function main() {
   //    vidéo dont le lecteur n'a pas pu être repéré par le mouvement, Gemini donne la zone du lecteur → recadrage
   await analyseMedia([...imgs, ...okVids], sents, lang);
   okVids.forEach((v) => {
+    // l'IA voit une vidéo NORMALE là où la préparation avait recadré / découpé : on revient à l'original intact
+    if (v.ecran === false && v.file !== v.orig && v.prep?.status !== "normale") {
+      const p0 = probe(v.orig);
+      if (p0) { v.file = v.orig; v.p = p0; v.prep = { ...v.prep, status: "normale", t0: 0, t1: p0.dur }; try { v.frames = clipInfo(v, 0, CLIP_MAX, side); } catch { /* original déjà vérifié lisible */ }
+        notes.push(`✂ ${path.basename(v.orig)} : l'IA y voit une vidéo normale → gardée entière, sans recadrage ni découpe`); }
+      return;
+    }
+    // l'IA voit un enregistrement d'écran là où les indices disaient « vidéo normale » : recadrage sur le lecteur qu'elle a repéré
+    if (v.prep?.status === "normale" && v.ecran === true && v.vbox) {
+      const r = prepClip({ file: v.orig, p: probe(v.orig) }, "content/clips-prep", { box: v.vbox });
+      const p2 = r.file !== v.orig ? probe(r.file) : null;
+      if (p2 && p2.dur >= 0.5) { v.file = r.file; v.p = p2; v.prep = { ...v.prep, ...r }; try { v.frames = clipInfo(v, 0, CLIP_MAX, side); notes.push(`✂ ${path.basename(v.orig)} : enregistrement d'écran repéré par l'IA, recadré sur le lecteur`); } catch { /* garde l'original */ } }
+      return;
+    }
     if (v.prep?.status !== "incertain" || !v.vbox) return;
     const r = prepClip({ file: v.orig, p: probe(v.orig) }, "content/clips-prep", { box: v.vbox, t0: v.prep.t0, t1: v.prep.t1 });
     const p2 = r.file !== v.orig ? probe(r.file) : null;

@@ -65,9 +65,18 @@ function cropBox0({ fw, fh, list }) {
   for (let y = 0; y < fh; y++) { let s = 0; for (let x = 0; x < fw; x++) s += act[y * fw + x]; rows[y] = s / fw; }
   const rb = band(rows, 0.3);
   if (!rb) return null;
-  for (let x = 0; x < fw; x++) { let s = 0; for (let y = rb[0]; y <= rb[1]; y++) s += act[y * fw + x]; cols[x] = s / (rb[1] - rb[0] + 1); }
-  const cb = band(cols, 0.3);
-  if (!cb) return null;
+  // Le lecteur ne bouge pas partout (interview au décor fixe, bandeau incrusté) : la zone très active est ÉLARGIE tant que
+  // les lignes / colonnes voisines bougent encore un peu (≥ 2 %) ; l'interface du téléphone, elle, ne bouge jamais.
+  const grow = (prof, b, thr) => { let [a, c] = b; while (a > 0 && prof[a - 1] >= thr) a--; while (c < prof.length - 1 && prof[c + 1] >= thr) c++; return [a, c]; };
+  const rowsAny = new Float64Array(fh);
+  for (let y = 0; y < fh; y++) { let s = 0; for (let x = 0; x < fw; x++) s += freq[y * fw + x] / calm >= 0.02 ? 1 : 0; rowsAny[y] = s / fw; }
+  const rb2 = grow(rowsAny, rb, 0.02);
+  rb[0] = rb2[0]; rb[1] = rb2[1];
+  const colsAny = new Float64Array(fw);
+  for (let x = 0; x < fw; x++) { let s = 0, s2 = 0; for (let y = rb[0]; y <= rb[1]; y++) { s += act[y * fw + x]; s2 += freq[y * fw + x] / calm >= 0.02 ? 1 : 0; } cols[x] = s / (rb[1] - rb[0] + 1); colsAny[x] = s2 / (rb[1] - rb[0] + 1); }
+  const cb0 = band(cols, 0.3);
+  if (!cb0) return null;
+  const cb = grow(colsAny, cb0, 0.02);
   const pad = 0;
   const x0 = Math.max(0, cb[0] - pad), x1 = Math.min(fw - 1, cb[1] + pad), y0 = Math.max(0, rb[0] - pad), y1 = Math.min(fh - 1, rb[1] + pad);
   let box = { x: x0 / fw, y: y0 / fh, w: (x1 - x0 + 1) / fw, h: (y1 - y0 + 1) / fh };
@@ -124,11 +133,34 @@ function parseSilence(log, dur) {
   return t1 - t0 > 0.5 ? { t0, t1 } : null;
 }
 
+/** Est-ce un ENREGISTREMENT D'ÉCRAN (et pas une vidéo normale) ? Seuls ceux-là sont recadrés et découpés.
+ *  Une vidéo normale peut avoir des zones fixes (motion design, plateau TV, bandeaux incrustés) : la recadrer d'après le
+ *  mouvement la couperait à tort. Indices (aucun ne suffit seul sauf le nom du fichier) :
+ *   - nom du fichier d'un enregistreur d'écran (Screen_Recording, Screenrecorder, enregistrement d'écran, SVID…) ;
+ *   - format d'écran de téléphone (côté long ≥ 1,95 × côté court : 1080×2400, 720×1600…), jamais celui d'une vidéo ;
+ *   - à l'inverse, format et définition standard de vidéo (1920×1080, 1080×1920, 1280×720…) = vidéo normale.
+ *  L'IA (une image de la vidéo d'origine) peut ensuite confirmer ou corriger ce jugement (voir plan.mjs). */
+const REC_NAME = /(screen[\s_-]*(record|rec\b|cap|shot)|screenrecord|scr(een)?[_-]?\d{6,}|enregistr\w*[\s_-]*(d[\s_-]*)?[eé]cran|capture[\s_-]*(d[\s_-]*)?[eé]cran|\bsvid|record_?\d{6,}|تسجيل[\s_-]*الشاشة)/i;
+const STD_RES = new Set(["1920x1080", "1080x1920", "1280x720", "720x1280", "3840x2160", "2160x3840", "2560x1440", "1440x2560", "854x480", "480x854", "640x360", "360x640", "1080x1350", "1080x1080", "720x720", "1440x1080", "960x540", "540x960"]);
+export function screenLike(v) {
+  const name = path.basename(v.orig || v.file || ""), w = v.p?.w || 0, h = v.p?.h || 0, why = [];
+  let score = 0;
+  if (REC_NAME.test(name)) { score += 3; why.push("nom d'enregistrement d'écran"); }
+  const ar = w && h ? Math.max(w, h) / Math.min(w, h) : 0;
+  if (ar >= 1.95) { score += 2; why.push(`format d'écran de téléphone (${w}×${h})`); }
+  if (STD_RES.has(`${w}x${h}`)) { score -= 1; why.push(`définition standard de vidéo (${w}×${h})`); }
+  else if (Math.abs(ar - 16 / 9) < 0.02 || Math.abs(ar - 4 / 3) < 0.02 || Math.abs(ar - 1) < 0.02 || Math.abs(ar - 1.25) < 0.02) { score -= 1; why.push("format standard de vidéo"); }
+  return { rec: score >= 2, score, why: why.join(", ") || "aucun indice" };
+}
+
 /** Prépare un enregistrement d'écran. Retourne { file, p, notes[] } : le fichier propre (ou l'original si rien à faire). */
 export function prepClip(v, outDir = "content/clips-prep", force = null) {
   const notes = [];
   // extraits audio transformés en « onde sonore » par fetch.sh : rien à recadrer ni couper
   if (process.env.EXPLAINER_CLIP_PREP === "non" || !v.p || /\.audio\.mp4$/i.test(v.file)) return { file: v.file, p: v.p, notes, status: "plein" };
+  // vidéo normale : jamais recadrée ni découpée (sauf si l'IA y voit ensuite un enregistrement d'écran : force.box)
+  const sl = screenLike(v);
+  if (!sl.rec && !force?.box && process.env.EXPLAINER_CLIP_PREP !== "toujours") return { file: v.file, p: v.p, notes, status: "normale", why: sl.why };
   try {
     const fr = frames(v.file, v.p.w, v.p.h, v.p.dur);
     const box = force?.box || cropBox(fr), status = force?.box ? "recadree" : LAST;
