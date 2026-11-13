@@ -97,22 +97,23 @@ export function localize(spec) {
 export function ensureFrames(spec) {
   const seen = new Map();
   for (const sc of spec.scenes) for (const m of (sc.data && sc.data.media) || []) {
-    if (m.kind !== "vid" || !m.src) continue;
-    if (!seen.has(m.src)) {
+    if (m.kind !== "vid" || !m.src || !m._dir) continue;
+    if (!seen.has(m._dir)) {
       const out = path.resolve(m._dir);
       let n = existsSync(out) ? readdirSync(out).filter((x) => x.endsWith(".jpg")).length : 0;
       if (!n) {
         if (!existsSync(m.src)) throw new Error(`vidéo absente : ${m.src}`);
         rmSync(out, { recursive: true, force: true }); mkdirSync(out, { recursive: true });
         const side = m.side || 960;
-        execFileSync("ffmpeg", ["-y", "-v", "error", "-i", m.src, "-t", String(m.max || 20), "-an", "-vf", `fps=30,scale='if(gte(iw,ih),min(${side},iw),-2)':'if(gte(iw,ih),-2,min(${side},ih))'`, "-q:v", "4", path.join(out, "%05d.jpg")], { stdio: ["ignore", "ignore", "inherit"] });
+        // -ss APRÈS -i : précis à l'image près (le passage commence exactement où le son commence)
+        execFileSync("ffmpeg", ["-y", "-v", "error", "-i", m.src, ...(m.ss ? ["-ss", String(m.ss)] : []), "-t", String(m.max || 20), "-an", "-vf", `fps=30,scale='if(gte(iw,ih),min(${side},iw),-2)':'if(gte(iw,ih),-2,min(${side},ih))'`, "-q:v", "4", path.join(out, "%05d.jpg")], { stdio: ["ignore", "ignore", "inherit"] });
         n = readdirSync(out).filter((x) => x.endsWith(".jpg")).length;
-        if (!n) throw new Error(`aucune image extraite de ${m.src}`);
-        console.log(`  vidéo ${path.basename(m.src)} : ${n} images extraites`);
+        if (!n) throw new Error(`aucune image extraite de ${m.src} (à partir de ${m.ss || 0} s)`);
+        console.log(`  ${path.basename(m.src)}${m.ss ? ` à partir de ${m.ss} s` : ""} : ${n} images`);
       }
-      seen.set(m.src, n);
+      seen.set(m._dir, n);
     }
-    m.n = seen.get(m.src);
+    m.n = seen.get(m._dir);
   }
 }
 // seules les scènes visibles dans la tranche sont chargées (une vidéo d'une heure a des centaines de scènes)

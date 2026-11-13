@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { execFileSync } from "child_process";
 import path from "path";
+import { pathToFileURL } from "url";
 import { CONTENT_DIR, findVideo, probeVideo, detectLanguage, normLang } from "./lib/util.mjs";
 import { groqKeys } from "./lib/llm.mjs";
 
@@ -115,7 +116,7 @@ function localWhisper(wav, label = "") {
 }
 
 const CHUNK = Number(process.env.ASR_CHUNK_SEC || 600);
-async function transcribeAll(video, duration) {
+export async function transcribeAll(video, duration) {
   const n = duration > CHUNK * 1.5 ? Math.ceil(duration / CHUNK) : 1;
   const words = [];
   const langs = {};
@@ -193,4 +194,5 @@ async function main() {
   console.log(`Transcription ${r.engine} : ${r.words.length} mots, langue ${r.lang}.`);
 }
 
-await main();
+// lancé directement (node scripts/transcribe.mjs) : transcription de input/video.* ; importé : rien ne se lance
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) await main();

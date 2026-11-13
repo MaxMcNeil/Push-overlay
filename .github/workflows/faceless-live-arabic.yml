@@ -39,15 +39,15 @@ on:
         options: [discret, normal, non]
         default: discret
       voix:
-        description: "Traitement de ta voix : radio = son de studio d'émission (profondeur, présence, compression) ; naturel = nettoyage seul"
+        description: "Ta voix : studio radio (profondeur, présence) ; « + fort » si tu étais loin du micro ou parlais doucement. Toujours calée au niveau YouTube"
         type: choice
-        options: [radio, naturel]
+        options: [radio, radio + fort, radio + très fort, naturel, naturel + fort]
         default: radio
-      mots_declencheurs:
-        description: "Mots déclencheurs (« إسمع », « خلينا نسمع », « écoutez »…) : jouent la vidéo suivante avec son son"
+      extraits:
+        description: "Extraits de tes vidéos jointes (comme Montage LV) : ouverture choc + rythme régulier + « إسمع / écoutez »"
         type: choice
-        options: [oui, non]
-        default: oui
+        options: [tout, sans ouverture choc, sans rythme, écoutez seulement, aucun]
+        default: tout
       recherche:
         description: "Fichier « download search pour montages.txt » (vidéos YouTube + passage à filmer, presse, photos libres) : oui = avec le montage ; seule = recherche SEULE (pas de montage) ; non"
         type: choice
@@ -187,6 +187,11 @@ jobs:
         run: |
           bash scripts/release-status.sh "${{ steps.src.outputs.tag }}" ok "Recherche prête (pas de montage) : [🔎 RECHERCHE](https://github.com/$REPO/releases/tag/out-recherche). Ajoute tes enregistrements d'écran puis relance avec recherche = non." || true
 
+      - name: Transcription des vidéos jointes (choix et sous-titres des extraits)
+        if: inputs.recherche != 'seule'
+        run: node scripts/explainer/clips-asr.mjs
+        timeout-minutes: 90
+
       - name: Plan des scènes (IA par blocs, une seule fois pour tous les formats ; repli sans IA garanti)
         id: plan
         if: inputs.recherche != 'seule'
@@ -194,7 +199,9 @@ jobs:
           EXPLAINER_FORMAT: ${{ inputs.format }}
           EXPLAINER_QUALITY: ${{ inputs.qualite }}
           EXPLAINER_PAYS: ${{ inputs.pays }}
-          EXPLAINER_TRIGGERS: ${{ inputs.mots_declencheurs }}
+          EXPLAINER_TRIGGERS: ${{ inputs.extraits == 'aucun' && 'non' || 'oui' }}
+          EXPLAINER_OPENER: ${{ (inputs.extraits == 'tout' || inputs.extraits == 'sans rythme') && 'oui' || 'non' }}
+          EXPLAINER_RHYTHM: ${{ (inputs.extraits == 'tout' || inputs.extraits == 'sans ouverture choc') && 'oui' || 'non' }}
         run: |
           node scripts/explainer/plan.mjs
           echo "matrix=$(cat content/matrix.json)" >> "$GITHUB_OUTPUT"
@@ -300,7 +307,8 @@ jobs:
       - name: Assembler les tranches, ajouter la voix et les effets sonores
         env:
           EXPLAINER_SFX: ${{ inputs.effets_sonores }}
-          EXPLAINER_VOICE: ${{ inputs.voix }}
+          EXPLAINER_VOICE: ${{ startsWith(inputs.voix, 'naturel') && 'naturel' || 'radio' }}
+          EXPLAINER_VOLUME: ${{ endsWith(inputs.voix, 'très fort') && 'tres-fort' || endsWith(inputs.voix, '+ fort') && 'fort' || 'auto' }}
           MATRIX: ${{ needs.plan.outputs.matrix }}
         run: |
           set -euo pipefail

@@ -208,6 +208,24 @@ chiffres, frises, listes, face-à-face, carte de fin — sans musique, **sans au
 - **Source affichée** : sous chaque capture, photo ou vidéo, « المصدر : … » (média, agence, chaîne) — lue sur l'image (logo, URL,
   nom de la chaîne) ou dans le **nom du fichier** (ex. `reuters-ministre.jpg`, `aljazeera-interview.mp4`). Jamais inventée.
 
+**Comme Montage LV final** (si tu joins au moins une vidéo avec des paroles) :
+- **Ouverture choc** : la vidéo commence par le passage le plus fort de ta vidéo jointe (4 à 12 s, phrases complètes,
+  sous-titré), puis ta voix et l'accroche. Menu `extraits` → `sans ouverture choc` pour la couper.
+- **Rythme des extraits** : même si tu ne dis aucun mot déclencheur, un élément revient au moins **toutes les 60 s
+  pendant les 5 premières minutes**, puis **environ toutes les 2 min** (extraits espacés d'au moins 1 min 30, jamais à
+  moins de 25 s l'un de l'autre). Tes captures et photos comptent ; là où il manque quelque chose, un passage de 6 à
+  15 s de tes vidéos jointes est inséré **dans une vraie pause** (jamais pendant que tu parles), choisi par l'IA
+  d'après ce que tu dis avant et après. **Aucun passage cohérent → pas d'extrait** (mieux vaut un trou qu'un
+  hors-sujet). Jamais deux fois le même passage. Chaque extrait est sous-titré. Menu `extraits` → `sans rythme` pour le couper (`écoutez seulement` ou `aucun` possibles).
+- Tes annonces « إسمع / خلينا نسمع / écoutez… » passent toujours : la vidéo annoncée est choisie d'après son contenu et
+  jouée **en entier** (c'est ton enregistrement du passage) ; une annonce sans vidéo attribuée reçoit un passage choisi
+  d'après ce que tu dis autour. Les extraits du rythme sont pris dans les vidéos **non annoncées** (une vidéo annoncée
+  n'est jamais découpée ni répétée).
+- Les extraits s'insèrent sur une **respiration** en fin de phrase (vérifiée sur le son), même sans long silence :
+  jamais au milieu d'un mot.
+- Une vidéo sans paroles (b-roll) est montrée en image, sans son ; une vidéo avec paroles jamais utilisée en extrait
+  est aussi montrée en image : **chaque vidéo jointe apparaît**.
+
 **Lancer** : *Actions → Faceless live arabic → Run workflow*.
 
 **Recherche pour le montage** (champ `recherche`) : le workflow lit ta voix, repère les moments forts et écrit
@@ -224,13 +242,13 @@ OSINT-teleprompter). IA : Groq (jamais la clé Gemini pour la recherche). Une re
 | Champ | Rôle |
 |---|---|
 | `source` | tag de la release (vide = la dernière `voix…`) ou lien Google Drive du fichier voix |
-| `format` | vertical, horizontal ou **les deux** (une seule transcription et un seul passage IA pour les deux) |
+| `format` | **les deux** (défaut : verticale pour le direct, horizontale pour YouTube), vertical ou horizontal — une seule transcription et un seul passage IA |
 | `qualite` | 1080, 1440 ou 2160 (4K, environ 4 fois plus long) |
 | `pays` | `auto` : un seul pays du Golfe dans la voix → ses couleurs (sa, ae, qa, kw, om, bh) ; plusieurs → palette Golfe bleu nuit + or. Une scène consacrée à un pays prend ses accents |
 | `photos` | tag d'une autre release de captures / photos / vidéos (facultatif) |
-| `voix` | **radio** (défaut) : son de studio d'émission — grave chaleureux, présence, sifflantes adoucies, compression, souffle réduit ; `naturel` : nettoyage seul. Les vidéos « à écouter » gardent leur son d'origine |
+| `voix` | **radio** (défaut) : son de studio d'émission (grave chaleureux, présence, sifflantes adoucies, compression, souffle réduit). **+ fort / + très fort** : si tu étais loin du micro ou parlais doucement (voix remontée, plus dense). `naturel` : nettoyage seul. Dans tous les cas la voix est mesurée et calée exactement au niveau de référence YouTube (−14 LUFS) ; une voix trop faible est remontée automatiquement |
 | `effets_sonores` | discret (défaut), normal, non — synthétisés, aucun droit d'auteur |
-| `mots_declencheurs` | oui / non |
+| `extraits` | tout (défaut) / sans ouverture choc / sans rythme / écoutez seulement / aucun |
 | `recherche` | oui (recherche + montage), seule (recherche sans montage), non |
 | `nettoyage_medias` | oui : 30 min après un run **réussi**, les captures / photos / vidéos déposées sont supprimées (la voix reste ; rien n'est supprimé si le run a échoué, si tu as changé les fichiers entre-temps ou si un autre montage attend) |
 

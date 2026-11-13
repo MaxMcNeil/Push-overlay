@@ -320,10 +320,179 @@ function listMedia() {
 }
 /** Une vidéo à monter : on vérifie ici qu'elle se décode vraiment, mais ses images ne sont extraites qu'au moment du rendu,
  *  sur la machine qui en a besoin (le plan transmis reste léger, même avec 20 vidéos). */
-function clipInfo(v, idx, maxDur, side) {
-  execFileSync("ffmpeg", ["-v", "error", "-xerror", "-i", v.file, "-t", "1.5", "-an", "-f", "null", "-"], { stdio: ["ignore", "ignore", "pipe"], timeout: 120000 });
-  const dur = Math.min(v.p.dur, maxDur), n = Math.max(1, Math.floor(dur * 30));
-  return { src: rel(v.file), dir: `content/clips/${String(idx).padStart(2, "0")}`, max: Number(dur.toFixed(3)), side, n, fps: 30, dur: n / 30 };
+const checked = new Set(); let CLIPN = 0;   // chaque passage a son propre dossier d'images
+function clipInfo(v, idx, maxDur, side, ss = 0) {
+  if (!checked.has(v.file)) { execFileSync("ffmpeg", ["-v", "error", "-xerror", "-i", v.file, "-t", "1.5", "-an", "-f", "null", "-"], { stdio: ["ignore", "ignore", "pipe"], timeout: 120000 }); checked.add(v.file); }
+  const dur = Math.max(0.5, Math.min(v.p.dur - ss, maxDur)), n = Math.max(1, Math.floor(dur * 30));
+  return { src: rel(v.file), ss: Number(ss.toFixed(3)), dir: `content/clips/${String(++CLIPN).padStart(3, "0")}`, max: Number(dur.toFixed(3)), side, n, fps: 30, dur: n / 30 };
+}
+// ---------- vidéos jointes : ouverture choc, « écoutez », rythme des extraits (comme Montage LV final) ----------
+// Règles reprises de Montage LV final : la vidéo COMMENCE par le passage le plus fort d'une vidéo jointe (4 à 12 s,
+// phrases complètes, sous-titré) ; puis un élément (extrait, capture, photo) au moins toutes les 60 s pendant les 5
+// premières minutes, ensuite environ toutes les 2 min (extraits automatiques espacés d'au moins 1 min 30) ; au moins 25 s
+// entre deux extraits ; jamais deux fois le même passage ; un extrait n'est posé que dans une vraie pause, en fin de
+// phrase, et seulement s'il est COHÉRENT avec ce qui est dit (mieux vaut un trou qu'un hors-sujet). Tes « écoutez » /
+// « خلينا نسمع » passent toujours.
+const CL = { FIRST: 300, GAP1: 60, GAP2: 120, AUTO_SEP: 90, MIN_SEP: 25, DMIN: 6, DMAX: 15, TMAX: 25, OMIN: 4, OMAX: 12, BATCH: 16 };
+export function clipSentences(words) {
+  return sentencesOf(sane(words, Infinity), 14).map((s) => ({ a: s.t0, b: s.t1, text: s.text }));
+}
+const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+function clipLines(ss, budget) {
+  const all = ss.map((s) => `[${s.a.toFixed(1)}-${s.b.toFixed(1)}] ${s.text}`);
+  let tot = all.reduce((n, l) => n + l.length + 1, 0);
+  if (tot <= budget) return all.join("\n");
+  const step = tot / budget, out = [];           // trop long : lignes prises à intervalles réguliers (toute la vidéo reste représentée)
+  for (let k = 0; k < all.length; k += step) out.push(all[Math.floor(k)]);
+  return out.join("\n");
+}
+/** Bornes calées sur des phrases complètes : début de la phrase la plus proche de a0, fin entre dmin et dmax. */
+export function snapPassage(ss, a0, b0, dmin, dmax, dur) {
+  if (!ss.length) return null;
+  let i = 0, best = Infinity;
+  ss.forEach((s, k) => { const d = Math.abs(s.a - a0) + (s.a < a0 - 1 ? 2 : 0); if (d < best) { best = d; i = k; } });
+  let j = i;
+  while (j + 1 < ss.length && (ss[j].b - ss[i].a < dmin || ss[j + 1].b <= b0 + 0.5) && ss[j + 1].b - ss[i].a <= dmax) j++;
+  const a = Math.max(0, ss[i].a - 0.15), b = Math.min(dur || Infinity, ss[j].b + 0.3, a + dmax + 0.5);
+  return b - a >= Math.min(dmin, 2.5) ? [Number(a.toFixed(2)), Number(b.toFixed(2))] : null;
+}
+const overlaps = (used, f, a, b) => used.some((u) => u.f === f && Math.min(b, u.b) - Math.max(a, u.a) > 0.5);
+/** Enveloppe sonore de la voix (énergie toutes les 10 ms) : sert à poser chaque coupure dans le creux réel d'une
+ *  respiration, même courte, au lieu de se fier seulement aux horaires des mots (qui peuvent être décalés). */
+export function voiceEnvelope(file) {
+  try {
+    const raw = execFileSync("ffmpeg", ["-v", "error", "-i", file, "-ac", "1", "-ar", "8000", "-f", "s16le", "-"], { maxBuffer: 1 << 29 });
+    const n = Math.floor(raw.length / 160), env = new Float32Array(n);
+    for (let k = 0; k < n; k++) { let e = 0; for (let q = 0; q < 80; q++) { const v = raw.readInt16LE((k * 80 + q) * 2) / 32768; e += v * v; } env[k] = Math.sqrt(e / 80); }
+    const sorted = Float32Array.from(env).sort(), speech = sorted[Math.floor(n * 0.7)] || 0;   // niveau typique quand tu parles
+    return { env, speech };
+  } catch { return null; }
+}
+/** Points où un extrait peut s'insérer SANS COUPER UNE PHRASE : fin de phrase, même sur une simple respiration (dès 80 ms) ;
+ *  sinon fin de proposition (virgule) avec une petite pause ; sinon pause nette entre deux groupes de mots. La coupure est
+ *  posée dans le moment le plus silencieux de la respiration (vérifié sur le son) ; fo / fi = fondus qui tiennent dans le
+ *  creux, pour ne jamais rogner la fin ou le début d'un mot. */
+export function pausePoints(words, duration, voice = null) {
+  const pts = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i], nx = words[i + 1], gap = nx ? nx.t0 - w.t1 : 9;
+    const end = /[.!?؟…]["»”)]*$/.test(w.w), clause = /[,،;؛:]["»”)]*$/.test(w.w);
+    if (!nx) { pts.push({ t: Number(Math.min(duration, w.t1 + 0.15).toFixed(3)), fo: 0.1, fi: 0.04, strong: true }); continue; }
+    if (voice) {
+      // fin de phrase : on cherche la respiration dans le son même si les horaires des mots se chevauchent (ils sont
+      // approximatifs) ; ailleurs, seulement là où la transcription voit déjà une pause
+      if (!end && !(clause && gap >= 0.18) && !(gap >= 0.4)) continue;
+      const a = Math.max(1, Math.floor((Math.min(w.t1, nx.t0) - 0.15) * 100)), b = Math.min(voice.env.length - 2, Math.ceil((Math.max(w.t1, nx.t0) + 0.15) * 100));
+      const lim = voice.speech * 0.15;
+      // le plus long creux (énergie sous 15 % du niveau de parole) dans la fenêtre
+      let best = null;
+      for (let k = a; k <= b; k++) { if (voice.env[k] > lim) continue; let r = k; while (r + 1 <= b && voice.env[r + 1] <= lim) r++; if (!best || r - k > best[1] - best[0]) best = [k, r]; k = r; }
+      const need = end ? 6 : 12;                               // au moins 60 ms de vrai silence (120 ms hors fin de phrase)
+      if (!best || best[1] - best[0] + 1 < need) continue;
+      const [l, r] = best, t = (l + r + 1) / 200;            // milieu du creux
+      pts.push({ t: Number(t.toFixed(3)), fo: Math.max(0.01, Math.min(0.15, t - l / 100 - 0.015)), fi: Math.max(0.01, Math.min(0.08, (r + 1) / 100 - t - 0.015)), strong: end });
+      continue;
+    }
+    if (!(end && gap >= 0.08) && !(clause && gap >= 0.22) && !(gap >= 0.45)) continue;
+    pts.push({ t: Number(((w.t1 + nx.t0) / 2).toFixed(3)), fo: Math.max(0.01, Math.min(0.15, gap / 2 - 0.01)), fi: Math.max(0.01, Math.min(0.08, gap / 2 - 0.01)), strong: end });
+  }
+  // deux mots voisins peuvent désigner le même creux : un seul point par creux
+  return pts.sort((x, y) => x.t - y.t).filter((p, k, A) => !k || p.t - A[k - 1].t > 0.05);
+}
+/** Point d'insertion le plus proche d'un instant (annonce « écoutez ») : la respiration qui suit la phrase. */
+export const nearestPoint = (pts, t, maxD = 2.5) => { let best = null; for (const p of pts) if (p.t >= t - 0.3 && Math.abs(p.t - t) <= maxD && (!best || Math.abs(p.t - t) < Math.abs(best.t - t))) best = p; return best; };
+/** Créneaux à remplir selon le rythme. fixed = instants déjà couverts (captures, photos) ; trig = annonces « écoutez ». */
+export function rhythmSlots(points, fixed, trig, duration, opener) {
+  points = points.map((p) => (typeof p === "number" ? { t: p, fo: 0.05, fi: 0.04, strong: true } : p));
+  trig = trig.map((p) => (typeof p === "number" ? { t: p, fo: 0.05, fi: 0.04, strong: true } : p));
+  const slots = trig.map((p) => ({ ...p, must: true }));
+  const T = trig.map((p) => p.t);
+  const ev = [...fixed.map((t) => ({ t, clip: false })), ...T.map((t) => ({ t, clip: true }))].sort((x, y) => x.t - y.t);
+  let last = 0, lastClip = opener ? 0 : -1e9, guard = 0;
+  while (guard++ < 2000) {
+    const gap = last < CL.FIRST ? CL.GAP1 : CL.GAP2, deadline = last + gap;
+    if (deadline >= duration - 8) break;
+    const e = ev.find((x) => x.t > last + 0.5 && x.t <= deadline);
+    if (e) { last = e.t; if (e.clip) lastClip = e.t; continue; }
+    const lo = Math.max(last + CL.MIN_SEP, lastClip + (deadline > CL.FIRST ? CL.AUTO_SEP : CL.MIN_SEP), 12);
+    const ok = (p) => p.t >= lo && p.t <= duration - 6 && !T.some((t) => Math.abs(t - p.t) < CL.MIN_SEP);
+    const inWin = points.filter((p) => ok(p) && p.t <= deadline);
+    // dans la fenêtre : de préférence une fin de phrase (la plus tardive), sinon une fin de proposition
+    const strong = inWin.filter((p) => p.strong);
+    const p = strong.length ? strong[strong.length - 1] : inWin.length ? inWin[inWin.length - 1] : points.find((x) => ok(x) && x.t > deadline);
+    if (p === undefined) break;
+    slots.push({ ...p, must: false });
+    last = p.t; lastClip = p.t;
+  }
+  return slots.sort((a, b) => a.t - b.t);
+}
+const voiceAround = (words, t, before, after) => {
+  const b = words.filter((w) => w.t1 <= t && w.t0 >= t - before).map((w) => w.w).join(" ");
+  const a = words.filter((w) => w.t0 >= t && w.t1 <= t + after).map((w) => w.w).join(" ");
+  return [b.slice(-420), a.slice(0, 260)];
+};
+async function askJson(list, sys, user, label, maxTokens = 4000) {
+  for (const [name, fn] of list) {
+    try { const j = parseJson(await fn(sys, user, { temperature: 0.3, maxTokens, deadline: Date.now() + 170000, timeoutMs: 140000 })); if (j) { console.log(`  ${label} : ${name}`); return j; } }
+    catch (e) { console.log(`  ${label} — ${name} : ${String(e.message).slice(0, 140)}`); }
+  }
+  return null;
+}
+export async function pickOpener(clips, lang, subject, list) {
+  const sp = clips.filter((c) => c.ss.length);
+  if (!sp.length) return null;
+  let choice = null;
+  if (list.length && process.env.EXPLAINER_NO_LLM !== "1") {
+    const txt = sp.map((c, k) => `Vidéo ${k} « ${path.basename(c.file)} » (${c.p.dur.toFixed(0)} s) :\n${clipLines(c.ss, Math.max(2500, 16000 / sp.length))}`).join("\n\n");
+    const j = await askJson(list, `Tu es le monteur d'une chaîne d'analyse géopolitique (langue ${pick(L.langName, lang)}). Réponds UNIQUEMENT en JSON.`,
+      `La vidéo doit COMMENCER par une OUVERTURE CHOC : le passage le plus fort, le plus choquant ou le plus saisissant d'une des vidéos ci-dessous (phrase qui choque, chiffre terrible, aveu, accusation, moment d'émotion), compréhensible seul, qui donne envie de rester. Sujet de la vidéo : ${subject}\n\n${txt}\n\nChoisis UN passage de ${CL.OMIN} à ${CL.OMAX} secondes, qui commence et finit sur une phrase complète (bornes [début-fin] ci-dessus), jamais le générique du début.\nJSON : {"video": numéro, "start": secondes, "end": secondes, "why": "pourquoi c'est le plus fort"}`, "ouverture choc");
+    const c = j && sp[Math.round(Number(j.video))];
+    if (c && isFinite(Number(j.start)) && Number(j.end) > Number(j.start)) choice = { c, a0: Number(j.start), b0: Number(j.end), why: cutWords(j.why, 25) };
+  }
+  if (!choice) {                                             // sans IA : premières phrases complètes après l'éventuel générique
+    const c = sp[0], s0 = c.ss.find((s) => s.a >= 1.5) || c.ss[0];
+    choice = { c, a0: s0.a, b0: s0.a + 9, why: "" };
+  }
+  const ab = snapPassage(choice.c.ss, choice.a0, choice.b0, CL.OMIN, CL.OMAX, choice.c.p.dur);
+  return ab ? { c: choice.c, a: ab[0], b: ab[1], why: choice.why } : null;
+}
+/** Choisit le passage de chaque créneau (un appel IA pour 16 créneaux). Créneau obligatoire sans réponse valable : passage
+ *  suivant non encore utilisé (dans l'ordre des fichiers). Créneau automatique sans passage cohérent : laissé vide. */
+export async function fillSlots(slots, clips, words, used, lang, list) {
+  const sp = clips.filter((c) => c.ss.length), res = [], holes = [];
+  if (!sp.length) return { res, holes: slots.filter((s) => !s.must).length, mustLost: slots.filter((s) => s.must).length };
+  const useAI = list.length && process.env.EXPLAINER_NO_LLM !== "1";
+  for (let k0 = 0; k0 < slots.length; k0 += CL.BATCH) {
+    const batch = slots.slice(k0, k0 + CL.BATCH);
+    let ans = {};
+    if (useAI) {
+      const vids = sp.map((c, k) => `Vidéo ${k} « ${path.basename(c.file)} » (${c.p.dur.toFixed(0)} s) :\n${clipLines(c.ss, Math.max(2000, 14000 / sp.length))}`).join("\n\n");
+      const sl = batch.map((s, k) => { const [bf, af] = voiceAround(words, s.t, 30, 15); return `Créneau ${k}${s.must ? " (OBLIGATOIRE : l'auteur annonce l'extrait, il faut un passage)" : ""} — à ${mmss(s.t)}\n  avant : « ${bf} »\n  après : « ${af} »`; }).join("\n");
+      const j = await askJson(list, `Tu es le monteur d'une vidéo d'analyse (langue ${pick(L.langName, lang)}) pour un public de 50 ans et plus. Réponds UNIQUEMENT en JSON.`,
+        `Pour garder l'attention, on insère un court passage d'une des vidéos jointes pendant une pause de l'auteur (sa voix attend, puis reprend). Pour chaque CRÉNEAU, choisis le passage qui illustre le mieux CE QUE L'AUTEUR DIT À CE MOMENT-LÀ (même sujet, même fait, même personne, même chiffre).\n\nCRÉNEAUX :\n${sl}\n\nVIDÉOS JOINTES (phrases horodatées en secondes) :\n${vids}\n\nPASSAGES DÉJÀ UTILISÉS (interdits, même en partie) : ${used.map((u) => `${path.basename(u.f)} ${u.a.toFixed(0)}-${u.b.toFixed(0)} s`).join(" ; ") || "aucun"}\n\nRègles : passage de ${CL.DMIN} à ${CL.DMAX} s (créneau obligatoire : jusqu'à ${CL.TMAX} s), qui commence au début d'une phrase et finit à la fin d'une phrase, compréhensible seul ; en rapport DIRECT avec ce que dit l'auteur juste avant, et qui s'enchaîne avec ce qu'il dit juste après ; jamais deux fois le même passage. Note ta certitude du lien de 0 à 10. Si aucun passage n'est vraiment cohérent pour un créneau non obligatoire : "video": null.\nJSON : {"slots":[{"slot": numéro, "video": numéro ou null, "start": secondes, "end": secondes, "score": 0-10}]}`, `extraits ${k0 / CL.BATCH + 1}/${Math.ceil(slots.length / CL.BATCH)}`, 3000);
+      for (const r of Array.isArray(j?.slots) ? j.slots : []) ans[Math.round(Number(r?.slot))] = r;
+    }
+    batch.forEach((s, k) => {
+      const r = ans[k];
+      let got = null;
+      if (r && r.video !== null && r.video !== undefined) {
+        const c = sp[Math.round(Number(r.video))];
+        if (c && isFinite(Number(r.start)) && (s.must || Number(r.score) >= 6)) {
+          const ab = snapPassage(c.ss, Number(r.start), Number(r.end), CL.DMIN, s.must ? CL.TMAX : CL.DMAX, c.p.dur);
+          if (ab && !overlaps(used, c.file, ab[0], ab[1])) got = { c, a: ab[0], b: ab[1] };
+        }
+      }
+      if (!got && s.must) {                                // annonce entendue : on joue toujours quelque chose
+        for (const c of sp) { for (const x of c.ss) { const ab = snapPassage(c.ss, x.a, x.a + 10, 8, CL.DMAX, c.p.dur); if (ab && !overlaps(used, c.file, ab[0], ab[1])) { got = { c, a: ab[0], b: ab[1] }; break; } } if (got) break; }
+      }
+      // annonce entendue mais tous les passages déjà montrés (vidéo jointe courte) : on rejoue le passage le plus ancien
+      // plutôt que de laisser l'annonce sans rien (signalé dans le plan)
+      if (!got && s.must && res.length) { const r0 = [...res].sort((x, y) => (x.reuse || 0) - (y.reuse || 0))[0]; r0.reuse = (r0.reuse || 0) + 1; got = { c: r0.c, a: r0.a, b: r0.b, reused: true }; }
+      if (got) { if (!got.reused) used.push({ f: got.c.file, a: got.a, b: got.b }); res.push({ ...got, t: s.t, fo: s.fo, fi: s.fi, must: s.must }); } else holes.push(s);
+    });
+    if (useAI && k0 + CL.BATCH < slots.length) await new Promise((r) => setTimeout(r, Number(process.env.EXPLAINER_LLM_PAUSE_MS || 6000)));
+  }
+  return { res, holes: holes.filter((s) => !s.must).length, mustLost: holes.filter((s) => s.must).length };
 }
 const thumb = (file, at = 0) => execFileSync("ffmpeg", ["-v", "error", ...(at ? ["-ss", at.toFixed(2)] : []), "-i", file, "-vf", "scale='min(640,iw)':'min(640,ih)':force_original_aspect_ratio=decrease", "-frames:v", "1", "-q:v", "7", "-f", "mjpeg", "-"], { maxBuffer: 1 << 24 });
 
@@ -393,30 +562,35 @@ let LANG_OF_PLAN = "ar";
 export function placeMedia(scenes, items, lang = LANG_OF_PLAN) {
   LANG_OF_PLAN = lang;
   if (!items.length || !scenes.length) return 0;
-  const body = scenes.map((_, i) => i).filter((i) => scenes[i].type !== "outro");
+  const body = scenes.map((_, i) => i).filter((i) => scenes[i].type !== "outro" && !scenes[i].big);
   const pool = body.length > 1 ? body.slice(1) : body;                       // l'accroche est épargnée tant que c'est possible
+  // médias déjà posés (2e appel) : comptés, et les nouveaux s'ajoutent à la suite (rien n'est remplacé)
+  const pre = new Map(pool.map((i) => [i, scenes[i].type === "photo" ? 99 : (scenes[i].data?.media || []).length]));
   const load = new Map(pool.map((i) => [i, []]));
+  const n = (i) => pre.get(i) + load.get(i).length;
   const cap = (i) => Math.max(1, Math.floor((scenes[i].t1 - scenes[i].t0) / 2.4));   // ≥ 2,4 s par média tant que possible
   const rest = [];
   for (const x of items) {
-    if (x.sentence === null) { rest.push(x); continue; }
+    if (x.sentence === null || x.sentence === undefined) { rest.push(x); continue; }
     const i = scenes.findIndex((s) => s.from <= x.sentence && x.sentence <= s.to);
-    const c = [i, i + 1, i - 1, i + 2, i - 2].find((k) => load.has(k) && load.get(k).length === 0) ?? [i, i + 1, i - 1].find((k) => load.has(k) && load.get(k).length < cap(k));
+    const c = [i, i + 1, i - 1, i + 2, i - 2].find((k) => load.has(k) && n(k) === 0) ?? [i, i + 1, i - 1].find((k) => load.has(k) && n(k) < cap(k));
     if (c === undefined) rest.push(x); else load.get(c).push(x);
   }
   // le reste : scènes vides réparties régulièrement, puis scènes ayant encore de la place, puis la moins chargée (garantie)
-  const empty = pool.filter((i) => load.get(i).length === 0);
+  const empty = pool.filter((i) => n(i) === 0);
   rest.forEach((x, k) => {
     let i;
     if (k < empty.length) i = empty[Math.min(empty.length - 1, Math.floor(((k + 0.5) * empty.length) / Math.min(rest.length, empty.length)))];
-    if (i === undefined || load.get(i).length) i = pool.find((p) => load.get(p).length === 0) ?? pool.filter((p) => load.get(p).length < cap(p)).sort((a, b) => load.get(a).length - load.get(b).length)[0]
-      ?? [...pool].sort((a, b) => load.get(a).length / (scenes[a].t1 - scenes[a].t0) - load.get(b).length / (scenes[b].t1 - scenes[b].t0))[0];
+    if (i === undefined || n(i)) i = pool.find((p) => n(p) === 0) ?? pool.filter((p) => n(p) < cap(p)).sort((a, b) => n(a) - n(b))[0]
+      ?? [...pool].sort((a, b) => n(a) / (scenes[a].t1 - scenes[a].t0) - n(b) / (scenes[b].t1 - scenes[b].t0))[0];
     load.get(i).push(x);
   });
   let used = 0;
   for (const [i, list] of load) {
     if (!list.length) continue;
     const s = scenes[i], d = s.data, first = list[0];
+    if (s.type === "shot" && Array.isArray(d.media) && d.media.length) { d.media = [...d.media, ...list.map(mediaData)]; used += list.length; continue; }
+    if (s.type === "photo") { d.media = [{ kind: "img", image: d.photo, iw: 0, ih: 0, crop: null }, ...list.map(mediaData)]; s.type = "shot"; delete d.photo; used += list.length; continue; }
     const title = d.title || d.label || d.quote || [d.a, d.b].filter(Boolean).join(" · ") || first.caption;
     // crédit de la source affiché sous le média (« المصدر : الجزيرة ») ; sinon la légende, comme avant
     const source = creditLine(list, LANG_OF_PLAN) || first.caption || d.source;
@@ -476,14 +650,17 @@ export function insertClips(scenes, inserts, lang) {
     let at = ins.vt + shift;
     let i = scenes.findIndex((s) => s.t0 <= at && at < s.t1); if (i < 0) i = scenes.length - 1;
     const s = scenes[i];
-    if (s.t1 - at < 1.0) at = s.t1; else if (at - s.t0 < 1.0) at = s.t0;          // trop près d'un bord : on se cale dessus
-    const clip = { type: "shot", t0: at, t1: at + ins.dur, big: true, transition: "zoom", data: { kicker: pick(L.listen, lang), media: [ins.media], ...(ins.credit ? { source: `${SRC_LABEL[lang] || SRC_LABEL.en} : ${ins.credit}` } : {}) } };
+    // la coupure reste dans la pause (jamais au milieu d'un mot) ; un bout de scène de moins d'1 s est rendu à la voisine
+    const source = ins.credit ? `${SRC_LABEL[lang] || SRC_LABEL.en} : ${ins.credit}` : (ins.label || "");
+    const clip = { type: "shot", t0: at, t1: at + ins.dur, big: true, opener: !!ins.opener, transition: ins.opener ? "open" : "zoom", data: { kicker: ins.opener ? "" : pick(L.listen, lang), source, media: [ins.media] } };
     let idx;
     if (at === s.t1) idx = i + 1; else if (at === s.t0) idx = i;
+    else if (at - s.t0 < 1.0 && i > 0) { scenes[i - 1].t1 = at; s.t0 = at; idx = i; }
+    else if (s.t1 - at < 1.0 && i < scenes.length - 1) { s.t1 = at; scenes[i + 1].t0 = at; idx = i + 1; }
     else { const span = s.span || s.t1 - s.t0, off = s.offset || 0; scenes.splice(i, 1, { ...s, t1: at, span }, { ...s, t0: at, offset: off + (at - s.t0), span, transition: "cut" }); idx = i + 1; }
     scenes.splice(idx, 0, clip);
     for (let k = idx + 1; k < scenes.length; k++) { scenes[k].t0 += ins.dur; scenes[k].t1 += ins.dur; }
-    cuts.push({ voiceAt: at - shift, at, dur: ins.dur, file: ins.file, audio: ins.audio });
+    cuts.push({ voiceAt: at - shift, at, dur: ins.dur, file: ins.file, name: ins.name || "", ss: ins.ss || 0, audio: ins.audio, opener: !!ins.opener, fo: ins.fo, fi: ins.fi });
     shift += ins.dur;
   }
   return { cuts, shift };
@@ -507,16 +684,14 @@ async function main() {
   const raw = process.env.EXPLAINER_NO_LLM === "1" ? null : await askLLM(sents, lang, th, duration);
   if (!raw) sents = sentencesOf(words, 9);          // sans IA : phrases courtes, affichées mot pour mot
   let scenes = build(sents, raw, lang, duration);
-  for (const s of scenes) if (s.country && s.country !== th.code) s.accent = sceneAccent(s.country);
+  for (const s of scenes) { if (s.country && s.country !== th.code) s.accent = sceneAccent(s.country); if (s.country) s.chip = countryChip(s.country, lang); }
   const base = Number(QUALITY) >= 2160 ? 2160 : Number(QUALITY) >= 1440 ? 1440 : 1080;
 
   // --- médias fournis : captures / photos / vidéos. TOUS sont insérés.
   const { imgs, vids, bad } = listMedia(); const notes = bad.map((b) => `⚠ média illisible ou trop court, ignoré : ${b}`);
   try { const vc = readFileSync("input/voice-choice.txt", "utf8").trim(); if (vc) notes.unshift(vc); } catch { /* voix venue d'un lien : rien à dire */ }
-  const side = base >= 2160 ? 1440 : 960, CLIP_MAX = Number(process.env.EXPLAINER_CLIP_MAX_S || 180);   // ton enregistrement = le passage choisi : joué en entier (3 min max)
-  // 1) mots déclencheurs (« écoutez », « خلينا نسمع »…) → vidéos jouées avec leur son, dans l'ordre des noms de fichiers
-  const trig = process.env.EXPLAINER_TRIGGERS === "non" ? [] : triggerSentences(sents);
-  const inserts = [], broll = [];
+  const side = base >= 2160 ? 1440 : 960, CLIP_MAX = Number(process.env.EXPLAINER_CLIP_MAX_S || 180);   // ton enregistrement annoncé = joué en entier (3 min max)
+  const list = process.env.EXPLAINER_NO_LLM === "1" ? [] : providers(), used = [], inserts = [], broll = [];
   // 0) enregistrements d'écran BRUTS du téléphone : recadrés sur le lecteur vidéo et débarrassés du début / de la fin
   //    hors vidéo (ouverture de l'appli, défilement, arrêt de l'enregistrement) ; une vidéo normale n'est pas touchée
   for (const v of vids) {
@@ -525,34 +700,82 @@ async function main() {
     if (r.file !== v.file) { const p2 = probe(r.file); if (p2 && p2.dur >= 0.5) { v.file = r.file; v.p = p2; } }
     v.prep = r; for (const n of r.notes) notes.push(`✂ ${path.basename(v.orig)} : ${n}`);
   }
-  const okVids = vids.filter((v, k) => { try { v.frames = clipInfo(v, k + 1, CLIP_MAX, side); return true; } catch (e) { notes.push(`⚠ vidéo illisible ignorée : ${path.basename(v.orig || v.file)}`); return false; } });
+  const okVids = vids.filter((v) => { try { v.frames = clipInfo(v, 0, CLIP_MAX, side); return true; } catch (e) { notes.push(`⚠ vidéo illisible ignorée : ${path.basename(v.orig || v.file)}`); return false; } });
   // 1) UN SEUL appel Gemini pour TOUS les médias : phrase illustrée, recadrage, légende, SOURCE à créditer ; pour une
   //    vidéo dont le lecteur n'a pas pu être repéré par le mouvement, Gemini donne la zone du lecteur → recadrage
   await analyseMedia([...imgs, ...okVids], sents, lang);
-  okVids.forEach((v, k) => {
+  okVids.forEach((v) => {
     if (v.prep?.status !== "incertain" || !v.vbox) return;
     const r = prepClip({ file: v.orig, p: probe(v.orig) }, "content/clips-prep", { box: v.vbox, t0: v.prep.t0, t1: v.prep.t1 });
     const p2 = r.file !== v.orig ? probe(r.file) : null;
-    if (p2 && p2.dur >= 0.5) { v.file = r.file; v.p = p2; try { v.frames = clipInfo(v, k + 1, CLIP_MAX, side); notes.push(`✂ ${path.basename(v.orig)} : lecteur repéré par l'IA, recadrée`); } catch { /* garde la version précédente */ } }
+    if (p2 && p2.dur >= 0.5) { v.file = r.file; v.p = p2; v.prep = { ...v.prep, ...r }; try { v.frames = clipInfo(v, 0, CLIP_MAX, side); notes.push(`✂ ${path.basename(v.orig)} : lecteur repéré par l'IA, recadrée`); } catch { /* garde la version précédente */ } }
   });
-  // 2) quelle vidéo pour quel mot déclencheur : d'après le CONTENU (repli : ordre des noms de fichiers)
-  const assign = process.env.EXPLAINER_NO_LLM === "1" ? (trig.length ? okVids.slice(0, trig.length).map((_, k) => ({ trig: trig[k], vid: k, how: "ordre des fichiers" })) : [])
+  // 2) paroles des vidéos (content/clips-asr.json, transcrites sur le fichier d'ORIGINE) → recalées sur la vidéo préparée
+  //    (début coupé par la préparation) ; servent à choisir les passages, à les sous-titrer et à relier vidéo et annonce
+  let asr = {}; try { asr = JSON.parse(readFileSync("content/clips-asr.json", "utf8")); } catch { /* pas de transcription : images seulement */ }
+  for (const v of okVids) {
+    const a = asr[path.basename(v.orig || v.file)], off = v.file !== v.orig && v.prep && Number(v.prep.t0) > 0 ? Number(v.prep.t0) : 0;
+    const ws = v.p.audio && a && Array.isArray(a.words) ? a.words.map((w) => ({ ...w, t0: Number(w.t0) - off, t1: Number(w.t1) - off })).filter((w) => w.t0 >= 0 && w.t1 <= v.p.dur + 0.3) : [];
+    v.ss = ws.length >= 4 ? clipSentences(ws) : [];
+    if (ws.length) v.heardText = ws.slice(0, 70).map((w) => w.w).join(" ");      // évite une 2e transcription pour l'association
+  }
+  const speech = okVids.filter((v) => v.ss.length);
+  const subsOf = (c, a, b) => c.ss.filter((x) => x.b > a + 0.2 && x.a < b - 0.2).map((x) => ({ t0: Number(Math.max(0, x.a - a).toFixed(2)), t1: Number(Math.min(b - a, x.b - a).toFixed(2)), text: clean(x.text, 160) }));
+  const mk = (c, a, b, extra) => {
+    const m = { ...clipInfo(c, 0, b - a, side, a), kind: "vid", iw: c.p.w, ih: c.p.h, subs: subsOf(c, a, b) };
+    return { dur: m.dur, ss: a, media: m, file: rel(c.file), name: path.basename(c.orig || c.file), audio: true, credit: c.credit || "", label: cutWords(path.basename(c.orig || c.file).replace(/\.[^.]+$/, "").replace(/^\d+[-_ ]*/, "").replace(/[_-]+/g, " "), 6), ...extra };
+  };
+  // 3) respirations de la voix : seuls endroits où un extrait peut couper ta parole (jamais au milieu d'un mot)
+  const venv = voiceEnvelope(process.env.EXPLAINER_VOICE_FILE || "input/voice.wav");
+  const pts = pausePoints(words, duration, venv);
+  const at = (k) => { const sn = sents[k], nx = sents[k + 1]; return nearestPoint(pts, sn.t1) || { t: nx ? Number(((sn.t1 + nx.t0) / 2).toFixed(3)) : duration, fo: 0.03, fi: 0.03, strong: true }; };
+  // 4) mots déclencheurs (« écoutez », « خلينا نسمع »…) : la vidéo annoncée choisie d'après son CONTENU, jouée en entier
+  const trig = process.env.EXPLAINER_TRIGGERS === "non" ? [] : triggerSentences(sents);
+  const assign = !list.length ? (trig.length ? okVids.slice(0, trig.length).map((_, k) => ({ trig: trig[k], vid: k, how: "ordre des fichiers" })) : [])
     : await matchTriggers(trig, okVids, sents).catch((e) => { console.log(`  association des vidéos impossible (${e.message}) : ordre des fichiers`); return okVids.slice(0, trig.length).map((_, k) => ({ trig: trig[k], vid: k, how: "ordre des fichiers" })); });
-  const heardVid = new Map(assign.map((a) => [a.vid, a]));
+  const heardVid = new Map(assign.map((a) => [a.vid, a])), reserved = new Set();
   okVids.forEach((v, k) => {
-    const a = heardVid.get(k);
-    if (!a) { v.frames = clipInfo(v, k + 1, 20, side); broll.push(v); return; }
-    const sn = sents[a.trig], nx = sents[a.trig + 1];
-    inserts.push({ vt: nx ? (sn.t1 + nx.t0) / 2 : duration, dur: v.frames.dur, media: mediaData(v), file: rel(v.file), audio: v.p.audio, credit: v.credit || "" });
-    notes.push(`▶ « ${clean(sn.text, 60)} » → ${path.basename(v.orig || v.file)} (choisie selon : ${a.how}${v.credit ? ` ; source : ${v.credit}` : ""})`);
+    const a = heardVid.get(k); if (!a) return;
+    reserved.add(v.file);
+    const dur = Math.min(v.p.dur, CLIP_MAX), p = at(a.trig);
+    inserts.push({ ...mk(v, 0, dur, {}), vt: p.t, fo: p.fo, fi: p.fi, audio: v.p.audio });
+    used.push({ f: v.file, a: 0, b: dur });
+    notes.push(`▶ « ${clean(sents[a.trig].text, 60)} » → ${path.basename(v.orig || v.file)} (choisie selon : ${a.how}${v.credit ? ` ; source : ${v.credit}` : ""})`);
     if (v.p.dur > CLIP_MAX + 0.5) notes.push(`⚠ ${path.basename(v.orig || v.file)} : ${v.p.dur.toFixed(0)} s, joué ${CLIP_MAX} s`);
   });
-  if (trig.length > vids.length && vids.length) notes.push(`${trig.length} mots déclencheurs entendus pour ${vids.length} vidéo(s) : les ${trig.length - vids.length} derniers n'ont pas de vidéo`);
-  for (const x of [...imgs, ...okVids]) if (x.credit) notes.push(`© ${path.basename(x.orig || x.file)} : source affichée « ${x.credit} »`);
-  // 3) captures, photos et vidéos montrées sans leur son : posées là où tu en parles — aucune n'est écartée
+  const unserved = trig.filter((t) => !assign.some((a) => a.trig === t));
+  // 5) ouverture choc : le passage le plus fort d'une vidéo jointe (de préférence une vidéo qui n'est pas annoncée plus loin)
+  let opener = null;
+  if (speech.length && process.env.EXPLAINER_OPENER !== "non") {
+    const pool = speech.filter((v) => !reserved.has(v.file)), subject = scenes[0]?.data?.title || sents.slice(0, 3).map((x) => x.text).join(" ").slice(0, 300);
+    opener = await pickOpener(pool.length ? pool : speech, lang, subject, list);
+    if (opener) { if (!reserved.has(opener.c.file)) used.push({ f: opener.c.file, a: opener.a, b: opener.b }); inserts.push(mk(opener.c, opener.a, opener.b, { vt: 0, opener: true }));
+      notes.push(`⚡ ouverture choc : ${path.basename(opener.c.orig || opener.c.file)} de ${mmss(opener.a)} à ${mmss(opener.b)}${opener.why ? ` — ${opener.why}` : ""}${reserved.has(opener.c.file) ? " (cette vidéo est aussi jouée en entier plus loin, sur ton annonce)" : ""}`); }
+  } else if (!okVids.length) notes.push("⚡ pas d'ouverture choc : aucune vidéo jointe");
+  else if (!speech.length) notes.push("⚡ pas d'ouverture choc : les vidéos jointes n'ont pas de paroles");
+  // 6) captures, photos et vidéos sans paroles : posées là où tu en parles — aucune n'est écartée
+  for (const v of okVids) if (!v.ss.length && !reserved.has(v.file)) { v.frames = clipInfo(v, 0, 20, side); broll.push(v); }
   const items = [...imgs, ...broll];
   const placed = placeMedia(scenes, items, lang);
-  // 3) insertion des vidéos à écouter (la voix attend, puis reprend)
+  // 7) rythme (comme Montage LV) : un élément au moins toutes les 60 s puis toutes les 2 min ; passages des vidéos à
+  //    paroles NON annoncées (une vidéo annoncée est jouée en entier : on ne la découpe pas) ; annonces sans vidéo
+  //    attribuée = créneaux obligatoires
+  const rpool = speech.filter((v) => !reserved.has(v.file));
+  const fixed = scenes.filter((x) => x.type === "shot" || x.type === "photo").map((x) => x.t0);
+  let slots = rhythmSlots(pts, fixed, trig.map(at), duration, !!opener).filter((x) => !x.must);
+  if (process.env.EXPLAINER_RHYTHM === "non") slots = [];
+  slots = [...slots, ...unserved.map((k) => ({ ...at(k), must: true }))].sort((x, y) => x.t - y.t);
+  const fill = await fillSlots(slots, rpool.length ? rpool : speech, words, used, lang, list);
+  for (const r of fill.res) inserts.push(mk(r.c, r.a, r.b, { vt: r.t, must: r.must, fo: r.fo, fi: r.fi }));
+  if (slots.length) notes.push(`🎞️ rythme des extraits : ${fill.res.filter((r) => !r.must).length} extrait(s) ajouté(s)${unserved.length ? ` · ${fill.res.filter((r) => r.must).length}/${unserved.length} annonce(s) sans vidéo attribuée servie(s) par un passage` : ""}${fill.holes ? ` · ${fill.holes} créneau(x) laissé(s) vide(s) : aucun passage vraiment cohérent${list.length ? "" : " (pas d'IA pour les choisir)"}${rpool.length ? "" : " (toutes tes vidéos à paroles sont annoncées : elles sont jouées en entier)"}` : ""}`);
+  if (fill.res.some((r) => r.reused)) notes.push(`⚠ ${fill.res.filter((r) => r.reused).length} annonce(s) ont rejoué un passage déjà montré : pas assez de vidéo pour toutes tes annonces`);
+  if (fill.mustLost) notes.push(`⚠ ${fill.mustLost} annonce(s) « écoutez » sans extrait : ${!speech.length ? "aucune vidéo jointe avec paroles" : "plus d'annonces que de vidéos (chaque vidéo annoncée est déjà jouée en entier) — dépose une vidéo par annonce"}`);
+  for (const x of [...imgs, ...okVids]) if (x.credit) notes.push(`© ${path.basename(x.orig || x.file)} : source affichée « ${x.credit} »`);
+  // 8) vidéos à paroles jamais montrées : posées en image (sans leur son) pour que chaque pièce jointe apparaisse
+  const shown = new Set([...used.map((u) => u.f), ...reserved]);
+  const rest = speech.filter((v) => !shown.has(v.file));
+  if (rest.length) { rest.forEach((v) => { v.frames = clipInfo(v, 0, 20, side); v.sentence = null; }); placeMedia(scenes, rest, lang); }
+  const broll2 = [...broll, ...rest];
   const { cuts, shift } = insertClips(scenes, inserts, lang);
   const total0 = duration + shift;
 
@@ -575,7 +798,9 @@ async function main() {
   // poids : chaque fichier reste sous la limite des releases (2 Go) quelle que soit la durée
   const scale = (base * long) / (1080 * 1920), maxrateK = Math.max(900, Math.min(Math.round(10000 * scale), Math.floor((1.75e9 * 8) / total / 1000) - 200));
   if (maxrateK < 5000 * scale) notes.push(`vidéo longue : débit plafonné à ${(maxrateK / 1000).toFixed(1)} Mb/s pour rester sous 2 Go par fichier${base > 1080 ? " — en 1080 l'image sera plus nette à ce débit" : ""}`);
-  const spec = { w, h, fps: 30, maxrateK, grain: total <= 20 * 60, duration: Math.round(total * 30) / 30, voice: duration, voiceEnd: total0, cuts, lang, dir: RTL(lang) ? "rtl" : "ltr", seed: hash(full), themeCode: th.code, theme: th.theme,
+  // bandeau défilant (format horizontal) : les idées fortes de la vidéo, dans l'ordre, comme une chaîne d'information
+  const ticker = [...new Set(scenes.filter((x) => !x.big && x.type !== "outro").map((x) => cutWords(x.data.title || x.data.label || x.data.quote || "", 9).replace(/[.…]+$/, "")).filter((x) => wc(x) >= 2))].slice(0, 60);
+  const spec = { w, h, fps: 30, maxrateK, ticker, tickerLabel: pick(L.kicker, lang), grain: total <= 20 * 60, duration: Math.round(total * 30) / 30, voice: duration, voiceEnd: total0, cuts, lang, dir: RTL(lang) ? "rtl" : "ltr", seed: hash(full), themeCode: th.code, theme: th.theme,
     logo, logoAlpha: logo ? hasAlpha(logo) : false, channel: ch.nom || "", crf: base >= 2160 ? 21 : 19, scenes };
   mkdirSync(path.dirname(OUT), { recursive: true });
   for (const f of ["vertical", "horizontal"]) { const p = OUT.replace(/\.json$/, `-${f}.json`); if (existsSync(p)) rmSync(p); }
@@ -600,8 +825,8 @@ async function main() {
   writeFileSync("output/youtube.json", JSON.stringify(yt, null, 1));
   const md = [`# Faceless live arabic — plan`, ``, `## Fiche YouTube${yt.ai ? "" : " (écrite sans IA : à relire)"}`, ``, `**Titre** : ${yt.title}`, ``, "```", yt.description, "```", ``, `## Montage`, ``, `- Durée voix : ${duration.toFixed(1)} s · langue : ${lang} · format : ${formats.join(" + ")} (${base}p)`, `- Palette : **${th.code}** — ${th.why}`, `- Chaîne / logo : ${ch.why || "—"}`,
     `- Écriture : ${raw ? "IA" : "sans IA (phrases prononcées affichées telles quelles)"} `,
-    `- Médias : ${imgs.length} capture(s)/photo(s) + ${broll.length} vidéo(s) d'illustration → **${placed}/${items.length} insérés**${imgs.some((x) => x.crop) ? ` (${imgs.filter((x) => x.crop).length} recadrés par l'IA)` : ""} · ${cuts.length} vidéo(s) à écouter insérée(s) sur mot déclencheur`, ...notes.map((n) => `- ${n}`), ``, `| # | début | durée | type | pays | texte |`, `|---|---|---|---|---|---|`,
-    ...scenes.map((s, i) => `| ${i + 1} | ${s.t0.toFixed(1)} s | ${(s.t1 - s.t0).toFixed(1)} s | ${s.type}${s.data.media ? ` ×${s.data.media.length}` : ""}${s.offset ? " (suite)" : ""} | ${s.country || ""} | ${(s.big ? `▶ vidéo à écouter (${path.basename(cuts.find((c) => Math.abs(c.at - s.t0) < 0.01)?.file || "")})` : s.data.title || s.data.quote || s.data.label || [s.data.a, s.data.b].filter(Boolean).join(" / ") || (s.data.items || []).map((x) => x.date || x.name).join(" · ")).replace(/\|/g, "/")} |`)].join("\n");
+    `- Médias : ${imgs.length} capture(s)/photo(s) + ${okVids.length} vidéo(s) → **${placed + rest.length}/${imgs.length + broll2.length} posés en image**${imgs.some((x) => x.crop) ? ` (${imgs.filter((x) => x.crop).length} recadrés par l'IA)` : ""} · ${cuts.length} extrait(s) avec le son${opener ? " (ouverture choc comprise)" : ""}`, ...notes.map((n) => `- ${n}`), ``, `| # | début | durée | type | pays | texte |`, `|---|---|---|---|---|---|`,
+    ...scenes.map((s, i) => `| ${i + 1} | ${s.t0.toFixed(1)} s | ${(s.t1 - s.t0).toFixed(1)} s | ${s.type}${s.data.media ? ` ×${s.data.media.length}` : ""}${s.offset ? " (suite)" : ""} | ${s.country || ""} | ${(s.big ? `${s.opener ? "⚡ ouverture choc" : "▶ extrait avec le son"} (${(() => { const c = cuts.find((x) => Math.abs(x.at - s.t0) < 0.01); return c?.name || path.basename(c?.file || ""); })()} ${mmss(cuts.find((c) => Math.abs(c.at - s.t0) < 0.01)?.ss || 0)})` : s.data.title || s.data.quote || s.data.label || [s.data.a, s.data.b].filter(Boolean).join(" / ") || (s.data.items || []).map((x) => x.date || x.name).join(" · ")).replace(/\|/g, "/")} |`)].join("\n");
   mkdirSync("output", { recursive: true }); writeFileSync("output/EXPLAINER.md", md + "\n");
   console.log(`✔ ${OUT} : ${scenes.length} scènes (${scenes.map((s) => s.type).join(", ")})`);
 }

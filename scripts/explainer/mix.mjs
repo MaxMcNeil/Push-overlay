@@ -3,8 +3,8 @@
 // transition, impact grave à l'ouverture, petite note claire sur les chiffres et la carte de fin.
 // Niveau volontairement bas (EXPLAINER_SFX = discret | normal | non). La voix est nettoyée et mise au niveau YouTube.
 //   node scripts/explainer/mix.mjs <voix> [spec.json] [video.mp4] [sortie.mp4]
-import { execFileSync } from "child_process";
-import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, rmSync } from "fs";
+import { execFileSync, spawnSync } from "child_process";
+import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, rmSync, renameSync } from "fs";
 import path from "path";
 
 const VOICE = process.argv[2] || "input/voice.wav";
@@ -44,6 +44,17 @@ function wav(buf, file) {
   writeFileSync(file, b);
 }
 
+/** Retard (s) du son traité par rapport à l'original : corrélation des enveloppes (1 ms) sur la première minute. */
+function latency(a, b) {
+  try {
+    const rd = (f) => { const r = execFileSync("ffmpeg", ["-v", "error", "-i", f, "-t", "60", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"], { maxBuffer: 1 << 26 });
+      const n = Math.floor(r.length / 16), e = new Float64Array(n); for (let k = 0; k < n; k++) { let x = 0; for (let q = 0; q < 8; q++) x += Math.abs(r.readInt16LE((k * 8 + q) * 2)); e[k] = x; } return e; };
+    const ea = rd(a), eb = rd(b); let best = 0, bv = -Infinity;
+    for (let l = 0; l <= 150; l++) { let c = 0; const n = Math.min(ea.length, eb.length - l); for (let i = 0; i < n; i++) c += ea[i] * eb[i + l]; if (c > bv) { bv = c; best = l; } }
+    return best / 1000;
+  } catch { return 0; }
+}
+
 function main() {
   for (const f of [VOICE, SPEC, VIDEO]) if (!existsSync(f)) throw new Error(`${f} introuvable`);
   const spec = JSON.parse(readFileSync(SPEC, "utf8"));
@@ -51,7 +62,7 @@ function main() {
   mkdirSync(path.dirname(OUT), { recursive: true });
   const tmp = OUT.replace(/\.mp4$/i, ""), sfx = `${tmp}-sfx.wav`, buf = new Float32Array(Math.ceil((total + 0.5) * (FX = total > 2400 ? 24000 : 48000)));
   if (g) {
-    add(buf, 0, boom(), g * 2.2);
+    if (!(spec.cuts || []).some((c) => c.opener && c.at < 0.5)) add(buf, 0, boom(), g * 2.2);   // ouverture choc : son de l'extrait seul
     spec.scenes.forEach((s, i) => {
       if (i > 0 && !s.offset) add(buf, s.t0 - 0.08, whoosh(spec.seed * 7 + i, 0.5), g * 1.6);
       if (s.type === "stat") add(buf, s.t0 + 0.45, chime(784), g * 0.9);
@@ -64,28 +75,68 @@ function main() {
   // « radio » (défaut) : traitement de studio d'émission — souffle réduit, grave chaleureux (profondeur), médiums boueux
   // creusés, présence et air pour l'intelligibilité, sifflantes adoucies, compression qui rapproche la voix, niveau YouTube.
   // « naturel » : simple nettoyage + niveau. Si le traitement studio échoue (ffmpeg ancien), repli automatique sur « naturel ».
-  const base = `aresample=${SR},aformat=channel_layouts=mono`, tail = `loudnorm=I=-16:TP=-1.5:LRA=9,aresample=${SR}`;
-  const studio = ["highpass=f=75", "afftdn=nr=10:nf=-52", "equalizer=f=115:t=q:w=0.9:g=3.5", "equalizer=f=290:t=q:w=1.2:g=-2.5", "equalizer=f=3300:t=q:w=1.4:g=2.5",
-    "treble=g=2:f=9500", "deesser=i=0.3", "acompressor=threshold=-22dB:ratio=3.5:attack=6:release=140:knee=6:makeup=3.5", "alimiter=limit=0.9"].join(",");
+  const base = `aresample=${SR},aformat=channel_layouts=mono`;
   const STYLE = (process.env.EXPLAINER_VOICE || "radio").toLowerCase();
-  const run = (af) => execFileSync("ffmpeg", ["-y", "-v", "error", "-i", VOICE, "-af", af, "-c:a", "pcm_s16le", norm], { stdio: ["ignore", "ignore", "pipe"] });
+  // VOLUME (option « volume ») : auto = mesure ta voix et la remonte si tu étais loin du micro, puis la cale exactement au
+  // niveau de référence de YouTube (−14 LUFS : au-delà, YouTube baisse lui-même le son) ; fort / très fort = voix plus
+  // dense et plus présente (compression plus marquée), utile si tu parles très loin ou très doucement.
+  const VOL = (process.env.EXPLAINER_VOLUME || "auto").toLowerCase().replace(/\s+/g, "-");
+  const target = VOL.startsWith("tr") ? -13 : VOL === "fort" ? -13.5 : -14;
+  const ebu = (f) => { const r = spawnSync("ffmpeg", ["-v", "info", "-nostats", "-i", f, "-af", "ebur128=peak=true", "-f", "null", "-"], { encoding: "utf8", maxBuffer: 1 << 27 });
+    const I = Number(String(r.stderr || "").match(/Integrated loudness:\s*\n\s*I:\s+(-?[\d.]+) LUFS/)?.[1]);
+    return isFinite(I) ? I : NaN; };
+  const inI = ebu(VOICE);
+  // voix lointaine ou très faible : gain avant le traitement (jusqu'à +30 dB) et réduction de bruit plus forte
+  const far = isFinite(inI) && inI < -30;
+  const pre = isFinite(inI) ? Math.max(0, Math.min(30, -20 - inI)) : 0;
+  const nr = far || VOL !== "auto" ? "afftdn=nr=16:nf=-50" : "afftdn=nr=10:nf=-52";
+  const comp = VOL.startsWith("tr") ? "acompressor=threshold=-26dB:ratio=5:attack=4:release=120:knee=6:makeup=4"
+    : VOL === "fort" ? "acompressor=threshold=-24dB:ratio=4:attack=5:release=130:knee=6:makeup=4" : "acompressor=threshold=-22dB:ratio=3.5:attack=6:release=140:knee=6:makeup=3.5";
+  const studio = ["highpass=f=75", nr, ...(pre ? [`volume=${pre.toFixed(1)}dB`] : []), "equalizer=f=115:t=q:w=0.9:g=3.5", "equalizer=f=290:t=q:w=1.2:g=-2.5", "equalizer=f=3300:t=q:w=1.4:g=2.5",
+    "treble=g=2:f=9500", "deesser=i=0.3", comp, "alimiter=limit=0.9"].join(",");
+  const natural = ["highpass=f=70", ...(far ? ["afftdn=nr=12:nf=-50"] : []), ...(pre ? [`volume=${pre.toFixed(1)}dB`] : []), ...(VOL !== "auto" ? [comp, "alimiter=limit=0.9"] : [])].join(",");
+  // niveau final EXACT : loudnorm en deux passes (mesure, puis correction linéaire) — pas de « pompage » du son
+  const twoPass = (chain) => {
+    const r = spawnSync("ffmpeg", ["-v", "info", "-nostats", "-i", VOICE, "-af", `${base},${chain},loudnorm=I=${target}:TP=-1.5:LRA=11:print_format=json`, "-f", "null", "-"], { encoding: "utf8", maxBuffer: 1 << 27 });
+    const m = (r.stderr || "").match(/\{[^{}]*"input_i"[^{}]*\}/);
+    if (!m) throw new Error("mesure du volume impossible : " + String(r.stderr || "").slice(-200));
+    const j = JSON.parse(m[0]);
+    const ln = isFinite(Number(j.input_i)) && Number(j.input_i) > -70
+      ? `loudnorm=I=${target}:TP=-1.5:LRA=11:measured_I=${j.input_i}:measured_TP=${j.input_tp}:measured_LRA=${j.input_lra}:measured_thresh=${j.input_thresh}:offset=${j.target_offset}:linear=true`
+      : `loudnorm=I=${target}:TP=-1.5:LRA=11`;
+    execFileSync("ffmpeg", ["-y", "-v", "error", "-i", VOICE, "-af", `${base},${chain},${ln},aresample=${SR}`, "-c:a", "pcm_s16le", norm], { stdio: ["ignore", "ignore", "pipe"] });
+  };
   let voiceStyle = STYLE === "naturel" ? "naturel" : "radio";
-  try { run(voiceStyle === "radio" ? `${base},${studio},${tail}` : `${base},highpass=f=70,${tail}`); }
-  catch (e) { if (voiceStyle !== "radio") throw e; console.log(`⚠ traitement studio indisponible (${String(e.stderr || e.message).trim().slice(-120)}) : voix « naturel »`); voiceStyle = "naturel"; run(`${base},highpass=f=70,${tail}`); }
+  try { twoPass(voiceStyle === "radio" ? studio : natural); }
+  catch (e) { console.log(`⚠ traitement « ${voiceStyle} » impossible (${String(e.stderr || e.message).trim().slice(-160)}) : traitement simple`); voiceStyle = "simple";
+    execFileSync("ffmpeg", ["-y", "-v", "error", "-i", VOICE, "-af", `${base},highpass=f=70,${pre ? `volume=${pre.toFixed(1)}dB,` : ""}loudnorm=I=${target}:TP=-1.5:LRA=11,aresample=${SR}`, "-c:a", "pcm_s16le", norm]); }
+  // Certains filtres (réduction de bruit, limiteur) retardent le son de quelques dizaines de ms : mesuré ici puis
+  // compensé, sinon les coupures (posées au milieu des respirations) tomberaient sur la fin des mots.
+  const lag = latency(VOICE, norm);
+  if (lag > 0.002) {
+    const tmpA = `${tmp}-voice-aligned.wav`;
+    execFileSync("ffmpeg", ["-y", "-v", "error", "-i", norm, "-af", `atrim=start=${lag.toFixed(4)},asetpts=PTS-STARTPTS,apad=pad_dur=${lag.toFixed(4)}`, "-c:a", "pcm_s16le", tmpA]);
+    renameSync(tmpA, norm);
+    console.log(`  décalage du traitement compensé : ${(lag * 1000).toFixed(0)} ms`);
+  }
+  const outI = ebu(norm);
+  console.log(`Voix : ${isFinite(inI) ? inI.toFixed(1) : "?"} LUFS à l'origine${far ? " (voix lointaine ou faible : remontée de " + pre.toFixed(0) + " dB)" : ""} → ${isFinite(outI) ? outI.toFixed(1) : "?"} LUFS (cible ${target}, référence YouTube −14)`);
   // vidéos « à écouter » : la voix est découpée autour d'elles (elle attend pendant la vidéo, puis reprend)
   const cuts = (Array.isArray(spec.cuts) ? spec.cuts : []).filter((c) => c.dur > 0).sort((a, b) => a.voiceAt - b.voiceAt);
   const ins = ["-i", norm, "-i", sfx, "-i", VIDEO], parts = [], labels = [];
   let a = 0, shift = 0; const segs = [];
-  for (const c of cuts) { const b = Math.min(voice, Math.max(a, c.voiceAt)); if (b - a > 0.02) segs.push({ a, b, at: a + shift }); a = b; shift += c.dur; }
-  if (voice - a > 0.02) segs.push({ a, b: voice, at: a + shift });
+  // fondus dans le creux de la respiration (fo = avant la coupure, fi = après) : jamais sur la fin ou le début d'un mot
+  let fin = 0.04;
+  for (const c of cuts) { const b = Math.min(voice, Math.max(a, c.voiceAt)); if (b - a > 0.02) segs.push({ a, b, at: a + shift, fi: fin, fo: c.fo ?? 0.05 }); a = b; shift += c.dur; fin = c.fi ?? 0.04; }
+  if (voice - a > 0.02) segs.push({ a, b: voice, at: a + shift, fi: fin, fo: 0.25 });
   parts.push(`[0:a]asplit=${segs.length}${segs.map((_, i) => `[v${i}]`).join("")}`);
-  segs.forEach((g, i) => { const d = g.b - g.a, f = Math.min(0.2, d / 3);
-    parts.push(`[v${i}]atrim=${g.a.toFixed(3)}:${g.b.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=in:d=0.04,afade=t=out:st=${(d - f).toFixed(3)}:d=${f.toFixed(3)},adelay=${Math.round(g.at * 1000)}:all=1[w${i}]`); labels.push(`[w${i}]`); });
+  segs.forEach((g, i) => { const d = g.b - g.a, f = Math.max(0.01, Math.min(g.fo, d / 3)), fi = Math.max(0.01, Math.min(g.fi, d / 3));
+    parts.push(`[v${i}]atrim=${g.a.toFixed(3)}:${g.b.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=in:d=${fi.toFixed(3)},afade=t=out:st=${(d - f).toFixed(3)}:d=${f.toFixed(3)},adelay=${Math.round(g.at * 1000)}:all=1[w${i}]`); labels.push(`[w${i}]`); });
   let n = 3;
   for (const c of cuts) {
     if (!c.audio || !c.file || !existsSync(c.file)) continue;
     ins.push("-i", c.file); const f = Math.min(0.3, c.dur / 4);
-    parts.push(`[${n}:a:0]atrim=0:${c.dur.toFixed(3)},asetpts=PTS-STARTPTS,aresample=${SR},aformat=channel_layouts=mono,loudnorm=I=-17:TP=-1.5:LRA=11,aresample=${SR},afade=t=in:d=0.12,afade=t=out:st=${(c.dur - f).toFixed(3)}:d=${f.toFixed(3)},adelay=${Math.round(c.at * 1000)}:all=1[c${n}]`);
+    parts.push(`[${n}:a:0]atrim=${(c.ss || 0).toFixed(3)}:${((c.ss || 0) + c.dur).toFixed(3)},asetpts=PTS-STARTPTS,aresample=${SR},aformat=channel_layouts=mono,loudnorm=I=-15:TP=-1.5:LRA=11,aresample=${SR},afade=t=in:d=0.12,afade=t=out:st=${(c.dur - f).toFixed(3)}:d=${f.toFixed(3)},adelay=${Math.round(c.at * 1000)}:all=1[c${n}]`);
     labels.push(`[c${n}]`); n++;
   }
   parts.push(`[1:a]aresample=${SR}[s]`); labels.push("[s]");
