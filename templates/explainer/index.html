@@ -168,9 +168,9 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 /* EXTRAIT EN GRAND = mode « cinéma » : la vidéo occupe tout l'écran en hauteur (ou en largeur), fond = la même vidéo
    floutée (rendue en petit puis agrandie : flou gratuit en temps de calcul), sous-titres en surimpression en bas. */
 .cine{position:absolute;inset:0;display:grid;place-items:center;overflow:hidden}
-.cine .cbg{position:absolute;left:0;top:0;width:12.5%;height:12.5%;overflow:hidden;transform:scale(8.2);transform-origin:0 0;filter:blur(1.5px) brightness(.36) saturate(1.25)}
-.cine .cbg img{position:absolute;left:0;top:0;max-width:none}
-.cine .cveil{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 50%,transparent 40%,rgba(0,0,0,.55) 100%)}
+.cine .cbg{position:absolute;left:0;top:0;width:12.5%;height:12.5%;overflow:hidden;transform:scale(8.2);transform-origin:0 0;filter:blur(2.5px)}
+.cine .cbg img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.cine .cveil{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 50%,rgba(0,0,0,.55) 30%,rgba(0,0,0,.82) 100%)}
 .cine .frame{width:min(calc(100vw - var(--u)*48),calc((100vh - var(--u)*48) * var(--r)));height:auto;flex:none}
 .cine .csub{position:absolute;left:calc(var(--u)*40);right:calc(var(--u)*40);bottom:calc(var(--u)*70);margin:0;z-index:60;min-height:0}
 .v .cine .csub{bottom:calc(var(--u)*200)}
@@ -314,8 +314,8 @@ const BUILD={
   shot:(d,sc)=>{const M=(d.media&&d.media.length?d.media:[{kind:"img",image:d.image,iw:d.iw,ih:d.ih,crop:d.crop}]),m0=M[0],c0=m0.crop||{x:0,y:0,w:1,h:1},
     ar=(c0.w*(m0.iw||1))/(c0.h*(m0.ih||1)),vert=H>W,big=sc&&sc.big,R=big?clamp(ar,.5,1.9):clamp(ar,vert?.95:1.25,vert?1.78:1.9);
     const med=M.map((m,k)=>{const c=m.crop||{x:0,y:0,w:1,h:1};return `<img ${m.kind==="vid"?`data-dir="${esc(m.dir)}" data-n="${m.n|0}" data-fps="${m.fps||30}" src="${esc(m.dir)}/00001.jpg"`:`src="${esc(m.image)}"`} data-a="media" data-k="${k}" data-m="${M.length}" data-c="${[c.x,c.y,c.w,c.h].join(",")}" data-iw="${m.iw||0}" data-ih="${m.ih||0}">`}).join("");
-    if(big){const bgm=M[0],bc=bgm.crop||{x:0,y:0,w:1,h:1};
-      return `<div class="cine"><div class="cbg"><img data-dir="${esc(bgm.dir)}" data-n="${bgm.n|0}" data-fps="${bgm.fps||30}" src="${esc(bgm.dir)}/00001.jpg" data-a="media" data-k="0" data-m="1" data-c="${[bc.x,bc.y,bc.w,bc.h].join(",")}" data-iw="${bgm.iw||0}" data-ih="${bgm.ih||0}"></div><div class="cveil"></div><div class="frame" style="aspect-ratio:${R.toFixed(3)};--r:${R.toFixed(3)}" ${A("tilt",.12)}>${med}<div class="shine" data-a="shine" data-d=".7"></div><div class="live"><i data-a="pulse"></i></div></div>${m0.subs&&m0.subs.length?`<div class="csub" data-a="csub" data-subs="${esc(JSON.stringify(m0.subs))}"><span></span></div>`:""}${src(d)}</div>`}
+    if(big){const bgm=M[0];
+      return `<div class="cine"><div class="cbg"><img src="${esc(bgm.dir)}/${String(Math.max(1,Math.round((bgm.n|0)/2))).padStart(5,"0")}.jpg"></div><div class="cveil"></div><div class="frame" style="aspect-ratio:${R.toFixed(3)};--r:${R.toFixed(3)}" ${A("tilt",.12)}>${med}<div class="shine" data-a="shine" data-d=".7"></div><div class="live"><i data-a="pulse"></i></div></div>${m0.subs&&m0.subs.length?`<div class="csub" data-a="csub" data-subs="${esc(JSON.stringify(m0.subs))}"><span></span></div>`:""}${src(d)}</div>`}
     return `<div class="safe persp${big?" bigclip":""}">${head(d)}<div class="shotrow"><div class="frame" style="aspect-ratio:${R.toFixed(3)};--r:${R.toFixed(3)}" ${A("tilt",.12)}>${med}<div class="shine" data-a="shine" data-d=".7"></div>${big?`<div class="live"><i data-a="pulse"></i></div>`:""}</div>${big&&m0.subs&&m0.subs.length?`<div class="csub" data-a="csub" data-subs="${esc(JSON.stringify(m0.subs))}"><span></span></div>`:""}${d.title&&!big?`<div class="shottxt"><div class="rule" ${A("draw",.5)}></div><div class="title md">${words(d.title,d.highlight,.55,.06)}</div></div>`:""}</div></div>${src(d)}`},
   outro:d=>{const P=(n,r,rot)=>Array.from({length:n},(_,k)=>{const a=(k/n)*6.2832+rot;return (100+r*Math.cos(a)).toFixed(2)+","+(100+r*Math.sin(a)).toFixed(2)});
     const star=(n,step,r,rot)=>{const p=P(n,r,rot),o=[];for(let k=0,i=0;k<n;k++,i=(i+step)%n)o.push(p[i]);return o.join(" ")};
