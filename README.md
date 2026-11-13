@@ -193,11 +193,17 @@ chiffres, frises, listes, face-à-face, carte de fin — sans musique, **sans au
 - **la voix** (mp3, m4a, wav, ogg, opus… ; une vidéo nommée `voix…` marche aussi : seul le son est pris) ;
 - *(facultatif)* **captures d'écran / photos** : **toutes** sont insérées, recadrées (barres du téléphone, menus retirés)
   et placées au moment où tu en parles ; s'il y en a plus que de scènes, elles s'enchaînent en fondu ;
-- *(facultatif)* **vidéos** : montrées (sans leur son) pendant que tu parles. **Mot déclencheur** — si tu dis
+- *(facultatif)* **vidéos** — y compris des **enregistrements d'écran BRUTS du téléphone** : le workflow recadre sur le lecteur
+  vidéo (barre d'état, titre, commentaires, boutons, barre de navigation retirés) et coupe le début et la fin hors vidéo
+  (ouverture de l'appli, défilement, arrêt de l'enregistrement) ; si le mouvement ne suffit pas à repérer le lecteur, l'IA le
+  repère sur l'image. Une vidéo normale n'est pas touchée. Montrées (sans leur son) pendant que tu parles. **Mot déclencheur** — si tu dis
   « إسمع / إسمعوا / استمع / استمعوا (جيدا، معي) / خلينا نسمع » (ou « écoutez », « listen », « ascoltate »), une vidéo
   est jouée **avec son son** ; ta voix attend, puis reprend. **La vidéo est choisie d'après son contenu** : ce que tu dis juste
   avant le mot déclencheur est comparé au début de chaque vidéo (transcrit par Groq) et à son nom de fichier (un appel IA).
   Repli : mots communs, puis ordre des noms de fichiers. Le plan (`EXPLAINER.md`) dit pour chaque vidéo comment elle a été choisie.
+
+- **Source affichée** : sous chaque capture, photo ou vidéo, « المصدر : … » (média, agence, chaîne) — lue sur l'image (logo, URL,
+  nom de la chaîne) ou dans le **nom du fichier** (ex. `reuters-ministre.jpg`, `aljazeera-interview.mp4`). Jamais inventée.
 
 **Lancer** : *Actions → Faceless live arabic → Run workflow*.
 
@@ -237,7 +243,7 @@ live : remplace le fichier dans la release `out-explainer` (même nom, lignes `T
 **Sécurités** : rien n'est affiché qui ne soit dit dans la voix (un chiffre ou une date absents de la transcription sont
 refusés) ; sans IA disponible, les phrases prononcées s'affichent mot pour mot (le montage sort toujours) ; un texte trop
 long est réduit automatiquement, jamais coupé hors de l'écran ; une tranche de rendu qui échoue est refaite seule.
-**Clés dédiées (facultatif)** : secrets `EXPLAINER_GEMINI_API_KEY` et `EXPLAINER_GROQ_API_KEY`. Si une clé dédiée existe, ce
+**Clés dédiées (facultatif)** : secrets `EXPLAINER_GEMINI_API_KEY`, `EXPLAINER_GROQ_API_KEY` et `EXPLAINER_YOUTUBE_API_KEY` (recherche). Si une clé dédiée existe, ce
 workflow n'utilise qu'elle pour ce fournisseur ; sinon il prend les clés habituelles du dépôt. Attention : les quotas gratuits
 sont comptés par projet Google (Gemini) et par compte (Groq), pas par clé.
 Clés IA utilisées : Groq (transcription), puis **un** appel pour le plan et **un** appel Gemini pour tous les médias.

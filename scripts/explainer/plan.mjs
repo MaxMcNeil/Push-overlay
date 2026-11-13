@@ -12,6 +12,7 @@ import path from "path";
 import { pathToFileURL } from "url";
 const rel = (f) => path.relative(process.cwd(), path.resolve(f)).split(path.sep).join("/");
 import { providers, parseJson } from "../lib/llm.mjs";
+import { prepClip } from "./clipprep.mjs";
 import { channelFor } from "../lib/channel.mjs";
 import { detectTheme, sceneAccent, countryChip, countMentions, CODES, THEMES, COUNTRIES } from "../lib/gulf-themes.mjs";
 import { transcribeStart } from "../lib/asr.mjs";
@@ -312,9 +313,10 @@ const probe = (f) => { try { const j = JSON.parse(execFileSync("ffprobe", ["-v",
   return w > 0 && h > 0 ? { w, h, dur: Number(j.format.duration) || 0, audio: j.streams.some((s) => s.codec_type === "audio") } : null; } catch { return null; } };
 function listMedia() {
   const ls = (dirs, re) => { for (const d of dirs) if (existsSync(d)) { const f = readdirSync(d).filter((x) => re.test(x)).sort().map((x) => path.resolve(d, x)); if (f.length) return f; } return []; };
-  const imgs = ls(["input/photos", "content/photos"], /\.(jpe?g|png|webp)$/i).map((file) => ({ kind: "img", file, p: probe(file) })).filter((x) => x.p);
-  const vids = ls(["input/clips", "content/clips-src"], /\.(mp4|mov|mkv|webm|m4v|avi)$/i).map((file) => ({ kind: "vid", file, p: probe(file) })).filter((x) => x.p && x.p.dur >= 0.5);
-  return { imgs, vids };
+  const all = [...ls(["input/photos", "content/photos"], /\.(jpe?g|png|webp)$/i).map((file) => ({ kind: "img", file, p: probe(file) })),
+    ...ls(["input/clips", "content/clips-src"], /\.(mp4|mov|mkv|webm|m4v|avi)$/i).map((file) => ({ kind: "vid", file, p: probe(file) }))];
+  const ok = (x) => x.p && (x.kind === "img" || x.p.dur >= 0.5);
+  return { imgs: all.filter((x) => x.kind === "img" && ok(x)), vids: all.filter((x) => x.kind === "vid" && ok(x)), bad: all.filter((x) => !ok(x)).map((x) => path.basename(x.file)) };
 }
 /** Une vidéo à monter : on vérifie ici qu'elle se décode vraiment, mais ses images ne sont extraites qu'au moment du rendu,
  *  sur la machine qui en a besoin (le plan transmis reste léger, même avec 20 vidéos). */
@@ -334,37 +336,62 @@ export const triggerSentences = (sents) => sents.filter((s) => TRIGGERS.some((re
 /** UN SEUL appel Gemini pour tous les médias (miniatures) : phrase illustrée, zone utile (recadrage), légende. Sert aux deux
  *  formats. Sans Gemini ou en cas d'échec : médias posés dans l'ordre, répartis sur la durée, sans recadrage intelligent. */
 async function analyseMedia(items, sents, lang) {
-  for (const x of items) { x.sentence = null; x.crop = null; x.caption = ""; x.photo = false; }
+  for (const x of items) { x.sentence = null; x.crop = null; x.caption = ""; x.photo = false; x.credit = x.credit || creditFromName(x.file); x.vbox = null; }
   const gem = providers().find(([n]) => n === "gemini");
   if (!items.length) return;
   if (!gem || process.env.EXPLAINER_NO_LLM === "1") { console.log("  médias : pas de clé Gemini → pose dans l'ordre, sans recadrage intelligent"); return; }
   try {
     const sub = items.slice(0, 30), parts = [];
-    sub.forEach((x, i) => { try { parts.push({ text: `Média ${i} (${x.kind === "vid" ? "vidéo, image extraite" : "image"}) :` }, { inlineData: { mimeType: "image/jpeg", data: thumb(x.file, x.kind === "vid" ? Math.min(x.p.dur / 2, 3) : 0).toString("base64") } }); } catch { /* miniature impossible : ce média sera posé dans l'ordre */ } });
-    const sys = `Tu es monteur. On te donne des captures d'écran, photos et vidéos (une image extraite) et la voix off découpée en phrases numérotées. Réponds UNIQUEMENT en JSON : {"medias":[{"media":n,"sentence":n,"box":[ymin,xmin,ymax,xmax],"caption":"...","photo":true|false}]}.
+    // vidéos : image de l'enregistrement d'ORIGINE (avant recadrage) — on y lit le nom de la chaîne, du média, l'URL
+    sub.forEach((x, i) => { try { const src = x.kind === "vid" ? (x.orig || x.file) : x.file, at = x.kind === "vid" ? Math.min((x.origDur || x.p.dur) / 2, 4) : 0;
+      parts.push({ text: `Média ${i} (${x.kind === "vid" ? "vidéo (enregistrement d'écran possible), image extraite" : "image"}) — fichier « ${path.basename(x.orig || x.file)} » :` }, { inlineData: { mimeType: "image/jpeg", data: thumb(src, at).toString("base64") } }); } catch { /* miniature impossible : ce média sera posé dans l'ordre */ } });
+    const sys = `Tu es monteur. On te donne des captures d'écran, photos et vidéos (une image extraite, souvent un enregistrement d'écran de téléphone) et la voix off découpée en phrases numérotées. Réponds UNIQUEMENT en JSON : {"medias":[{"media":n,"sentence":n,"box":[ymin,xmin,ymax,xmax],"caption":"...","credit":"...","photo":true|false}]}.
 - "sentence" : numéro de la phrase où ce média illustre le mieux ce qui est DIT (titre d'article, nom, chiffre, lieu, personne citée). Chaque média DOIT recevoir une phrase : s'il n'y a pas de lien évident, choisis la phrase la plus proche par le thème. Évite de mettre plusieurs médias sur la même phrase.
-- "box" : zone utile en millièmes (0 à 1000). Capture d'écran : retire barre d'état du téléphone, barre de navigation, menus, boutons, publicités, marges vides ; garde titre, texte clé, illustration. Photo ou vidéo : [0,0,1000,1000].
-- "caption" : 2 à 6 mots en ${pick(L.langName, lang)} disant ce que montre le média (source ou sujet VISIBLE). N'invente rien. Aucun emoji.
+- "box" : zone utile en millièmes (0 à 1000). Capture d'écran : retire barre d'état du téléphone, barre de navigation, menus, boutons, publicités, marges vides ; garde titre, texte clé, illustration. VIDÉO enregistrée depuis un téléphone : la zone EXACTE du lecteur vidéo (l'image de la vidéo seule, sans titre, commentaires, boutons, barres du téléphone). Photo ou vidéo plein cadre : [0,0,1000,1000].
+- "caption" : 2 à 6 mots en ${pick(L.langName, lang)} disant ce que montre le média (sujet VISIBLE). N'invente rien. Aucun emoji.
+- "credit" : la SOURCE à créditer, telle qu'elle est VISIBLE (nom du média, du site, de l'agence, de la chaîne YouTube, du compte, logo, URL) ou dans le nom du fichier ; écrite comme le média s'écrit lui-même (ex. « Al Jazeera », « Reuters », « العربية »). Vide si aucune source n'est lisible : n'invente jamais.
 - "photo" : true si c'est une photographie sans texte important, false pour capture d'écran, article, document, publication.`;
     const j = parseJson(await gem[1](sys, `Phrases :\n${sents.map((s) => `${s.i} | ${s.text}`).join("\n")}`, { parts, temperature: 0.2, maxTokens: 6000, deadline: Date.now() + 170000, timeoutMs: 140000 }));
     for (const r of Array.isArray(j?.medias) ? j.medias : []) {
       const x = sub[Math.round(Number(r?.media))]; if (!x) continue;
       const sn = Math.round(Number(r.sentence)); if (isFinite(sn) && sn >= 0 && sn < sents.length) x.sentence = sn;
       const b = (Array.isArray(r.box) ? r.box : []).map(Number);
-      if (x.kind === "img" && b.length === 4 && b.every((v) => isFinite(v))) {
+      if (b.length === 4 && b.every((v) => isFinite(v))) {
         const [y0, x0, y1, x1] = b.map((v) => Math.max(0, Math.min(1000, v)) / 1000);
         // recadrage accepté seulement s'il est plausible (ni minuscule ni inversé, ni « tout ») — sinon image entière
-        if (y1 - y0 >= 0.25 && x1 - x0 >= 0.4 && (y1 - y0 < 0.985 || x1 - x0 < 0.985)) x.crop = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+        const box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+        if (x.kind === "img" && y1 - y0 >= 0.25 && x1 - x0 >= 0.4 && (y1 - y0 < 0.985 || x1 - x0 < 0.985)) x.crop = box;
+        if (x.kind === "vid" && box.w >= 0.3 && box.h >= 0.12 && box.w * box.h < 0.92) x.vbox = box;
       }
       x.caption = cutWords(r.caption, 7); x.photo = r.photo === true;
+      const cr = clean(r.credit, 40); if (cr && !/^(inconnu|unknown|aucun|none|n\/a|-)$/i.test(cr)) x.credit = cr;
     }
-    console.log(`  médias analysés par Gemini : ${items.filter((x) => x.sentence !== null).length}/${items.length} reliés à une phrase, ${items.filter((x) => x.crop).length} recadrés`);
+    console.log(`  médias analysés par Gemini : ${items.filter((x) => x.sentence !== null).length}/${items.length} reliés à une phrase, ${items.filter((x) => x.crop).length} recadrés, ${items.filter((x) => x.credit).length} source(s) à créditer`);
   } catch (e) { console.log(`  analyse des médias impossible (${String(e.message).slice(0, 120)}) : pose dans l'ordre`); }
 }
+// source lisible dans le nom du fichier (« aljazeera-ministre.mp4 », « Reuters_2026.jpg ») ; jamais les noms automatiques
+const GENERIQUE = /^(screen|scr|record|rec|enregistr|capture|vid|video|img|image|photo|pxl|dsc|mov|whatsapp|wa\d|signal|telegram|snapchat|tiktok_?\d|\d)/i;
+const MEDIAS = { "al jazeera": "Al Jazeera", "aljazeera": "Al Jazeera", "الجزيرة": "الجزيرة", "al arabiya": "Al Arabiya", "alarabiya": "Al Arabiya",
+  "العربية": "العربية", "sky news": "Sky News", "skynews": "Sky News", "bbc": "BBC", "cnn": "CNN", "reuters": "Reuters", "afp": "AFP", "ap": "AP",
+  "bloomberg": "Bloomberg", "france 24": "France 24", "france24": "France 24", "rt": "RT", "trt": "TRT", "fox news": "Fox News", "foxnews": "Fox News",
+  "cnbc": "CNBC", "financial times": "Financial Times", "ft": "Financial Times", "le monde": "Le Monde", "lemonde": "Le Monde", "le figaro": "Le Figaro",
+  "nytimes": "The New York Times", "new york times": "The New York Times", "washington post": "The Washington Post", "guardian": "The Guardian",
+  "asharq": "Asharq", "الشرق": "الشرق", "spa": "SPA", "wam": "WAM", "kuna": "KUNA", "qna": "QNA", "ona": "ONA", "bna": "BNA" };
+function creditFromName(file) {
+  const stem = path.basename(String(file || "")).replace(/\.[^.]+$/, "").replace(/^\d+[-_. ]*/, "");
+  if (!stem || GENERIQUE.test(stem)) return "";
+  const low = " " + stem.toLowerCase().replace(/[-_.]+/g, " ") + " ";
+  const hit = Object.keys(MEDIAS).sort((a, b) => b.length - a.length).find((m) => low.includes(` ${m} `));
+  return hit ? MEDIAS[hit] : "";
+}
+const SRC_LABEL = { ar: "المصدر", fr: "Source", en: "Source", it: "Fonte" };
+const creditLine = (list, lang) => { const c = [...new Set(list.map((x) => x.credit).filter(Boolean))].slice(0, 3); return c.length ? `${SRC_LABEL[lang] || SRC_LABEL.en} : ${c.join(" · ")}` : ""; };
 const mediaData = (x) => (x.kind === "vid" ? { kind: "vid", ...x.frames, iw: x.p.w, ih: x.p.h } : { kind: "img", image: rel(x.file), iw: x.p.w, ih: x.p.h, crop: x.crop });
 /** Pose TOUS les médias (aucun n'est jamais écarté) : d'abord sur la scène de leur phrase, sinon répartis sur les scènes
  *  libres ; s'il y a plus de médias que de scènes, plusieurs médias se partagent une scène (ils s'enchaînent en fondu). */
-export function placeMedia(scenes, items) {
+let LANG_OF_PLAN = "ar";
+export function placeMedia(scenes, items, lang = LANG_OF_PLAN) {
+  LANG_OF_PLAN = lang;
   if (!items.length || !scenes.length) return 0;
   const body = scenes.map((_, i) => i).filter((i) => scenes[i].type !== "outro");
   const pool = body.length > 1 ? body.slice(1) : body;                       // l'accroche est épargnée tant que c'est possible
@@ -391,8 +418,10 @@ export function placeMedia(scenes, items) {
     if (!list.length) continue;
     const s = scenes[i], d = s.data, first = list[0];
     const title = d.title || d.label || d.quote || [d.a, d.b].filter(Boolean).join(" · ") || first.caption;
-    if (list.length === 1 && first.kind === "img" && first.photo && !first.crop) { s.type = "photo"; s.data = { kicker: d.kicker, context: d.context, source: first.caption || d.source, title: cutWords(title, 11), highlight: d.highlight, photo: rel(first.file) }; }
-    else { s.type = "shot"; s.data = { kicker: d.kicker, context: d.context, source: first.caption || d.source, title: cutWords(title, 14), highlight: d.highlight, media: list.map(mediaData) }; }
+    // crédit de la source affiché sous le média (« المصدر : الجزيرة ») ; sinon la légende, comme avant
+    const source = creditLine(list, LANG_OF_PLAN) || first.caption || d.source;
+    if (list.length === 1 && first.kind === "img" && first.photo && !first.crop) { s.type = "photo"; s.data = { kicker: d.kicker, context: d.context, source, title: cutWords(title, 11), highlight: d.highlight, photo: rel(first.file) }; }
+    else { s.type = "shot"; s.data = { kicker: d.kicker, context: d.context, source, title: cutWords(title, 14), highlight: d.highlight, media: list.map(mediaData) }; }
     used += list.length;
   }
   return used;
@@ -448,7 +477,7 @@ export function insertClips(scenes, inserts, lang) {
     let i = scenes.findIndex((s) => s.t0 <= at && at < s.t1); if (i < 0) i = scenes.length - 1;
     const s = scenes[i];
     if (s.t1 - at < 1.0) at = s.t1; else if (at - s.t0 < 1.0) at = s.t0;          // trop près d'un bord : on se cale dessus
-    const clip = { type: "shot", t0: at, t1: at + ins.dur, big: true, transition: "zoom", data: { kicker: pick(L.listen, lang), media: [ins.media] } };
+    const clip = { type: "shot", t0: at, t1: at + ins.dur, big: true, transition: "zoom", data: { kicker: pick(L.listen, lang), media: [ins.media], ...(ins.credit ? { source: `${SRC_LABEL[lang] || SRC_LABEL.en} : ${ins.credit}` } : {}) } };
     let idx;
     if (at === s.t1) idx = i + 1; else if (at === s.t0) idx = i;
     else { const span = s.span || s.t1 - s.t0, off = s.offset || 0; scenes.splice(i, 1, { ...s, t1: at, span }, { ...s, t0: at, offset: off + (at - s.t0), span, transition: "cut" }); idx = i + 1; }
@@ -482,13 +511,30 @@ async function main() {
   const base = Number(QUALITY) >= 2160 ? 2160 : Number(QUALITY) >= 1440 ? 1440 : 1080;
 
   // --- médias fournis : captures / photos / vidéos. TOUS sont insérés.
-  const { imgs, vids } = listMedia(); const notes = [];
-  const side = base >= 2160 ? 1440 : 960, CLIP_MAX = Number(process.env.EXPLAINER_CLIP_MAX_S || 90);
+  const { imgs, vids, bad } = listMedia(); const notes = bad.map((b) => `⚠ média illisible ou trop court, ignoré : ${b}`);
+  const side = base >= 2160 ? 1440 : 960, CLIP_MAX = Number(process.env.EXPLAINER_CLIP_MAX_S || 180);   // ton enregistrement = le passage choisi : joué en entier (3 min max)
   // 1) mots déclencheurs (« écoutez », « خلينا نسمع »…) → vidéos jouées avec leur son, dans l'ordre des noms de fichiers
   const trig = process.env.EXPLAINER_TRIGGERS === "non" ? [] : triggerSentences(sents);
   const inserts = [], broll = [];
-  // quelle vidéo pour quel mot déclencheur : d'après le CONTENU (repli : ordre des noms de fichiers)
-  const okVids = vids.filter((v, k) => { try { v.frames = clipInfo(v, k + 1, CLIP_MAX, side); return true; } catch (e) { notes.push(`⚠ vidéo illisible ignorée : ${path.basename(v.file)}`); return false; } });
+  // 0) enregistrements d'écran BRUTS du téléphone : recadrés sur le lecteur vidéo et débarrassés du début / de la fin
+  //    hors vidéo (ouverture de l'appli, défilement, arrêt de l'enregistrement) ; une vidéo normale n'est pas touchée
+  for (const v of vids) {
+    v.orig = v.file; v.origDur = v.p.dur;
+    const r = prepClip(v);
+    if (r.file !== v.file) { const p2 = probe(r.file); if (p2 && p2.dur >= 0.5) { v.file = r.file; v.p = p2; } }
+    v.prep = r; for (const n of r.notes) notes.push(`✂ ${path.basename(v.orig)} : ${n}`);
+  }
+  const okVids = vids.filter((v, k) => { try { v.frames = clipInfo(v, k + 1, CLIP_MAX, side); return true; } catch (e) { notes.push(`⚠ vidéo illisible ignorée : ${path.basename(v.orig || v.file)}`); return false; } });
+  // 1) UN SEUL appel Gemini pour TOUS les médias : phrase illustrée, recadrage, légende, SOURCE à créditer ; pour une
+  //    vidéo dont le lecteur n'a pas pu être repéré par le mouvement, Gemini donne la zone du lecteur → recadrage
+  await analyseMedia([...imgs, ...okVids], sents, lang);
+  okVids.forEach((v, k) => {
+    if (v.prep?.status !== "incertain" || !v.vbox) return;
+    const r = prepClip({ file: v.orig, p: probe(v.orig) }, "content/clips-prep", { box: v.vbox, t0: v.prep.t0, t1: v.prep.t1 });
+    const p2 = r.file !== v.orig ? probe(r.file) : null;
+    if (p2 && p2.dur >= 0.5) { v.file = r.file; v.p = p2; try { v.frames = clipInfo(v, k + 1, CLIP_MAX, side); notes.push(`✂ ${path.basename(v.orig)} : lecteur repéré par l'IA, recadrée`); } catch { /* garde la version précédente */ } }
+  });
+  // 2) quelle vidéo pour quel mot déclencheur : d'après le CONTENU (repli : ordre des noms de fichiers)
   const assign = process.env.EXPLAINER_NO_LLM === "1" ? (trig.length ? okVids.slice(0, trig.length).map((_, k) => ({ trig: trig[k], vid: k, how: "ordre des fichiers" })) : [])
     : await matchTriggers(trig, okVids, sents).catch((e) => { console.log(`  association des vidéos impossible (${e.message}) : ordre des fichiers`); return okVids.slice(0, trig.length).map((_, k) => ({ trig: trig[k], vid: k, how: "ordre des fichiers" })); });
   const heardVid = new Map(assign.map((a) => [a.vid, a]));
@@ -496,15 +542,15 @@ async function main() {
     const a = heardVid.get(k);
     if (!a) { v.frames = clipInfo(v, k + 1, 20, side); broll.push(v); return; }
     const sn = sents[a.trig], nx = sents[a.trig + 1];
-    inserts.push({ vt: nx ? (sn.t1 + nx.t0) / 2 : duration, dur: v.frames.dur, media: mediaData(v), file: rel(v.file), audio: v.p.audio });
-    notes.push(`▶ « ${clean(sn.text, 60)} » → ${path.basename(v.file)} (choisie selon : ${a.how})`);
-    if (v.p.dur > CLIP_MAX + 0.5) notes.push(`⚠ ${path.basename(v.file)} : ${v.p.dur.toFixed(0)} s, joué ${CLIP_MAX} s (coupe la vidéo avant de la déposer pour choisir le passage)`);
+    inserts.push({ vt: nx ? (sn.t1 + nx.t0) / 2 : duration, dur: v.frames.dur, media: mediaData(v), file: rel(v.file), audio: v.p.audio, credit: v.credit || "" });
+    notes.push(`▶ « ${clean(sn.text, 60)} » → ${path.basename(v.orig || v.file)} (choisie selon : ${a.how}${v.credit ? ` ; source : ${v.credit}` : ""})`);
+    if (v.p.dur > CLIP_MAX + 0.5) notes.push(`⚠ ${path.basename(v.orig || v.file)} : ${v.p.dur.toFixed(0)} s, joué ${CLIP_MAX} s`);
   });
   if (trig.length > vids.length && vids.length) notes.push(`${trig.length} mots déclencheurs entendus pour ${vids.length} vidéo(s) : les ${trig.length - vids.length} derniers n'ont pas de vidéo`);
-  // 2) captures, photos et vidéos restantes : reliées à ce qui est dit (un seul appel IA), recadrées, posées — aucune n'est écartée
+  for (const x of [...imgs, ...okVids]) if (x.credit) notes.push(`© ${path.basename(x.orig || x.file)} : source affichée « ${x.credit} »`);
+  // 3) captures, photos et vidéos montrées sans leur son : posées là où tu en parles — aucune n'est écartée
   const items = [...imgs, ...broll];
-  await analyseMedia(items, sents, lang);
-  const placed = placeMedia(scenes, items);
+  const placed = placeMedia(scenes, items, lang);
   // 3) insertion des vidéos à écouter (la voix attend, puis reprend)
   const { cuts, shift } = insertClips(scenes, inserts, lang);
   const total0 = duration + shift;

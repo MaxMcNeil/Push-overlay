@@ -75,9 +75,11 @@ env:
   GROQ_API_KEYS_PLUS: ${{ secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS_PLUS || '' }}
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   # recherche pour le montage (facultatif) : clé YouTube Data API (la même que dans OSINT-teleprompter)
-  YOUTUBE_API_KEYS: ${{ secrets.YOUTUBE_API_KEYS }}
-  YOUTUBE_API_KEYS_PLUS: ${{ secrets.YOUTUBE_API_KEYS_PLUS }}
-  YT_API_KEY: ${{ secrets.YT_API_KEY }}
+  # clé YouTube DÉDIÉE (facultative) : secret EXPLAINER_YOUTUBE_API_KEY. Si elle existe, c'est la SEULE utilisée ici ;
+  # sinon les clés YouTube habituelles du dépôt (inchangées pour Build Video et les Shorts).
+  YOUTUBE_API_KEYS: ${{ secrets.EXPLAINER_YOUTUBE_API_KEY || secrets.YOUTUBE_API_KEYS }}
+  YOUTUBE_API_KEYS_PLUS: ${{ secrets.EXPLAINER_YOUTUBE_API_KEY == '' && secrets.YOUTUBE_API_KEYS_PLUS || '' }}
+  YT_API_KEY: ${{ secrets.EXPLAINER_YOUTUBE_API_KEY == '' && secrets.YT_API_KEY || '' }}
 
 jobs:
   # ------------------------------------------------------------------ 1) voix → transcription → plan (tous les appels IA sont ici, une seule fois)
@@ -210,6 +212,7 @@ jobs:
             content/transcript.json
             input/photos
             input/clips
+            content/clips-prep
             input/voice.wav
             output/EXPLAINER.md
             output/youtube-metadata.txt

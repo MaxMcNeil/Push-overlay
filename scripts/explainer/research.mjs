@@ -162,9 +162,11 @@ export async function photos(m, idx, dir, budget) {
 export function render(list, { lang, yt, duree }) {
   const L = [`DOWNLOAD SEARCH POUR MONTAGES — ce qui illustre ta voix (${mmss(duree)}), moment par moment`, ``,
     `Vidéos : ouvre le lien (il démarre au bon passage), fais un enregistrement d'écran du passage indiqué, puis dépose-le avec ta voix.`,
+    `  Enregistrement BRUT du téléphone accepté : le workflow recadre sur le lecteur (barres, titre, commentaires retirés) et coupe le début et la fin hors vidéo.`,
     `Pour la faire écouter avec son son, dis « اسمعوا » / « خلينا نسمع » juste avant dans ta voix : le workflow choisit la bonne vidéo selon son contenu.`,
     `Photos libres de droits : déjà téléchargées dans la release « out-recherche » (crédits ci-dessous). Pour les monter : champ « photos » = out-recherche.`,
-    `Photos de presse : non téléchargées (droits d'auteur) — fais une capture de l'article si tu veux le montrer.`, ``];
+    `Photos et articles de presse : non téléchargés automatiquement (droits d'auteur). Dépose tes captures avec ta voix :`,
+    `  la SOURCE est affichée sous chaque média (« المصدر : … ») — lue sur l'image, ou dans le nom du fichier (ex. « reuters-ministre.jpg »).`, ``];
   if (!yt) L.push(`⚠ Pas de clé YouTube dans ce dépôt : vidéos non cherchées. Ajoute le secret YOUTUBE_API_KEYS (la même clé que dans OSINT-teleprompter).`, ``);
   if (!list.length) L.push("Aucun moment fort trouvé (IA indisponible et voix trop courte).");
   list.forEach((m, k) => {

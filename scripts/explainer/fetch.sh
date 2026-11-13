@@ -3,7 +3,7 @@
 #   SOURCE = tag de release, lien Google Drive, lien direct, ou vide (= dernière release dont le tag commence par voix/voice/audio)
 #   PHOTOS = tag d'une release de captures / photos / vidéos (facultatif ; celles jointes à la release de la voix sont aussi prises)
 # Produit : input/voice.wav (mono 48 kHz, vérifié), input/video.mp4 (même son + image noire : pour scripts/transcribe.mjs),
-#           input/photos/NN.jpg (≤ 2160 px, orientation corrigée), input/clips/NN-nom.mp4 (vidéos à monter).
+#           input/photos/NN-nom.jpg (≤ 2160 px, orientation corrigée), input/clips/NN-nom.mp4 (vidéos à monter).
 #           Écrit tag=, photos_tag=, voice_name=, photos=, clips=, medias= dans GITHUB_OUTPUT.
 set -euo pipefail
 out() { echo "$1=$2" >> "${GITHUB_OUTPUT:-/dev/null}"; }
@@ -87,7 +87,9 @@ echo "Voix prête : ${DUR} s"; out duration "$DUR"
 # --- photos : converties en JPEG sûrs (orientation EXIF appliquée, taille bornée) ; une image illisible est ignorée
 n=0
 while IFS= read -r f; do
-  n=$((n + 1)); o=$(printf 'input/photos/%02d.jpg' "$n")
+  # le nom d'origine est gardé (après le numéro) : il peut indiquer la source à créditer (« reuters-article.jpg »)
+  b="${f##*/}"; b="${b%.*}"
+  n=$((n + 1)); o=$(printf 'input/photos/%02d-%s.jpg' "$n" "$(printf '%s' "$b" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-60)")
   ffmpeg -y -v error -i "$f" -frames:v 1 -vf "scale='min(2160,iw)':'min(2160,ih)':force_original_aspect_ratio=decrease" -q:v 3 "$o" 2>/dev/null || { echo "::warning::Photo illisible ignorée : $(basename "$f")"; rm -f "$o"; n=$((n - 1)); }
   [ "$n" -ge 60 ] && { echo "::warning::Plus de 60 images : seules les 60 premières sont montées."; break; }
 done < <(find input/raw -type f -iregex ".*\.\(jpe?g\|png\|webp\)$" | sort)
