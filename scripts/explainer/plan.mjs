@@ -508,37 +508,90 @@ async function analyseMedia(items, sents, lang) {
   for (const x of items) { x.sentence = null; x.crop = null; x.caption = ""; x.photo = false; x.credit = x.credit || creditFromName(x.file); x.vbox = null; }
   const gem = providers().find(([n]) => n === "gemini");
   if (!items.length) return;
-  if (!gem || process.env.EXPLAINER_NO_LLM === "1") { console.log("  médias : pas de clé Gemini → pose dans l'ordre, sans recadrage intelligent"); return; }
-  try {
-    const sub = items.slice(0, 30), parts = [];
-    // vidéos : image de l'enregistrement d'ORIGINE (avant recadrage) — on y lit le nom de la chaîne, du média, l'URL
-    sub.forEach((x, i) => { try { const src = x.kind === "vid" ? (x.orig || x.file) : x.file, at = x.kind === "vid" ? Math.min((x.origDur || x.p.dur) / 2, 4) : 0;
-      parts.push({ text: `Média ${i} (${x.kind === "vid" ? "vidéo (enregistrement d'écran possible), image extraite" : "image"}) — fichier « ${path.basename(x.orig || x.file)} » :` }, { inlineData: { mimeType: "image/jpeg", data: thumb(src, at).toString("base64") } }); } catch { /* miniature impossible : ce média sera posé dans l'ordre */ } });
-    const sys = `Tu es monteur. On te donne des captures d'écran, photos et vidéos (une image extraite, souvent un enregistrement d'écran de téléphone) et la voix off découpée en phrases numérotées. Réponds UNIQUEMENT en JSON : {"medias":[{"media":n,"sentence":n,"box":[ymin,xmin,ymax,xmax],"caption":"...","credit":"...","photo":true|false,"ecran":true|false}]}.
+  const sys = `Tu es monteur. On te donne des captures d'écran, photos et vidéos (une image extraite, souvent un enregistrement d'écran de téléphone) et la voix off découpée en phrases numérotées. Réponds UNIQUEMENT en JSON : {"medias":[{"media":n,"sentence":n,"box":[ymin,xmin,ymax,xmax],"caption":"...","credit":"...","photo":true|false,"ecran":true|false}]}.
 - "sentence" : numéro de la phrase où ce média illustre le mieux ce qui est DIT (titre d'article, nom, chiffre, lieu, personne citée). Chaque média DOIT recevoir une phrase : s'il n'y a pas de lien évident, choisis la phrase la plus proche par le thème. Évite de mettre plusieurs médias sur la même phrase.
 - "box" : zone utile en millièmes (0 à 1000). Capture d'écran : retire barre d'état du téléphone, barre de navigation, menus, boutons, publicités, marges vides ; garde titre, texte clé, illustration. VIDÉO enregistrée depuis un téléphone : la zone EXACTE du lecteur vidéo (l'image de la vidéo seule, sans titre, commentaires, boutons, barres du téléphone). Photo ou vidéo plein cadre : [0,0,1000,1000].
 - "caption" : 2 à 6 mots en ${pick(L.langName, lang)} disant ce que montre le média (sujet VISIBLE). N'invente rien. Aucun emoji.
 - "credit" : la SOURCE à créditer, telle qu'elle est VISIBLE (nom du média, du site, de l'agence, de la chaîne YouTube, du compte, logo, URL) ou dans le nom du fichier ; écrite comme le média s'écrit lui-même (ex. « Al Jazeera », « Reuters », « العربية »). Vide si aucune source n'est lisible : n'invente jamais.
 - "photo" : true si c'est une photographie sans texte important, false pour capture d'écran, article, document, publication.
 - "ecran" (vidéos seulement) : true UNIQUEMENT si c'est l'ENREGISTREMENT D'UN ÉCRAN de téléphone ou d'ordinateur où l'on voit l'interface autour de la vidéo (barre d'état avec l'heure et la batterie, boutons j'aime / partager, titre ou commentaires sous le lecteur, barre de navigation). false pour une vidéo normale plein cadre, même avec des bandeaux, des titres incrustés ou un décor fixe (reportage, interview, motion design, journal TV).`;
-    const j = parseJson(await gem[1](sys, `Phrases :\n${sents.map((s) => `${s.i} | ${s.text}`).join("\n")}`, { parts, temperature: 0.2, maxTokens: 6000, deadline: Date.now() + 170000, timeoutMs: 140000 }));
-    for (const r of Array.isArray(j?.medias) ? j.medias : []) {
-      const x = sub[Math.round(Number(r?.media))]; if (!x) continue;
-      const sn = Math.round(Number(r.sentence)); if (isFinite(sn) && sn >= 0 && sn < sents.length) x.sentence = sn;
-      const b = (Array.isArray(r.box) ? r.box : []).map(Number);
-      if (b.length === 4 && b.every((v) => isFinite(v))) {
-        const [y0, x0, y1, x1] = b.map((v) => Math.max(0, Math.min(1000, v)) / 1000);
-        // recadrage accepté seulement s'il est plausible (ni minuscule ni inversé, ni « tout ») — sinon image entière
-        const box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-        if (x.kind === "img" && y1 - y0 >= 0.25 && x1 - x0 >= 0.4 && (y1 - y0 < 0.985 || x1 - x0 < 0.985)) x.crop = box;
-        if (x.kind === "vid" && box.w >= 0.3 && box.h >= 0.12 && box.w * box.h < 0.92) x.vbox = box;
+
+  // PAR LOTS de 8 médias (et non un seul gros appel) : un modèle surchargé ou lent ne fait perdre qu'un lot, qui est
+  // retenté une fois ; budget global 7 min. Ce qu'aucun lot n'a pu relier passe au repli LECTURE DU TEXTE (OCR).
+  const all = items.slice(0, 60), T0 = Date.now(), BUDGET = 7 * 60 * 1000;
+  if (gem && process.env.EXPLAINER_NO_LLM !== "1") {
+    const batches = []; for (let i = 0; i < all.length; i += 8) batches.push(all.slice(i, i + 8));
+    const todo = batches.map((b) => ({ b, tries: 0 }));
+    while (todo.length) {
+      const job = todo.shift(), sub = job.b, left = T0 + BUDGET - Date.now();
+      if (left < 40000) { console.log("  médias : budget IA épuisé → repli lecture du texte pour le reste"); break; }
+      const parts = [];
+      sub.forEach((x, i) => { try { const src = x.kind === "vid" ? (x.orig || x.file) : x.file, at = x.kind === "vid" ? Math.min((x.origDur || x.p.dur) / 2, 4) : 0;
+        parts.push({ text: `Média ${i} (${x.kind === "vid" ? "vidéo (enregistrement d'écran possible), image extraite" : "image"}) — fichier « ${path.basename(x.orig || x.file)} » :` }, { inlineData: { mimeType: "image/jpeg", data: thumb(src, at).toString("base64") } }); } catch { /* miniature impossible */ } });
+      try {
+        const j = parseJson(await gem[1](sys, `Phrases :\n${sents.map((s) => `${s.i} | ${s.text}`).join("\n")}`, { parts, temperature: 0.2, maxTokens: 4000, thinking: 0, deadline: Date.now() + Math.min(150000, left), timeoutMs: 80000 }));
+        applyMedia(sub, j, sents);
+      } catch (e) {
+        console.log(`  médias lot ${batches.indexOf(sub) + 1}/${batches.length} : échec (${String(e.message).slice(0, 90)})${job.tries ? "" : " → retenté à la fin"}`);
+        if (!job.tries++) todo.push(job);
       }
-      x.caption = cutWords(r.caption, 7); x.photo = r.photo === true;
-      if (x.kind === "vid" && typeof r.ecran === "boolean") x.ecran = r.ecran;
-      const cr = clean(r.credit, 40); if (cr && !/^(inconnu|unknown|aucun|none|n\/a|-)$/i.test(cr)) x.credit = cr;
     }
     console.log(`  médias analysés par Gemini : ${items.filter((x) => x.sentence !== null).length}/${items.length} reliés à une phrase, ${items.filter((x) => x.crop).length} recadrés, ${items.filter((x) => x.credit).length} source(s) à créditer`);
-  } catch (e) { console.log(`  analyse des médias impossible (${String(e.message).slice(0, 120)}) : pose dans l'ordre`); }
+  } else console.log("  médias : pas de clé Gemini → repli lecture du texte (OCR)");
+  ocrFallback(items.filter((x) => x.sentence === null && x.kind === "img"), sents);
+}
+function applyMedia(sub, j, sents) {
+  for (const r of Array.isArray(j?.medias) ? j.medias : []) {
+    const x = sub[Math.round(Number(r?.media))]; if (!x) continue;
+    const sn = Math.round(Number(r.sentence)); if (isFinite(sn) && sn >= 0 && sn < sents.length) x.sentence = sn;
+    const b = (Array.isArray(r.box) ? r.box : []).map(Number);
+    if (b.length === 4 && b.every((v) => isFinite(v))) {
+      const [y0, x0, y1, x1] = b.map((v) => Math.max(0, Math.min(1000, v)) / 1000);
+      // recadrage accepté seulement s'il est plausible (ni minuscule ni inversé, ni « tout ») — sinon image entière
+      const box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+      if (x.kind === "img" && y1 - y0 >= 0.25 && x1 - x0 >= 0.4 && (y1 - y0 < 0.985 || x1 - x0 < 0.985)) x.crop = box;
+      if (x.kind === "vid" && box.w >= 0.3 && box.h >= 0.12 && box.w * box.h < 0.92) x.vbox = box;
+    }
+    x.caption = cutWords(r.caption, 7); x.photo = r.photo === true;
+    if (x.kind === "vid" && typeof r.ecran === "boolean") x.ecran = r.ecran;
+    const cr = clean(r.credit, 40); if (cr && !/^(inconnu|unknown|aucun|none|n\/a|-)$/i.test(cr)) x.credit = cr;
+  }
+}
+/** Repli SANS IA : le texte des captures (titres d'articles, tweets…) est lu par Tesseract (arabe + français + anglais)
+ *  et la capture est posée sur la phrase qui partage le plus de mots rares avec ce texte. Recadrage : marges unies
+ *  et barres du téléphone retirées par analyse des lignes de pixels. Sans Tesseract : pose dans l'ordre (comme avant). */
+export function ocrFallback(list, sents) {
+  if (!list.length) return;
+  let ok = true; try { execFileSync("tesseract", ["--version"], { stdio: "ignore" }); } catch { ok = false; }
+  const norm = (t) => String(t).toLowerCase().replace(/[ً-ٰٟـ]/g, "").replace(/[أإآٱ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه")
+    .replace(/[^\p{L}\p{N}]+/gu, " ").split(" ").map((w) => w.replace(/^(ال|وال|بال|لل|فال)(?=\p{L}{3})/u, "")).filter((w) => w.length >= 3);
+  const df = new Map(); const sw = sents.map((s) => { const set = new Set(norm(s.text)); for (const w of set) df.set(w, (df.get(w) || 0) + 1); return set; });
+  const used = new Set(); let hits = 0;
+  for (const x of list) {
+    if (ok) try {
+      const txt = execFileSync("tesseract", [x.file, "-", "-l", "ara+fra+eng", "--psm", "3"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 60000, maxBuffer: 1 << 22 });
+      const words = new Set(norm(txt));
+      let best = -1, bs = 0;
+      sw.forEach((set, i) => { let sc = 0; for (const w of words) if (set.has(w)) sc += Math.log(1 + sents.length / (df.get(w) || 1)); if (used.has(i)) sc *= 0.5; if (sc > bs) { bs = sc; best = i; } });
+      if (best >= 0 && bs >= 4) { x.sentence = sents[best].i; used.add(best); hits++; }
+    } catch { /* image illisible par Tesseract */ }
+    if (!x.crop) { const c = autoTrim(x.file); if (c) x.crop = c; }
+  }
+  console.log(`  repli lecture du texte : ${ok ? `${hits}/${list.length} capture(s) reliée(s) à la phrase qui en parle` : "Tesseract absent"} ; le reste est posé dans l'ordre, réparti sur la durée`);
+}
+/** Recadrage sans IA : retire les bandes uniformes (marges, barre d'état noire/blanche) en haut, en bas et sur les côtés. */
+export function autoTrim(file) {
+  try {
+    const W = 200, H = 400;
+    const buf = execFileSync("ffmpeg", ["-v", "error", "-i", file, "-vf", `scale=${W}:${H},format=gray`, "-frames:v", "1", "-f", "rawvideo", "-"], { maxBuffer: 1 << 22 });
+    const busy = (vals) => { let m = 0; for (const v of vals) m += v; m /= vals.length; let d = 0; for (const v of vals) d += Math.abs(v - m); return d / vals.length > 6; };
+    const row = (y) => busy(buf.subarray(y * W, (y + 1) * W)), col = (x) => { const a = []; for (let y = 0; y < H; y++) a.push(buf[y * W + x]); return busy(a); };
+    let y0 = 0, y1 = H - 1, x0 = 0, x1 = W - 1;
+    while (y0 < H / 3 && !row(y0)) y0++; while (y1 > H * 2 / 3 && !row(y1)) y1--;
+    while (x0 < W / 4 && !col(x0)) x0++; while (x1 > W * 3 / 4 && !col(x1)) x1--;
+    const box = { x: x0 / W, y: y0 / H, w: (x1 - x0 + 1) / W, h: (y1 - y0 + 1) / H };
+    return box.w * box.h < 0.97 && box.w >= 0.4 && box.h >= 0.25 ? box : null;
+  } catch { return null; }
 }
 // source lisible dans le nom du fichier (« aljazeera-ministre.mp4 », « Reuters_2026.jpg ») ; jamais les noms automatiques
 const GENERIQUE = /^(screen|scr|record|rec|enregistr|capture|vid|video|img|image|photo|pxl|dsc|mov|whatsapp|wa\d|signal|telegram|snapchat|tiktok_?\d|\d)/i;

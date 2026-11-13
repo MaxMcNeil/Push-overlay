@@ -105,6 +105,13 @@ jobs:
         with:
           build-tools: "true"
 
+      - name: Lecture du texte des captures (repli si l'IA d'image est indisponible)
+        continue-on-error: true
+        timeout-minutes: 6
+        run: |
+          command -v tesseract >/dev/null || sudo apt-get install -y -qq --no-install-recommends tesseract-ocr tesseract-ocr-ara tesseract-ocr-fra >/dev/null \
+            || echo "::warning::Tesseract indisponible, repli = pose dans l'ordre"
+
       - name: Récupérer la voix et les médias (captures, photos, vidéos)
         id: src
         env:
@@ -323,6 +330,11 @@ jobs:
             rm -f "output/video-$f.mp4" parts/$f-*.mp4; n=$((n + 1))
           done
           [ "$n" -ge 1 ] || { echo "::error::Aucune vidéo assemblée."; exit 1; }
+
+      - name: Contrôle qualité (durée, volume, silences, noirs, figés)
+        continue-on-error: true
+        timeout-minutes: 30
+        run: bash scripts/explainer/qa.sh
 
       - name: Garder le plan (Artifacts)
         if: always()
