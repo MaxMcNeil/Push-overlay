@@ -28,6 +28,12 @@ function rotate(arr, offset = Number(process.env.KEY_OFFSET || 0)) {
 }
 
 const modelCache = new Map();
+// MÉMOIRE DE SANTÉ des modèles Gemini pendant TOUT le processus : le dernier modèle qui a répondu est essayé en premier
+// aux appels suivants ; un modèle surchargé (503) ou au quota (429) est mis de côté quelques minutes au lieu d'être
+// re-sollicité à chaque appel (chaque essai raté consomme du quota par minute et du temps).
+const health = { good: null, cool: new Map() };
+const cooled = (m) => (health.cool.get(m) || 0) > Date.now();
+const coolDown = (m, ms) => health.cool.set(m, Math.max(health.cool.get(m) || 0, Date.now() + ms));
 async function geminiModels(key) {
   if (process.env.GEMINI_MODEL) return [process.env.GEMINI_MODEL];
   if (modelCache.has("list")) return modelCache.get("list");
@@ -66,8 +72,11 @@ export async function callGemini(sys, user, ctx = {}) {
   const left = () => (ctx.deadline ? ctx.deadline - Date.now() : Infinity);
   let thinking = ctx.thinking; // budget de « réflexion » limité = réponses bien plus rapides
   let preferLite = false; // après un délai dépassé : seulement les modèles « lite », bien plus rapides
-  modelLoop: for (const m of models) {
+  const avail = models.filter((m) => !cooled(m));
+  const order = [...new Set([...(health.good && avail.includes(health.good) ? [health.good] : []), ...avail, ...models.filter(cooled)])];
+  modelLoop: for (const m of order) {
     if (preferLite && !/lite/.test(m)) continue;
+    if (cooled(m) && order.some((x) => !cooled(x) && x !== m && (!preferLite || /lite/.test(x)))) continue;
     let over = 0;
     for (let round = 0; round < 2; round++) {
       let saturated = 0;
@@ -92,10 +101,17 @@ export async function callGemini(sys, user, ctx = {}) {
             // 503/500 = MODÈLE surchargé chez Google (pas la clé) : 2 de suite → modèle suivant, sans attendre
             over++;
             console.log(`  ${tag} : modèle surchargé (${res.status})${over >= 2 ? " → modèle suivant" : " → nouvel essai"}`);
-            if (over >= 2) { over = 0; continue modelLoop; }
+            if (over >= 2) { over = 0; coolDown(m, 4 * 60 * 1000); continue modelLoop; }
             continue;
           }
-          if (res.status === 429) { saturated++; console.log(`  ${tag} : quota de la clé atteint (429) → clé suivante`); continue; }
+          if (res.status === 429) {
+            saturated++;
+            const body = (await res.text().catch(() => "")).replace(/\s+/g, " ");
+            const perDay = /PerDay|per day|daily/i.test(body), retry = Number((body.match(/retryDelay"?\s*:\s*"?(\d+)/) || [])[1]) || 60;
+            console.log(`  ${tag} : quota atteint (429, ${perDay ? "quota du JOUR de ce modèle" : `quota par minute, ${retry} s`})${(body.match(/quotaId"?\s*:\s*"([^"]+)/) || [])[1] ? ` [${body.match(/quotaId"?\s*:\s*"([^"]+)/)[1]}]` : ""} → ${ki + 1 < keys.length ? "clé suivante" : "modèle suivant"}`);
+            if (saturated >= keys.length - dead.size) { coolDown(m, perDay ? 12 * 3600 * 1000 : (retry + 5) * 1000); continue modelLoop; }
+            continue;
+          }
           if (res.status === 404) { lastErr = new Error(`${tag} : modèle introuvable`); break; }
           if (!res.ok) {
             const body = (await res.text()).replace(/\s+/g, " ").slice(0, 300);
@@ -124,6 +140,7 @@ export async function callGemini(sys, user, ctx = {}) {
             console.log(`  ${tag} : réponse coupée même avec 65 536 jetons`);
           }
           if (!txt) { lastErr = new Error(`${tag} : réponse vide (${d.candidates?.[0]?.finishReason || d.promptFeedback?.blockReason || "?"})`); console.log(`  ${lastErr.message}`); continue; }
+          health.good = m;
           console.log(`  Gemini : modèle utilisé = ${m} (clé ${ki + 1}/${keys.length})`);
           return txt;
         } catch (e) {
@@ -135,7 +152,7 @@ export async function callGemini(sys, user, ctx = {}) {
             console.log(`  ${tag} : pas de réponse en ${Math.round(tmo / 1000)} s${ctx.audio ? " → on retire l'audio" : ""}${timeouts >= 2 ? " → abandon de Gemini" : " → modèle suivant"}`);
             if (timeouts >= 2) throw new Error(`Gemini trop lent (${timeouts} délais dépassés)`);
             if (ctx.audio) ctx = { ...ctx, audio: null };
-            preferLite = true;
+            preferLite = true; coolDown(m, 3 * 60 * 1000);
             continue modelLoop;
           }
           console.log(`  ${tag} : ${e.message}`);
