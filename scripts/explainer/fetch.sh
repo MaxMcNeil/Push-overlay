@@ -68,7 +68,14 @@ if [ -z "$VOICE" ]; then for f in "${CAND[@]}"; do b=$(basename "${f,,}"); if [[
 if [ -z "$VOICE" ]; then
   WITH=(); for f in "${CAND[@]}"; do has_audio "$f" && WITH+=("$f"); done
   if [ "${#WITH[@]}" -eq 1 ]; then VOICE="${WITH[0]}"
-  elif [ "${#WITH[@]}" -gt 1 ]; then die "Plusieurs vidéos et aucun fichier audio : je ne peux pas deviner laquelle est ta voix. Dépose la voix en mp3/m4a/wav, ou renomme-la « voix.mp4 »."
+  elif [ "${#WITH[@]}" -gt 1 ]; then
+    # voix déposée en vidéo (sans nom « voix… ») au milieu d'enregistrements d'écran avec son : la voix est de loin la plus
+    # longue (souvent plus d'une heure) ; si ce n'est pas net, on préfère s'arrêter que monter la mauvaise piste
+    dur_of() { ffprobe -v error -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null | cut -d. -f1; }
+    best=""; b1=0; b2=0
+    for f in "${WITH[@]}"; do d=$(dur_of "$f"); d=${d:-0}; if [ "$d" -gt "$b1" ]; then b2=$b1; b1=$d; best="$f"; elif [ "$d" -gt "$b2" ]; then b2=$d; fi; done
+    if [ "$b1" -ge 60 ] && [ "$b1" -ge $((b2 * 3)) ]; then VOICE="$best"; echo "::notice::Voix = la vidéo la plus longue ($(basename "$best"), ${b1} s) ; les autres vidéos sont des extraits à monter."
+    else die "Plusieurs vidéos avec du son et aucun fichier audio : je ne peux pas deviner laquelle est ta voix. Dépose la voix en mp3/m4a/wav, ou renomme-la « voix.mp4 »."; fi
   else die "Aucun fichier audio lisible trouvé. Formats acceptés : mp3, m4a, wav, ogg, opus, aac, flac (ou une vidéo nommée « voix… » : son seul utilisé)."; fi
 fi
 out voice_name "$(basename "$VOICE")"
