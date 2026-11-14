@@ -78,17 +78,15 @@ jobs:
           vids() { gh release view "$1" --repo "$REPO" --json assets -q '.assets[].name' 2>/dev/null | grep -Ei '\.(mp4|mov|mkv|webm|avi|m4v)$' || true; }
           TAG="$WANT_TAG"
           if [ -z "$TAG" ]; then
-            # la plus récente release « normale » qui contient une vidéo (on ignore renders, shorts*, out-*)
-            shopt -s nocasematch
-            for t in $(gh release list --repo "$REPO" --limit 40 --json tagName -q '.[].tagName'); do
-              case "$t" in renders|short*|out-*) continue;; esac
-              # une release avec un fichier SON (ta voix) ou déjà utilisée par Faceless = matière de Faceless live arabic :
-              # Build Video ne la prend jamais d'office (seulement si tu donnes son tag à la main)
-              ri=$(gh release view "$t" --repo "$REPO" --json body,assets 2>/dev/null || echo '{}')
-              if grep -q '<!-- role:faceless -->' <<<"$ri" || jq -r '.assets[]?.name' <<<"$ri" | grep -qiE '\.(m4a|mp3|wav|aac|ogg|oga|opus|flac|amr|wma|caf)$'; then
-                echo "Ignorée (voix pour Faceless live arabic) : $t"; continue; fi
-              [ -n "$(vids "$t")" ] && { TAG="$t"; break; }
-            done
+            # la release la plus récemment TOUCHÉE (créée, ou dernier fichier ajouté) qui contient une vidéo
+            # (on ignore renders, shorts*, out-*), quel que soit son nom
+            TAG=$(gh api "repos/$REPO/releases?per_page=50" | jq -r '
+              [ .[] | select(.draft|not)
+                | select(.tag_name|test("^(renders$|out-)|^short";"i")|not)
+                | select([.assets[].name|test("\\.(mp4|mov|mkv|webm|avi|m4v)$";"i")]|any)
+                | {t:.tag_name, d:([.published_at // .created_at] + [.assets[].updated_at] | max)} ]
+              | sort_by(.d) | last | .t // empty')
+            [ -n "$TAG" ] && echo "Release la plus récente (création ou ajout de fichier) : $TAG"
           fi
           vids "$TAG" > /tmp/vids.txt
           N=$(wc -l < /tmp/vids.txt)
