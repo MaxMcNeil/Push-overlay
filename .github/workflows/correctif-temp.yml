@@ -15,6 +15,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -eu
+          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null; }
           git clone -q --depth 1 --branch correctif-temp "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" src
           N=$(gh release view out-explainer --repo "$REPO" --json assets -q '.assets[].name' | grep -E '^explainer-vertical-.*\.mp4$' | head -1)
           echo "Vidéo : $N"; gh release download out-explainer --repo "$REPO" -p "$N" -D .
