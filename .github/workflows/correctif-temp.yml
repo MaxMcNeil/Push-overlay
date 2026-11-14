@@ -1,0 +1,30 @@
+name: Correctif vidéo (temporaire)
+# Usage unique : remplace le début (ouverture erronée, 0 → 9,97 s) de explainer-vertical dans out-explainer
+# par l'intro « صوت من الشارع » + raccord, puis supprime la branche temporaire.
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: write
+jobs:
+  c:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Corriger
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          git clone -q --depth 1 --branch correctif-temp "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" src
+          N=$(gh release view out-explainer --repo "$REPO" --json assets -q '.assets[].name' | grep -E '^explainer-vertical-.*\.mp4$' | head -1)
+          echo "Vidéo : $N"; gh release download out-explainer --repo "$REPO" -p "$N" -D .
+          ffmpeg -nostdin -v error -y -ss 9.966667 -i "$N" -c copy -avoid_negative_ts make_zero rest.mp4
+          printf "file '%s'\n" "$PWD/src/intro.mp4" "$PWD/src/bridge.mp4" "$PWD/rest.mp4" > list.txt
+          ffmpeg -nostdin -v error -y -f concat -safe 0 -i list.txt -c copy -movflags +faststart new.mp4
+          d0=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$N"); d1=$(ffprobe -v error -show_entries format=duration -of csv=p=0 new.mp4)
+          echo "Avant $d0 s → après $d1 s"
+          awk -v a="$d0" -v b="$d1" 'BEGIN{exit !(b > a + 23 && b < a + 25)}' || { echo "::error::durée inattendue"; exit 1; }
+          gh release delete-asset out-explainer "$N" --repo "$REPO" -y
+          mv new.mp4 "$N" && gh release upload out-explainer "$N" --repo "$REPO"
+          gh release view out-explainer --repo "$REPO" --json assets -q '.assets[]|"\(.name) \(.size)"'
+          git -C src push -q origin --delete correctif-temp || true
