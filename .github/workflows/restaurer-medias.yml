@@ -1,7 +1,8 @@
 name: Restaurer les médias
 
-# Lancement manuel : recrée la release « Vidéo » (voix + captures + vidéos) à partir de la branche temporaire
-# restauration-medias, puis supprime cette branche. Ne fait rien si la branche n'existe pas.
+# Lancement manuel, usage unique : copie les fichiers de la release « Vidéo » (restaurée) dans la release « Ksa »
+# (sans écraser un fichier déjà présent : un nom en double reçoit le préfixe « restaure- »), vérifie, puis supprime
+# la release « Vidéo ». Ce fichier de workflow sera ensuite retiré du dépôt.
 on:
   workflow_dispatch: {}
 
@@ -9,21 +10,24 @@ permissions:
   contents: write
 
 jobs:
-  restaurer:
+  deplacer:
     runs-on: ubuntu-24.04
     steps:
-      - name: Récupérer les fichiers
+      - name: Copier Vidéo → Ksa puis supprimer Vidéo
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -eu
-          git ls-remote --exit-code "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" restauration-medias >/dev/null \
-            || { echo "Rien à restaurer (branche restauration-medias absente)."; exit 0; }
-          git clone -q --depth 1 --branch restauration-medias "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" src
-          ls -la src/medias
-          TAG="Vidéo"; gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 && TAG="Vidéo-restaurée"
-          gh release create "$TAG" --repo "$REPO" --title "Vidéo" --notes "Voix + captures + vidéos restaurées (copie du 13/11)." src/medias/*
-          n=$(gh release view "$TAG" --repo "$REPO" --json assets -q '.assets|length')
-          echo "Release $TAG : $n fichier(s)"; [ "$n" -eq "$(ls src/medias | wc -l)" ]
-          git -C src push -q origin --delete restauration-medias && echo "Branche temporaire supprimée."
+          gh release view "Vidéo" --repo "$REPO" >/dev/null 2>&1 || { echo "Release Vidéo absente : rien à faire."; exit 0; }
+          mkdir -p src && gh release download "Vidéo" --repo "$REPO" --dir src
+          have=$(gh release view Ksa --repo "$REPO" --json assets -q '.assets[].name')
+          for f in src/*; do
+            n=$(basename "$f")
+            if grep -qxF "$n" <<<"$have"; then mv "$f" "src/restaure-$n"; echo "Nom déjà pris dans Ksa : $n → restaure-$n"; fi
+          done
+          gh release upload Ksa --repo "$REPO" src/*
+          now=$(gh release view Ksa --repo "$REPO" --json assets -q '.assets[].name')
+          for f in src/*; do grep -qxF "$(basename "$f")" <<<"$now" || { echo "::error::$(basename "$f") absent de Ksa : Vidéo conservée"; exit 1; }; done
+          echo "Ksa : $(wc -l <<<"$now") fichier(s)."
+          gh release delete "Vidéo" --repo "$REPO" -y --cleanup-tag && echo "Release Vidéo supprimée."
