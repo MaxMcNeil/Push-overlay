@@ -28,8 +28,6 @@
     "emerald"
   ],
   "fr-shorts": [
-    "mint-news",
-    "orange-cut",
     "red-alert",
     "pop-yellow",
     "electric",
@@ -39,6 +37,8 @@
     "pop-yellow",
     "red-alert",
     "electric",
-    "orange-cut"
+    "orange-cut",
+    "mint-news",
+    "violet-mag"
   ]
 }
