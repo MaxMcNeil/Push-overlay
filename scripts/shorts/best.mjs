@@ -155,7 +155,8 @@ export function assemble(moms, V, avoid = []) {
   const chosen = [];
   let tot = 0;
   // ouverture : le meilleur moment d'ouverture parmi les plus intenses (court de préférence), jamais celle de l'autre short
-  const opener = pool.filter((m) => !avoid.length || !ov(avoid[0], m)).slice(0, 10).sort((x, y) => (y.opening + y.intensity * 0.5 - y.d * 0.08) - (x.opening + x.intensity * 0.5 - x.d * 0.08))[0];
+  const fresh = pool.filter((m) => !used(m));
+  const opener = (fresh.length >= 3 ? fresh : pool.filter((m) => !avoid.length || !ov(avoid[0], m))).slice(0, 10).sort((x, y) => (y.opening + y.intensity * 0.5 - y.d * 0.08) - (x.opening + x.intensity * 0.5 - x.d * 0.08))[0];
   if (opener) { chosen.push(opener); tot += opener.d; }
   for (const m of pool) {
     if (chosen.length >= V.maxMoments || tot >= V.target) break;

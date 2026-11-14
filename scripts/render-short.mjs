@@ -179,6 +179,12 @@ let CAP_PRE = null;
 if (BEST && subsOn) {
   const g = lowest(130);
   if (g) { CAP_PRE = take(g, 130, true) + 65; RES.push({ y0: CAP_PRE - 65, y1: CAP_PRE + 65 }); }
+  else {
+    // pas 130 px libres au-dessus de l'interface : juste sous le visage, en débordant un peu vers le bas (≤ 1600 px,
+    // encore visible au-dessus du titre de la vidéo) — jamais sur le visage
+    const fb = Math.max(...prot.map((p) => p.y1));
+    if (fb + 128 <= 1600) { CAP_PRE = fb + 6 + 61; RES.push({ y0: CAP_PRE - 61, y1: CAP_PRE + 61 }); reserve(CAP_PRE - 61, CAP_PRE + 61); }
+  }
 }
 // 1) étiquette de chapitre
 const above = gaps.filter((g) => g.y1 <= faceMid && room(g) >= 110).sort((a, b) => room(b) - room(a))[0];
