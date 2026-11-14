@@ -59,13 +59,17 @@ for (const c of sel.clips) {
   console.log(`### #${c.id} ${c.title || plan.hook || "(sans titre)"}`);
   console.log(`- Fichier : ${f ? "`" + f + "`" : "❌ rendu échoué"}`);
   if (!f) { try { const err = fs.readFileSync(`out/short-${c.id}.error.txt`, "utf8").trim().split("\n").slice(-8).join("\n"); console.log("```\n" + err + "\n```"); } catch {} }
-  console.log(`- Passage dans la source : ${fmt(c.start)} → ${fmt(c.end)} (${Math.round(c.duration)} s)`);
+  if (c.segments?.length) {
+    console.log(`- ${c.label === "nerveux" ? "⚡ NERVEUX" : "🔥 BEST-OF"} : ${c.segments.length} moments, ${Math.round(c.duration)} s avant resserrage — ouverture choc, montée, sommet, fin en boucle`);
+    c.segments.forEach((g, k) => console.log(`  ${k + 1}. ${fmt(g.start)} (${Math.round(g.end - g.start)} s)${g.type ? ` [${g.type}]` : ""} « ${String(g.text || "").slice(0, 120)} »`));
+  } else console.log(`- Passage dans la source : ${fmt(c.start)} → ${fmt(c.end)} (${Math.round(c.duration)} s)`);
   if (plan.hook) console.log(`- Hook à l'écran : ${plan.hook}`);
   if (c.description) console.log(`- Description : ${c.description}`);
   if (c.hashtags?.length) console.log(`- Hashtags : ${c.hashtags.join(" ")}`);
+  if (c.tags?.length) console.log(`- Tags : ${c.tags.join(", ")}`);
   // texte prêt à coller en description du short (le short annonce « vidéo complète : lien juste en dessous »)
   const cta = { ar: "🎬 الفيديو الكامل:", en: "🎬 Full video:", it: "🎬 Video completo:" }[sel.lang] || "🎬 Vidéo complète :";
-  console.log(`- À coller en description : ${[c.description, `${cta} [lien de ta vidéo longue]`, (c.hashtags || []).join(" ")].filter(Boolean).join(" — ")}`);
+  console.log(`- À coller en description : ${[c.description, `${cta} [lien de ta vidéo longue]`, (c.hashtags || []).join(" "), c.tags?.length ? `Tags : ${c.tags.join(", ")}` : ""].filter(Boolean).join(" — ")}`);
   console.log(`  (sur YouTube, relie aussi la vidéo longue avec « Vidéo associée » : c'est le lien cliquable qui s'affiche sous le short)`);
   if (c.why) console.log(`- Pourquoi : ${c.why}`);
   if (c.quality) console.log(`- Relecture IA : autonome ${c.quality.autonome}/10 · accroche ${c.quality.accroche}/10 · chute ${c.quality.chute}/10`);

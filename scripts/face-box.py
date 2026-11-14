@@ -118,7 +118,8 @@ def main():
     y0 = max(0.0, pct(cys, 0.1) - mh * 0.5 - mh * 0.45); y1 = min(1.0, pct(cys, 0.9) + mh * 0.5 + mh * 0.3)
     x0 = max(0.0, pct(cxs, 0.1) - mw * 0.65); x1 = min(1.0, pct(cxs, 0.9) + mw * 0.65)
     cx = pct([(b[0] + b[2]) / 2 for b in boxes], 0.5); cy = pct([(b[1] + b[3]) / 2 for b in boxes], 0.5)
+    chin = min(1.0, pct([b[3] for b in boxes], 0.9) + 0.015)   # bas du visage (menton / barbe), sans le cou
     print(json.dumps({"found": True, "x0": round(x0, 3), "y0": round(y0, 3), "x1": round(x1, 3), "y1": round(y1, 3),
-                      "cx": round(cx, 3), "cy": round(cy, 3), "ratio": round(len(boxes) / max(1, seen), 2), "captions": caps}))
+                      "cx": round(cx, 3), "cy": round(cy, 3), "chin": round(chin, 3), "ratio": round(len(boxes) / max(1, seen), 2), "captions": caps}))
 
 main()
