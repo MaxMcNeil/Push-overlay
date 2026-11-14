@@ -34,6 +34,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  STATUS_ROLE: build-video   # noté sur la release (Build Video ne supprime jamais une release utilisée par un autre workflow)
   # IA GRATUITE (recommandé) : crée une clé gratuite et ajoute-la comme secret du dépôt.
   #   - GEMINI_API_KEY : clé gratuite Google AI Studio (aistudio.google.com) -> meilleur arabe
   #   - GROQ_API_KEY   : clé gratuite console.groq.com (Llama 3.3 70B, très rapide)
@@ -81,6 +82,11 @@ jobs:
             shopt -s nocasematch
             for t in $(gh release list --repo "$REPO" --limit 40 --json tagName -q '.[].tagName'); do
               case "$t" in renders|short*|out-*) continue;; esac
+              # une release avec un fichier SON (ta voix) ou déjà utilisée par Faceless = matière de Faceless live arabic :
+              # Build Video ne la prend jamais d'office (seulement si tu donnes son tag à la main)
+              ri=$(gh release view "$t" --repo "$REPO" --json body,assets 2>/dev/null || echo '{}')
+              if grep -q '<!-- role:faceless -->' <<<"$ri" || jq -r '.assets[]?.name' <<<"$ri" | grep -qiE '\.(m4a|mp3|wav|aac|ogg|oga|opus|flac|amr|wma|caf)$'; then
+                echo "Ignorée (voix pour Faceless live arabic) : $t"; continue; fi
               [ -n "$(vids "$t")" ] && { TAG="$t"; break; }
             done
           fi
@@ -380,6 +386,13 @@ jobs:
             shopt -s nocasematch; case "$t" in short*) continue;; esac; shopt -u nocasematch
             [ "$t" = "$CUR" ] && continue
             case "$name" in "⏳ EN COURS"*) echo "Gardée (montage en cours) : $t"; continue;; esac
+            # SÉCURITÉ : on ne supprime QUE les releases montées par Build Video, jamais une release de voix / captures
+            # (Faceless live arabic), de shorts, ni une release jamais traitée ou contenant un fichier son ou une image.
+            info=$(gh release view "$t" --repo "$REPO" --json body,assets 2>/dev/null) || continue
+            grep -q '<!-- role:build-video -->' <<<"$info" || { echo "Gardée (pas une release de Build Video) : $t"; continue; }
+            grep -qE '<!-- role:(faceless|shorts) -->' <<<"$info" && { echo "Gardée (utilisée par un autre workflow) : $t"; continue; }
+            if jq -r '.assets[].name' <<<"$info" | grep -qiE '\.(m4a|mp3|wav|aac|ogg|oga|opus|flac|amr|wma|caf|jpe?g|png|webp|avif|heic|heif|gif|bmp|tiff?|jfif)$'; then
+              echo "Gardée (contient un fichier son ou une image) : $t"; continue; fi
             echo "Suppression de l'ancienne release d'entrée : $t"
             gh release delete "$t" --repo "$REPO" -y --cleanup-tag || true
           done < /tmp/rels.tsv

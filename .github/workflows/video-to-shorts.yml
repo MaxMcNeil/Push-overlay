@@ -67,6 +67,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  STATUS_ROLE: shorts   # noté sur la release (Build Video ne supprime jamais une release utilisée par un autre workflow)
   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
   GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
   GEMINI_API_KEYS_PLUS: ${{ secrets.GEMINI_API_KEYS_PLUS }}

@@ -64,6 +64,7 @@ permissions:
   actions: read
 
 env:
+  STATUS_ROLE: faceless   # noté sur la release (Build Video ne supprime jamais une release utilisée par un autre workflow)
   # CLÉS DÉDIÉES à ce workflow (facultatives) : secrets EXPLAINER_GEMINI_API_KEY et EXPLAINER_GROQ_API_KEY.
   # Si une clé dédiée existe, elle est la SEULE utilisée ici pour ce fournisseur (les clés partagées avec Build Video
   # et les Shorts ne sont pas touchées). Sans clé dédiée : les clés habituelles du dépôt, comme avant.
