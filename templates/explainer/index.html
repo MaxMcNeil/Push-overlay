@@ -176,6 +176,33 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .v .cine .csub{bottom:calc(var(--u)*200)}
 .cine .csub span{font-size:calc(var(--u)*54)}
 .cine .src{position:absolute;bottom:calc(var(--u)*18);inset-inline-end:calc(var(--u)*40);z-index:61}
+/* EXTRAIT « MÉDAILLON » (un extrait sur deux, jamais l'ouverture) : la personne qui parle dans un médaillon doré
+   ciselé (anneaux, perles, pétales qui tournent lentement), rosaces d'angle, et ce qu'elle dit dans un cartouche
+   pourpre à double filet d'or, encadré d'arabesques. Inspiré des cartouches dorés des chaînes du Golfe. */
+.medal{position:absolute;inset:0;overflow:hidden}
+.medal .corner{position:absolute;width:calc(var(--u)*620);height:calc(var(--u)*620);opacity:.5;pointer-events:none}
+.medal .corner svg{width:100%;height:100%;fill:none;stroke:var(--accent)}
+.medal .c1{top:calc(var(--u)*-260);inset-inline-end:calc(var(--u)*-260)}
+.medal .c2{bottom:calc(var(--u)*-300);inset-inline-start:calc(var(--u)*-300);opacity:.35}
+.medal .disc{position:absolute;left:50%;top:39%;width:calc(var(--u)*700);height:calc(var(--u)*700);margin:calc(var(--u)*-350) 0 0 calc(var(--u)*-350)}
+.h .medal .disc{left:31%;top:51%;width:calc(var(--u)*620);height:calc(var(--u)*620);margin:calc(var(--u)*-310) 0 0 calc(var(--u)*-310)}
+.medal .mring{position:absolute;inset:-14%;pointer-events:none}
+.medal .mring svg{width:100%;height:100%;fill:none;stroke:var(--accent);overflow:visible}
+.medal .face{position:absolute;inset:0;border-radius:50%;overflow:hidden;background:#0b0f14;
+  box-shadow:0 0 0 calc(var(--u)*10) #c79a3a,0 0 0 calc(var(--u)*16) #f3d98b,0 0 0 calc(var(--u)*22) #8a6320,0 calc(var(--u)*40) calc(var(--u)*120) rgba(0,0,0,.65),0 0 calc(var(--u)*90) var(--glow)}
+.medal .face img{position:absolute;left:0;top:0;max-width:none}
+.medal .cart{position:absolute;left:calc(var(--u)*70);right:calc(var(--u)*70);top:68%;text-align:center}
+.h .medal .cart{left:56%;right:calc(var(--u)*90);top:30%}
+.medal .orn{display:block;width:62%;margin:0 auto;height:calc(var(--u)*70)}
+.medal .orn svg{width:100%;height:100%;fill:none;stroke:var(--accent)}
+.medal .box{position:relative;margin:calc(var(--u)*6) 0;padding:calc(var(--u)*34) calc(var(--u)*40);background:linear-gradient(180deg,#8a1a2c,#5e0f1c);
+  box-shadow:inset 0 0 0 calc(var(--u)*4) #d9b25a,inset 0 0 0 calc(var(--u)*12) #5e0f1c,inset 0 0 0 calc(var(--u)*14) rgba(217,178,90,.7),0 calc(var(--u)*30) calc(var(--u)*80) rgba(0,0,0,.55);min-height:calc(var(--u)*200);display:grid;place-items:center}
+.medal .box .csub{margin:0;min-height:0}
+.medal .box .csub span{background:none;box-shadow:none;padding:0;font:800 calc(var(--u)*58)/1.45 var(--f-title);color:#fff;text-shadow:0 calc(var(--u)*3) 0 rgba(0,0,0,.35)}
+.medal .box .who{font:700 calc(var(--u)*40)/1.3 var(--f-title);color:#f3d98b;margin-top:calc(var(--u)*10)}
+.medal .src{position:absolute;bottom:calc(var(--u)*18);inset-inline-end:calc(var(--u)*40)}
+.qorn{display:block;width:56%;margin:calc(var(--u)*14) auto;height:calc(var(--u)*56)}
+.qorn svg{width:100%;height:100%;fill:none;stroke:var(--accent)}
 .live{position:absolute;top:calc(var(--u)*22);inset-inline-start:calc(var(--u)*22);z-index:50;width:calc(var(--u)*30);height:calc(var(--u)*30);display:grid;place-items:center}
 .live i{width:100%;height:100%;border-radius:50%;background:#ff3b3b;box-shadow:0 0 calc(var(--u)*22) #ff3b3b}
 .frame .shine{z-index:40}
@@ -294,12 +321,14 @@ const src=d=>d.source?`<div class="src" ${A("fade",.5)}>${esc(d.source)}</div>`:
 const ARROW=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M5 13l7 7 7-7"/></svg>`;
 const PLUS=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg>`;
 
-const ASIDE_RECENT=[];
+const ASIDE_RECENT=[];let MEDN=0;
+/* filet d'arabesque doré (cartouches, citations) */
+const ORN=(flip,cls="orn")=>`<span class="${cls}" data-a="fade" data-d=".4"><svg viewBox="0 0 400 40" preserveAspectRatio="none" style="${flip?"transform:scaleY(-1)":""}"><path d="M10,20 H150 M250,20 H390" stroke-width="1.5"/><path d="M150,20 C165,4 185,4 200,20 C215,4 235,4 250,20 M150,20 C165,36 185,36 200,20 C215,36 235,36 250,20" stroke-width="2"/><circle cx="200" cy="20" r="5" fill="var(--accent)" stroke="none"/><circle cx="10" cy="20" r="3" fill="var(--accent)" stroke="none"/><circle cx="390" cy="20" r="3" fill="var(--accent)" stroke="none"/></svg></span>`;
 const BUILD={
   hook:d=>`<div class="safe">${head(d)}<div class="rule" ${A("draw",.12)}></div><div class="title xl">${words(d.title,d.highlight,.18,.085)}</div>${d.sub?`<div class="sub" ${A("rise",.75)}>${esc(d.sub)}</div>`:""}</div>${src(d)}`,
   headline:d=>`<div class="safe">${head(d)}<div class="rule" ${A("draw",.12)}></div><div class="title">${words(d.title,d.highlight,.16,.07)}</div>${d.sub?`<div class="sub" ${A("rise",.6)}>${esc(d.sub)}</div>`:""}</div>${src(d)}`,
   photo:d=>`<div class="photo"><img src="${esc(d.photo)}" data-a="kb"><div class="tint"></div><div class="fade"></div></div><div class="safe">${head(d)}<div class="rule" ${A("draw",.12)}></div><div class="title md">${words(d.title,d.highlight,.18,.07)}</div></div>${src(d)}`,
-  quote:d=>`<div class="safe persp">${head(d)}<div style="height:calc(var(--u)*40)"></div><div class="card${d.paper?" paper":""}" ${A("tilt",.14)}><div class="shine" data-a="shine" data-d=".55"></div><span class="qmark" ${A("pop",.3)}>${RTL?"”":"“"}</span><div class="quote">${words(d.quote,d.highlight,.4,.06)}</div>${d.who?`<div class="who" ${A("rise",.9)}>${esc(d.who)}</div>`:""}${d.meta?`<div class="meta" ${A("rise",1)}>${esc(d.meta)}</div>`:""}</div></div>${src(d)}`,
+  quote:d=>`<div class="safe persp">${head(d)}<div style="height:calc(var(--u)*24)"></div>${ORN(false,"qorn")}<div class="card${d.paper?" paper":""}" ${A("tilt",.14)}><div class="shine" data-a="shine" data-d=".55"></div><span class="qmark" ${A("pop",.3)}>${RTL?"”":"“"}</span><div class="quote">${words(d.quote,d.highlight,.4,.06)}</div>${d.who?`<div class="who" ${A("rise",.9)}>${esc(d.who)}</div>`:""}${d.meta?`<div class="meta" ${A("rise",1)}>${esc(d.meta)}</div>`:""}</div>${ORN(true,"qorn")}</div>${src(d)}`,
   stat:d=>`<div class="safe statwrap">${head(d)}<div style="height:calc(var(--u)*36)"></div><div class="ring" ${A("pop",.1)}><svg viewBox="0 0 200 200"><circle cx="100" cy="100" r="92" fill="none" stroke="rgba(255,255,255,.1)" stroke-width="2"/><circle cx="100" cy="100" r="92" fill="none" stroke="url(#gg)" stroke-width="4.5" stroke-linecap="round" stroke-dasharray="578" data-a="arc" data-d=".2" data-frac="${clamp(Number(d.fill??.78))}" transform="rotate(-90 100 100)"/><circle cx="100" cy="100" r="80" fill="none" stroke="var(--accent)" stroke-opacity=".35" stroke-width="1" stroke-dasharray="2 9" data-a="spin"/><defs><linearGradient id="gg"><stop offset="0" stop-color="var(--accent)"/><stop offset="1" stop-color="var(--accent2)"/></linearGradient></defs></svg><div class="num" data-a="count" data-d=".2" data-v="${Number(d.value)||0}" data-dec="${d.decimals||0}" data-pre="${esc(d.prefix||"")}" data-suf="${esc(d.suffix||"")}"></div></div><div class="lab">${words(d.label,d.highlight,.7,.07)}</div>${d.sub?`<div class="sub" ${A("rise",1)}>${esc(d.sub)}</div>`:""}</div>${src(d)}`,
   timeline:d=>{const it=(d.items||[]).slice(0,4);return `<div class="safe">${head(d)}<div style="height:calc(var(--u)*60)"></div><div class="tl"><div class="line" data-a="drawY" data-d=".15" data-len="${(.5+it.length*.45).toFixed(2)}"></div><div class="dot" data-a="travel" data-d=".15" data-len="${(.5+it.length*.45).toFixed(2)}"></div>${it.map((x,i)=>`<div class="it" ${A("rise",(.25+i*.45).toFixed(2))}><div class="date">${esc(x.date)}</div><div class="dl">${esc(x.label)}</div></div>`).join("")}</div></div>${src(d)}`},
   list:d=>{const it=(d.items||[]).slice(0,5);return `<div class="safe">${head(d)}${d.title?`<div class="rule" ${A("draw",.12)}></div><div class="title md">${words(d.title,d.highlight,.15,.06)}</div><div style="height:calc(var(--u)*40)"></div>`:`<div style="height:calc(var(--u)*50)"></div>`}${it.map((x,i)=>`<div class="li"><div class="bar" ${A("draw",(.4+i*.22).toFixed(2))}></div><div ${A("rise",(.46+i*.22).toFixed(2))}><div class="nm"><span class="ix">0${i+1}</span><span>${esc(x.name)}</span></div>${x.role?`<div class="rl">${esc(x.role)}</div>`:""}</div></div>`).join("")}</div>${src(d)}`},
@@ -321,6 +350,18 @@ const BUILD={
   shot:(d,sc)=>{const M=(d.media&&d.media.length?d.media:[{kind:"img",image:d.image,iw:d.iw,ih:d.ih,crop:d.crop}]),m0=M[0],c0=m0.crop||{x:0,y:0,w:1,h:1},
     ar=(c0.w*(m0.iw||1))/(c0.h*(m0.ih||1)),vert=H>W,big=sc&&sc.big,R=big?clamp(ar,.5,1.9):clamp(ar,vert?.95:1.25,vert?1.78:1.9);
     const med=M.map((m,k)=>{const c=m.crop||{x:0,y:0,w:1,h:1};return `<img ${m.kind==="vid"?`data-dir="${esc(m.dir)}" data-n="${m.n|0}" data-fps="${m.fps||30}" src="${esc(m.dir)}/00001.jpg"`:`src="${esc(m.image)}"`} data-a="media" data-k="${k}" data-m="${M.length}" data-c="${[c.x,c.y,c.w,c.h].join(",")}" data-iw="${m.iw||0}" data-ih="${m.ih||0}">`}).join("");
+    if(big&&!sc.opener&&m0.subs&&m0.subs.length&&(MEDN++)%2===1){                 /* un extrait sur deux : médaillon doré + cartouche */
+      const iw=m0.iw||1,ih=m0.ih||1,c=m0.crop||{x:0,y:0,w:1,h:1},pw=c.w*iw,ph=c.h*ih,side=Math.min(pw,ph);
+      const sq={x:c.x+(pw-side)/2/iw,y:c.y+Math.max(0,Math.min(ph-side,ph*.36-side/2))/ih,w:side/iw,h:side/ih};   /* carré centré sur le haut (visage) */
+      const P=(n,r,rot)=>Array.from({length:n},(_,k)=>{const a=(k/n)*6.2832+rot;return [100+r*Math.cos(a),100+r*Math.sin(a)]});
+      const beads=P(48,95,0).map(([x,y])=>`<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="1.5" fill="var(--accent)" stroke="none"/>`).join("");
+      const petals=P(16,104,0).map(([x,y],k)=>{const a=k/16*360;return `<path d="M100,-8 C106,-1 106,6 100,12 C94,6 94,-1 100,-8Z" transform="rotate(${a} 100 100) translate(0 -4)" stroke-width="1.2" fill="rgba(233,190,90,.18)"/>`}).join("");
+      const rose=(k)=>`<svg viewBox="0 0 200 200"><g data-a="rot" data-v="${k}">${P(12,0,0).map((_,i)=>`<path d="M100,100 C120,70 120,30 100,6 C80,30 80,70 100,100Z" transform="rotate(${i*30} 100 100)" stroke-width=".8"/>`).join("")}<circle cx="100" cy="100" r="40" stroke-width=".7"/><circle cx="100" cy="100" r="96" stroke-width=".6" stroke-dasharray="2 5"/></g></svg>`;
+      const orn=(flip)=>`<span class="orn" ${A("fade",.4)}><svg viewBox="0 0 400 40" preserveAspectRatio="none" style="${flip?"transform:scaleY(-1)":""}"><path d="M10,20 H150 M250,20 H390" stroke-width="1.5"/><path d="M150,20 C165,4 185,4 200,20 C215,4 235,4 250,20 M150,20 C165,36 185,36 200,20 C215,36 235,36 250,20" stroke-width="2"/><circle cx="200" cy="20" r="5" fill="var(--accent)" stroke="none"/><circle cx="10" cy="20" r="3" fill="var(--accent)" stroke="none"/><circle cx="390" cy="20" r="3" fill="var(--accent)" stroke="none"/></svg></span>`;
+      const vimg=`<img data-dir="${esc(m0.dir)}" data-n="${m0.n|0}" data-fps="${m0.fps||30}" src="${esc(m0.dir)}/00001.jpg" data-a="media" data-k="0" data-m="1" data-c="${[sq.x,sq.y,sq.w,sq.h].join(",")}" data-iw="${iw}" data-ih="${ih}">`;
+      return `<div class="medal"><div class="corner c1">${rose(3)}</div><div class="corner c2">${rose(-2)}</div>
+        <div class="disc" ${A("pop",.05)}><div class="mring"><svg viewBox="0 0 200 200"><g data-a="rot" data-v="5">${petals}</g><g data-a="rot" data-v="-3">${beads}</g><circle cx="100" cy="100" r="99" stroke-width="1"/><circle cx="100" cy="100" r="88" stroke-width=".6" stroke-dasharray="1 3"/></svg></div><div class="face">${vimg}</div></div>
+        <div class="cart">${orn(false)}<div class="box" ${A("rise",.3)}>${m0.subs&&m0.subs.length?`<div class="csub" data-a="csub" data-hold="1" data-subs="${esc(JSON.stringify(m0.subs))}"><span></span></div>`:`<div class="csub"><span>${esc(d.title||"")}</span></div>`}</div>${orn(true)}</div>${src(d)}</div>`}
     if(big){const bgm=M[0];
       return `<div class="cine"><div class="cbg"><img src="${esc(bgm.dir)}/${String(Math.max(1,Math.round((bgm.n|0)/2))).padStart(5,"0")}.jpg"></div><div class="cveil"></div><div class="frame" style="aspect-ratio:${R.toFixed(3)};--r:${R.toFixed(3)}" ${A("tilt",.12)}>${med}<div class="shine" data-a="shine" data-d=".7"></div><div class="live"><i data-a="pulse"></i></div></div>${m0.subs&&m0.subs.length?`<div class="csub" data-a="csub" data-subs="${esc(JSON.stringify(m0.subs))}"><span></span></div>`:""}${src(d)}</div>`}
     return `<div class="safe persp${big?" bigclip":""}">${head(d)}<div class="shotrow"><div class="frame" style="aspect-ratio:${R.toFixed(3)};--r:${R.toFixed(3)}" ${A("tilt",.12)}>${med}<div class="shine" data-a="shine" data-d=".7"></div>${big?`<div class="live"><i data-a="pulse"></i></div>`:""}</div>${big&&m0.subs&&m0.subs.length?`<div class="csub" data-a="csub" data-subs="${esc(JSON.stringify(m0.subs))}"><span></span></div>`:""}${d.title&&!big?`<div class="shottxt"><div class="rule" ${A("draw",.5)}></div><div class="title md">${words(d.title,d.highlight,.55,.06)}</div></div>`:""}</div></div>${src(d)}`},
@@ -458,8 +499,8 @@ function animate(s,lt,t){
       case"rot":n.setAttribute("transform",`rotate(${(lt*parseFloat(n.dataset.v)).toFixed(3)} 100 100)`);break;
       case"breath":st.opacity=E.out(seg(lt,.3,1.6))*(.75+.25*Math.sin(lt*1.3));st.transform=`scale(${1+.06*Math.sin(lt*1.3)})`;break;
       case"loopshine":{const q=lt<d?-1:((lt-d)%4.2)/1.2;st.left=(-50+q*200)+"%";st.opacity=q>=0&&q<=1?1:0;break}
-      case"csub":{const L=JSON.parse(n.dataset.subs||"[]"),cur=L.find(x=>lt>=x.t0-.05&&lt<x.t1+.15),sp=n.firstChild,txt=cur?cur.text:"";
-        if(sp.textContent!==txt)sp.textContent=txt;const k=cur?Math.min(seg(lt,cur.t0-.05,cur.t0+.2),1-seg(lt,cur.t1-.05,cur.t1+.15)):0;st.opacity=k;st.transform=`translate3d(0,${(1-k)*16*U}px,0)`;break}
+      case"csub":{const L=JSON.parse(n.dataset.subs||"[]"),hold=n.dataset.hold==="1",cur=L.find(x=>lt>=x.t0-.05&&lt<x.t1+.15)||(hold?[...L].reverse().find(x=>lt>=x.t0-.05)||L[0]:null),sp=n.firstChild,txt=cur?cur.text:"";
+        if(sp.textContent!==txt)sp.textContent=txt;const k=hold?(cur?Math.max(.0,Math.min(1,seg(lt,cur.t0-.05,cur.t0+.25)+(lt>cur.t1?1:0))):0)||(cur&&cur===L[0]&&lt<cur.t0?1:0):cur?Math.min(seg(lt,cur.t0-.05,cur.t0+.2),1-seg(lt,cur.t1-.05,cur.t1+.15)):0;st.opacity=k;st.transform=`translate3d(0,${(1-k)*16*U}px,0)`;break}
       case"pulse":st.opacity=.35+.65*(.5+.5*Math.sin(t*5));break;
       case"kb":{const q=seg(lt,0,s.sc.t1-s.sc.t0+OV);st.transform=`scale(${1.08+.14*q}) translate3d(${(q-.5)*-3}%,${(q-.5)*-2}%,0)`;break}
       case"ringOut":{const q=((lt-d)%1.8)/1.8;const on=lt>d;st.opacity=on?(1-q)*.8:0;st.transform=`scale(${1+q*.75})`;break}
