@@ -95,58 +95,89 @@ const forced = process.env.SHORT_STYLE && SHORT_STYLES.some((p) => p.id === proc
 const styles = pickShortStyles(sel.clips.length, history[`${channel}-shorts`] || []);
 
 const ids = [];
-for (const c of sel.clips) {
-  const dir = `shorts/clip-${c.id}`;
-  mkdirSync(dir, { recursive: true });
-  const dur = c.end - c.start;
-  // mots ENTIÈREMENT dans le passage (pas de mot à moitié coupé dans les sous-titres), en temps relatif
-  const rel = tr.words.filter((w) => w.t0 >= c.start - 0.05 && w.t1 <= c.end + 0.12)
-    .map((w) => ({ t0: Math.max(0, w.t0 - c.start), t1: Math.min(dur, Math.max(w.t0 - c.start + 0.05, w.t1 - c.start)), w: w.w }));
-  // RYTHME : les silences > TIGHT s sont retirés (coupes sèches entre les phrases = meilleure rétention).
-  // Chaque morceau de parole garde une petite marge ; le rendu masque chaque coupe par un changement de cadrage.
-  const TIGHT = Number(process.env.SHORTS_TIGHTEN ?? 0.45);
+const TIGHT = Number(process.env.SHORTS_TIGHTEN ?? 0.45);
+// un morceau de la source (un passage, ou un moment d'un best-of) → mots relatifs + morceaux gardés (silences retirés)
+function pieceOf(start, end, tight) {
+  const dur = end - start;
+  const rel = tr.words.filter((w) => w.t0 >= start - 0.05 && w.t1 <= end + 0.12)
+    .map((w) => ({ t0: Math.max(0, w.t0 - start), t1: Math.min(dur, Math.max(w.t0 - start + 0.05, w.t1 - start)), w: w.w }));
   let keep = [{ a: 0, b: dur }];
-  if (TIGHT > 0 && rel.length) {
+  if (tight > 0 && rel.length) {
     const iv = [];
     for (const w of rel) {
       const a = Math.max(0, w.t0 - 0.12), b = Math.min(dur, w.t1 + 0.14);
       const last = iv[iv.length - 1];
-      if (last && a - last.b <= TIGHT) last.b = Math.max(last.b, b); else iv.push({ a, b });
+      if (last && a - last.b <= tight) last.b = Math.max(last.b, b); else iv.push({ a, b });
     }
-    iv[0].a = 0; iv[iv.length - 1].b = dur; // début et fin d'origine conservés (marges + fondu)
+    iv[0].a = 0; iv[iv.length - 1].b = dur;
     const removed = dur - iv.reduce((n, x) => n + (x.b - x.a), 0);
     if (removed >= 0.4 && iv.length <= 60) keep = iv;
   }
-  if (keep.length > 1) {   // chaque coupe vérifiée à l'oreille (aucun « s » mangé) ; analyse impossible = comme avant
-    const g = guardKeep(keep, soundActivity(src, c.start, dur), dur);
-    keep = g.keep;
-    if (g.moved) console.log(`  #${c.id} : ${g.moved} coupe(s) décalée(s) pour ne manger aucun début ni fin de mot`);
-  }
-  const newDur = keep.reduce((n, x) => n + (x.b - x.a), 0);
+  let moved = 0;
+  if (keep.length > 1) { const g = guardKeep(keep, soundActivity(src, start, dur), dur); keep = g.keep; moved = g.moved; }
+  return { start, end, dur, rel, keep, moved };
+}
+const enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart"];
+for (const c of sel.clips) {
+  const dir = `shorts/clip-${c.id}`;
+  mkdirSync(dir, { recursive: true });
+  const best = Array.isArray(c.segments) && c.segments.length > 0;
+  // BEST-OF : plusieurs moments de la vidéo ; silences resserrés plus fort (0,3 s) : rythme maximal
+  const segs = best ? c.segments : [{ start: c.start, end: c.end }];
+  // (la suite réelle qui passe sous l'écran de fin n'est pas resserrée : rien à couper sous une carte)
+  const pieces = segs.map((g) => pieceOf(g.start, g.end, best ? (g.outro ? 0 : Math.min(TIGHT, 0.3)) : TIGHT));
+  const moved = pieces.reduce((n, p) => n + p.moved, 0);
+  if (moved) console.log(`  #${c.id} : ${moved} coupe(s) décalée(s) pour ne manger aucun début ni fin de mot`);
+  const dur = pieces.reduce((n, p) => n + p.dur, 0);
+  const newDur = pieces.reduce((n, p) => n + p.keep.reduce((m, x) => m + (x.b - x.a), 0), 0);
   const fadeOut = `afade=t=out:st=${Math.max(0, newDur - 0.22).toFixed(3)}:d=0.22`;
-  const enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart"];
-  if (keep.length === 1) {
+  const nParts = pieces.reduce((n, p) => n + p.keep.length, 0);
+  if (!best && nParts === 1) {
     // -ss avant -i + ré-encodage = coupe précise et rapide même sur une vidéo de plusieurs heures
     execFileSync("ffmpeg", ["-y", "-v", "error", "-ss", c.start.toFixed(3), "-i", src, "-t", dur.toFixed(3),
       ...(vf ? ["-vf", vf] : []), "-map", "0:v:0", "-map", "0:a:0?", "-af", `afade=t=in:d=0.08,${fadeOut}`, ...enc, `${dir}/video.mp4`], { stdio: "inherit" });
   } else {
-    // coupes exactes image et son (trim/atrim + concat), micro-fondus de 12 ms pour éviter les « clics »
-    const g = keep.map((x, k) => `[0:v]trim=start=${x.a.toFixed(3)}:end=${x.b.toFixed(3)},setpts=PTS-STARTPTS${vf ? "," + vf : ""}[v${k}];` +
-      `[0:a]atrim=start=${x.a.toFixed(3)}:end=${x.b.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=in:d=0.012,afade=t=out:st=${Math.max(0, x.b - x.a - 0.012).toFixed(3)}:d=0.012[a${k}]`).join(";");
-    const fc = `${g};${keep.map((_, k) => `[v${k}][a${k}]`).join("")}concat=n=${keep.length}:v=1:a=1[cv][ca0];[ca0]afade=t=in:d=0.06,${fadeOut}[ca]`;
-    execFileSync("ffmpeg", ["-y", "-v", "error", "-ss", c.start.toFixed(3), "-t", dur.toFixed(3), "-i", src, "-filter_complex", fc, "-map", "[cv]", "-map", "[ca]", ...enc, `${dir}/video.mp4`], { stdio: "inherit" });
+    // coupes exactes image et son (trim/atrim + concat), micro-fondus de 12 ms pour éviter les « clics » ;
+    // une entrée par morceau de la source (les moments d'un best-of peuvent être très éloignés dans la vidéo)
+    const ins = [], g = [], lab = [];
+    pieces.forEach((p, k) => {
+      ins.push("-ss", p.start.toFixed(3), "-t", p.dur.toFixed(3), "-i", src);
+      p.keep.forEach((x, j) => {
+        const n = `${k}_${j}`;
+        g.push(`[${k}:v]trim=start=${x.a.toFixed(3)}:end=${x.b.toFixed(3)},setpts=PTS-STARTPTS${vf ? "," + vf : ""},fps=${info.fps},setsar=1[v${n}]`);
+        g.push(`[${k}:a]atrim=start=${x.a.toFixed(3)}:end=${x.b.toFixed(3)},asetpts=PTS-STARTPTS,aresample=48000,afade=t=in:d=0.012,afade=t=out:st=${Math.max(0, x.b - x.a - 0.012).toFixed(3)}:d=0.012[a${n}]`);
+        lab.push(`[v${n}][a${n}]`);
+      });
+    });
+    let fc = `${g.join(";")};${lab.join("")}concat=n=${lab.length}:v=1:a=1[cv0][ca0];[ca0]afade=t=in:d=0.06,${fadeOut}[ca]`;
+    if (c.loop && newDur > 6) {
+      // BOUCLE : les 0,35 dernières secondes se fondent dans la toute 1re image → au replay, aucune coupure visible
+      const X = 0.35;
+      fc += `;[cv0]split[cm][cf];[cf]trim=end_frame=1,loop=loop=-1:size=1,trim=duration=${(X + 0.05).toFixed(3)},setpts=PTS-STARTPTS[first];` +
+        `[cm][first]xfade=transition=fade:duration=${X}:offset=${(newDur - X).toFixed(3)},trim=duration=${newDur.toFixed(3)}[cv]`;
+    } else fc += ";[cv0]null[cv]";
+    execFileSync("ffmpeg", ["-y", "-v", "error", ...ins, "-filter_complex", fc, "-map", "[cv]", "-map", "[ca]", ...enc, `${dir}/video.mp4`], { stdio: "inherit" });
   }
-  // horaires des mots recalés sur la vidéo resserrée
-  const offs = []; { let o = 0; for (const x of keep) { offs.push(o); o += x.b - x.a; } }
-  const remap = (t) => { for (let k = keep.length - 1; k >= 0; k--) if (t >= keep[k].a - 1e-6) return offs[k] + Math.min(t, keep[k].b) - keep[k].a; return 0; };
-  const words = rel.map((w) => ({ t0: +remap(w.t0).toFixed(3), t1: +Math.max(remap(w.t0) + 0.05, remap(w.t1)).toFixed(3), w: w.w }));
-  const cutsAt = keep.slice(1).map((_, k) => +offs[k + 1].toFixed(3)); // instants des coupes (pour le rendu)
-  if (keep.length > 1) console.log(`  #${c.id} : ${(dur - newDur).toFixed(1)} s de silences retirés (${keep.length - 1} coupes)`);
+  // horaires des mots recalés sur la vidéo resserrée (morceau après morceau)
+  const words = [], cutsAt = [], moments = [];
+  let base = 0;
+  pieces.forEach((p, k) => {
+    const offs = []; { let o = 0; for (const x of p.keep) { offs.push(o); o += x.b - x.a; } }
+    const len = p.keep.reduce((m, x) => m + (x.b - x.a), 0);
+    const remap = (t) => { for (let j = p.keep.length - 1; j >= 0; j--) if (t >= p.keep[j].a - 1e-6) return offs[j] + Math.min(t, p.keep[j].b) - p.keep[j].a; return 0; };
+    p.rel.forEach((w) => words.push({ t0: +(base + remap(w.t0)).toFixed(3), t1: +(base + Math.max(remap(w.t0) + 0.05, remap(w.t1))).toFixed(3), w: w.w }));
+    if (k > 0) cutsAt.push(+base.toFixed(3));
+    offs.slice(1).forEach((o) => cutsAt.push(+(base + o).toFixed(3)));
+    moments.push({ t0: +base.toFixed(3), t1: +(base + len).toFixed(3), type: segs[k].type || "", resume: segs[k].resume || "" });
+    base += len;
+  });
+  if (nParts > 1) console.log(`  #${c.id} : ${(dur - newDur).toFixed(1)} s de silences retirés${best ? `, ${pieces.length} moments enchaînés` : ""} (${nParts - 1} coupes)`);
   if (!words.length) { console.log(`  #${c.id} : aucun mot dans le passage, ignoré.`); continue; }
-  writeFileSync(`${dir}/transcript.json`, JSON.stringify({ lang: tr.lang, duration: +newDur.toFixed(3), words, cuts: cutsAt }, null, 1));
+  const outroTail = best && c.outro_tail ? +Math.min(c.outro_tail, pieces.at(-1).dur * 0.6).toFixed(2) : 0;
+  writeFileSync(`${dir}/transcript.json`, JSON.stringify({ lang: tr.lang, duration: +newDur.toFixed(3), words, cuts: cutsAt, ...(best ? { moments } : {}), ...(outroTail ? { outro_tail: outroTail } : {}) }, null, 1));
   const theme = forced || styles[sel.clips.indexOf(c)];
   writeFileSync(`${dir}/meta.json`, JSON.stringify({ ...c, final_duration: +newDur.toFixed(2), silences_removed: +(dur - newDur).toFixed(2), theme, channel, crop: vf ? ratio.join(":") : "none" }, null, 2));
-  console.log(`  #${c.id} : ${newDur.toFixed(1)} s (passage ${dur.toFixed(1)} s), ${words.length} mots, thème ${theme}`);
+  console.log(`  #${c.id} : ${newDur.toFixed(1)} s (${best ? `${pieces.length} moments` : `passage ${dur.toFixed(1)} s`}), ${words.length} mots, thème ${theme}`);
   ids.push(c.id);
 }
 if (!ids.length) throw new Error("Aucun short n'a pu être découpé.");

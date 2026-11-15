@@ -24,6 +24,10 @@ import { channelFor, burnedLogo } from "./lib/channel.mjs";
 import { legalKicker, legalSequence, LEGAL } from "./lib/legal.mjs";
 
 const plan = JSON.parse(readFileSync(`${CONTENT_DIR}/plan.json`, "utf8"));
+// BEST-OF (formule « best ») : enchaînement des moments les plus intenses — pas d'écran de fin (le short BOUCLE),
+// coup de zoom + glitch + secousse à chaque nouveau moment, sons d'impact GRAVES et bas (aigus coupés)
+const BEST = String(process.env.SHORT_FORMULE || "").toLowerCase() === "best";
+if (BEST && String(process.env.SHORT_HOOK || "").trim()) plan.hook = String(process.env.SHORT_HOOK).trim().slice(0, 60);
 const tr = JSON.parse(readFileSync(`${CONTENT_DIR}/transcript.json`, "utf8"));
 const videoPath = findVideo();
 if (!videoPath) throw new Error("Aucune vidéo dans input/.");
@@ -119,11 +123,14 @@ function lineGeom(line, em, cx) {
 // ---------- zones libres (visage + sous-titres incrustés protégés, interface des applis évitée) ----------
 const SAFE_TOP = 150, SAFE_BOT = 1500;
 const srcH = Math.max(H, (W * info.height) / info.width); // hauteur de la vidéo une fois "cover" plein écran
-const Zmax = 1 + ST.jump + ST.push + 0.03;
+const Zmax = 1 + ST.jump + ST.push + 0.03;   // (les coups de zoom du best-of sont brefs : non comptés)
 let SHIFT = 0; // descente de la vidéo (px) quand il n'y a pas assez de place hors visage pour les textes
 const fy = (v, z) => SHIFT + H / 2 + (v - 0.5) * srcH * z;
 let face = { found: false, y0: 0.08, y1: 0.56 }, caps = null;
 try { const f = JSON.parse(readFileSync(`${CONTENT_DIR}/face.json`, "utf8")); if (f.found) face = f; caps = f.captions || null; } catch {}
+// best-of : les sous-titres sont essentiels (beaucoup regardent sans le son) → zone protégée = visage jusqu'au MENTON
+// (barbe comprise), sans la marge du cou ; les sous-titres se posent sur la poitrine, jamais sur le visage
+if (BEST && face.found && face.chin > 0.3 && face.chin < face.y1) face = { ...face, y1: face.chin };
 const bandOf = (b) => ({ y0: Math.min(fy(b.y0, Zmax), fy(b.y0, 1)) - 16, y1: Math.max(fy(b.y1, Zmax), fy(b.y1, 1)) + 16 });
 const autoSubsOff = !!caps && !process.env.SUBTITLES;
 let subsOn = !autoSubsOff && String(process.env.SUBTITLES || "full") !== "off";
@@ -166,6 +173,19 @@ const faceFree = () => {  // bandes hors visage seulement (on accepte de couvrir
   return g;
 };
 const FORCED = [];
+// best-of : les SOUS-TITRES d'abord (la bande libre la plus basse), puis l'étiquette ; pas de puces (rien ne doit
+// ralentir le rythme)
+let CAP_PRE = null;
+if (BEST && subsOn) {
+  const g = lowest(130);
+  if (g) { CAP_PRE = take(g, 130, true) + 65; RES.push({ y0: CAP_PRE - 65, y1: CAP_PRE + 65 }); }
+  else {
+    // pas 130 px libres au-dessus de l'interface : juste sous le visage, en débordant un peu vers le bas (≤ 1600 px,
+    // encore visible au-dessus du titre de la vidéo) — jamais sur le visage
+    const fb = Math.max(...prot.map((p) => p.y1));
+    if (fb + 128 <= 1600) { CAP_PRE = fb + 6 + 61; RES.push({ y0: CAP_PRE - 61, y1: CAP_PRE + 61 }); reserve(CAP_PRE - 61, CAP_PRE + 61); }
+  }
+}
 // 1) étiquette de chapitre
 const above = gaps.filter((g) => g.y1 <= faceMid && room(g) >= 110).sort((a, b) => room(b) - room(a))[0];
 let gT = above || gaps.filter((g) => room(g) >= 100).sort((a, b) => room(b) - room(a))[0];
@@ -181,14 +201,15 @@ else {
 const NO_TAG = false;
 RES.push({ y0: TAG.y, y1: TAG.y + TAG.h }); reserve(TAG.y, TAG.y + TAG.h);
 // 2) puces
-let gC = gaps.filter((g) => room(g) >= 190).sort((a, b) => room(b) - room(a))[0];
-if (!gC) { gC = faceFree().filter((g) => room(g) >= 90).sort((a, b) => room(b) - room(a))[0]; if (gC) FORCED.push("puces"); }
+let gC = BEST ? null : gaps.filter((g) => room(g) >= 190).sort((a, b) => room(b) - room(a))[0];
+if (!gC && !BEST) { gC = faceFree().filter((g) => room(g) >= 90).sort((a, b) => room(b) - room(a))[0]; if (gC) FORCED.push("puces"); }
 const CHIPS = gC ? { y0: gC.y0, y1: Math.min(gC.y1, gC.y0 + 320) } : null;
 if (CHIPS) { RES.push(CHIPS); reserve(CHIPS.y0, CHIPS.y1); }
 // 3) sous-titres : en dernier, seulement s'il reste une place libre
-const CAP_H = 150;
+const CAP_H = BEST ? 130 : 150;
 let CAP_Y = SAFE_BOT - CAP_H / 2 - 10;
-if (subsOn) {
+if (subsOn && CAP_PRE !== null) CAP_Y = CAP_PRE;
+else if (subsOn) {
   const g = lowest(CAP_H);
   if (g) CAP_Y = take(g, CAP_H, true) + CAP_H / 2;
   else { subsOn = false; console.log("Sous-titres du short retirés : plus de place libre après les étiquettes et les puces (priorité aux étiquettes)."); }
@@ -217,7 +238,8 @@ const beats = plan.beats.filter((b) => b.t0 < D - 0.3).map((b) => ({ ...b, t1: M
 const HOOK_END = plan.hook ? Math.min(3.0, D * 0.3) : 0.2;
 // écran de fin (abonnement + j'aime + vidéo complète)
 const END_LEN = Math.min(5, Math.max(3.6, D * 0.1));
-const CTA_START = Math.max(HOOK_END + 2, D - END_LEN);
+// best-of : l'écran de fin passe sur la suite réelle ajoutée après le point culminant (outro_tail)
+const CTA_START = BEST && tr.outro_tail > 2 ? D - tr.outro_tail : Math.max(HOOK_END + 2, D - END_LEN);
 // badge « extrait » : dans la zone des puces s'il y en a une, sinon à la place de la 1re étiquette (qui attend)
 const BADGE = { t0: HOOK_END + 0.1, t1: Math.min(HOOK_END + 3.2, CTA_START - 0.3) };
 const BADGE_IN_TAG = !CHIPS || NO_TAG;
@@ -242,7 +264,9 @@ if (LEGAL_ON) {
 }
 const inLegal = (a, b) => legalAt.some((g) => a < g.t1 + 0.15 && b > g.t0 - 0.15);
 // l'accroche ne partage jamais la zone de la mention
-const HOOK_Z = legalAt.length && CHIPS && near && inLegal(0.12, HOOK_END) ? CHIPS : BIG;
+// best-of : l'accroche s'affiche en GRAND à la place des sous-titres pendant les 3 premières secondes
+const HOOK_Z = BEST && subsOn ? { y0: CAP_Y - CAP_H / 2, y1: CAP_Y + CAP_H / 2 }
+  : legalAt.length && CHIPS && near && inLegal(0.12, HOOK_END) ? CHIPS : BIG;
 // le badge « extrait » attend la fin de la mention s'il devait s'afficher au même endroit
 {
   const bz = BADGE_IN_TAG ? { y0: TAG.y, y1: TAG.y + TAG.h } : CHIPS;
@@ -392,7 +416,8 @@ legalAt.forEach((g) => {
 // 7) sous-titres karaoké
 if (subsOn) {
   const em = rtl ? 74 : 84;
-  const words = tr.words.filter((w) => w.t0 < CTA_START - 0.1 && (!NO_TAG || w.t0 >= TAG_FROM)); // fin : masqués
+  const words = tr.words.filter((w) => w.t0 < CTA_START - 0.1 && (!NO_TAG || w.t0 >= TAG_FROM)   // fin : masqués
+    && (!(BEST && plan.hook) || w.t0 >= HOOK_END - 0.05));                                        // best-of : l'accroche d'abord
   const phrases = []; let cur = [];
   for (const w of words) {
     const gap = cur.length ? w.t0 - cur[cur.length - 1].t1 : 0;
@@ -513,7 +538,8 @@ const SFX = {
   riser: synth(`riser-${ST.sfx}`, `aevalsrc='0.35*sin(2*PI*(${V.rs}+${V.rs * 2}*t)*t)':d=1.1:s=48000,afade=t=in:d=0.6,afade=t=out:st=0.95:d=0.15`),
 };
 const sfxEvents = [{ type: "boom", t: 0.05, v: 0.8 }];
-beats.forEach((b, i) => { if (i > 0 && b.t0 < CTA_START) sfxEvents.push({ type: "swish", t: b.t0 - 0.05, v: 0.5 }); if (b.headline && b.t0 < CTA_START) sfxEvents.push({ type: "click", t: Math.max(b.t0, HOOK_END), v: 0.45 }); });
+if (BEST) beats.forEach((b, i) => { if (i > 0 && b.t0 < CTA_START - 0.5) sfxEvents.push({ type: "boom", t: b.t0 - 0.02, v: 0.55 }); });   // impact grave à chaque moment
+else beats.forEach((b, i) => { if (i > 0 && b.t0 < CTA_START) sfxEvents.push({ type: "swish", t: b.t0 - 0.05, v: 0.5 }); if (b.headline && b.t0 < CTA_START) sfxEvents.push({ type: "click", t: Math.max(b.t0, HOOK_END), v: 0.45 }); });
 if (D - CTA_START > 2) {
   sfxEvents.push({ type: "riser", t: Math.max(0, CTA_START - 1.05), v: 0.45 }, { type: "swish", t: CTA_START, v: 0.6 });
   sfxEvents.push({ type: "click", t: TAP - 0.02, v: 0.9 }, { type: "ding", t: TAP + 0.12, v: 0.6 }, { type: "pop", t: LIKE, v: 0.8 }, { type: "sparkle", t: LIKE + 0.06, v: 0.55 });
@@ -535,7 +561,9 @@ const pushTerm = beats.map((b) => {
   const len = Math.max(0.5, b.t1 - b.t0);
   return `between(${Tz},${b.t0.toFixed(3)},${(b.t1 - 0.001).toFixed(3)})*${ST.push}*(${Tz}-${b.t0.toFixed(3)})/${len.toFixed(3)}`;
 }).join("+") || "0";
-const beatTerm = `${jumpTerm}+${pushTerm}`;
+// best-of : COUP DE ZOOM à chaque nouveau moment et à la 1re image (l'œil est « frappé » à chaque changement)
+const punchTerm = BEST ? [0.02, ...beats.slice(1).map((b) => b.t0)].map((t) => `if(gte(${Tz},${t.toFixed(3)}),0.10*exp(-6*(${Tz}-${t.toFixed(3)})),0)`).join("+") : "0";
+const beatTerm = `${jumpTerm}+${pushTerm}+${punchTerm}`;
 console.log(`Relances : ${shots.length} plans (changement de cadrage toutes les ${(D / Math.max(1, shots.length)).toFixed(1)} s en moyenne), ${cutPts.length} coupes de silence masquées`);
 const kset = new Set((plan.keywords || []).map((k) => String(k)));
 const norm = (t) => String(t).replace(/[\p{P}\p{S} ]/gu, "").trim();
@@ -543,7 +571,7 @@ let lastK = -9;
 const kws = tr.words.filter((w) => w.t0 < D - 0.3 && kset.has(norm(w.w))).filter((w) => (w.t0 - lastK > 1.6 ? (lastK = w.t0, true) : false)).slice(0, SAFE ? 0 : 50);
 const kwTerm = kws.map((w) => `if(gte(${Tz},${w.t0.toFixed(3)}),0.03*exp(-7*(${Tz}-${w.t0.toFixed(3)})),0)`).join("+") || "0";
 const trans = beats.slice(1).map((b) => b.t0).filter((t) => t < CTA_START);
-const shakeTerm = ST.glitch === "shake" && trans.length ? trans.map((t) => `between(${Tz},${t.toFixed(3)},${(t + 0.2).toFixed(3)})*14*sin(95*${Tz})`).join("+") : "0";
+const shakeTerm = (ST.glitch === "shake" || BEST) && trans.length ? trans.map((t) => `between(${Tz},${t.toFixed(3)},${(t + 0.2).toFixed(3)})*14*sin(95*${Tz})`).join("+") : "0";
 const OS = 1.2; // marge de zoom
 const iw2 = Math.round((W * OS) / 2) * 2, ih2 = Math.round((H * OS) / 2) * 2;
 
@@ -577,7 +605,7 @@ let v = `[${iSrc}:v]setpts=PTS-STARTPTS,fps=${FPS},setsar=1${padSec > 0.5 ? `,tp
 v += `,scale=${iw2}:${ih2}:force_original_aspect_ratio=increase,crop=${iw2}:${ih2}`;
 v += `,zoompan=z='1+${beatTerm}+${kwTerm}':x='iw/2-iw/zoom/2+(${shakeTerm})':y='ih/2-ih/zoom/2+(${shakeTerm})*0.5':d=1:s=${W}x${H}:fps=${FPS}`;
 if (ST.vignette) v += `,vignette=angle=PI/6`;
-if (ST.glitch === "rgb" && trans.length && !SAFE) v += `,rgbashift=rh=14:bh=-14:gv=4:enable='${trans.map((t) => `between(t,${t.toFixed(3)},${(t + 0.14).toFixed(3)})`).join("+")}'`;
+if ((ST.glitch === "rgb" || BEST) && trans.length && !SAFE) v += `,rgbashift=rh=14:bh=-14:gv=4:enable='${trans.map((t) => `between(t,${t.toFixed(3)},${(t + 0.14).toFixed(3)})`).join("+")}'`;
 if (SHIFT > 0) {
   f.push(`${v},format=yuv420p,split=2[fg][bgsrc]`);
   // bandeau du haut : copie très floutée et assombrie de la vidéo (la vidéo nette commence en dessous)
@@ -630,7 +658,7 @@ for (const [type, evs] of Object.entries(byType)) {
   f.push(evs.length === 1 ? `[${sfxIdx[type]}:a]anull${labels[0]}` : `[${sfxIdx[type]}:a]asplit=${evs.length}${labels.join("")}`);
   evs.forEach((e) => { const ms = Math.max(0, Math.round(e.t * 1000)); f.push(`[x${e.n}]adelay=${ms}|${ms},volume=${e.v}[y${e.n}]`); sl.push(`[y${e.n}]`); });
 }
-f.push(`${sl.join("")}amix=inputs=${sl.length}:normalize=0:duration=longest,aresample=48000,aformat=channel_layouts=stereo[sfx]`);
+f.push(`${sl.join("")}amix=inputs=${sl.length}:normalize=0:duration=longest,aresample=48000,aformat=channel_layouts=stereo${BEST ? ",lowpass=f=3500,volume=0.8" : ""}[sfx]`);
 if (info.hasAudio) {
   f.push(`[${iSrc}:a]asetpts=PTS-STARTPTS,aresample=48000:async=1:first_pts=0,aformat=channel_layouts=stereo[voice]`);
   f.push(`[voice][sfx]amix=inputs=2:normalize=0:duration=first,apad=whole_dur=${D.toFixed(3)},afade=t=out:st=${Math.max(0, D - 0.25).toFixed(3)}:d=0.25,alimiter=limit=0.96[aout]`);

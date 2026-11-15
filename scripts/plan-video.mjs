@@ -363,7 +363,13 @@ async function main() {
   if (!Array.isArray(tr.words) || !tr.words.length) throw new Error("transcript.json ne contient aucun mot : rien à scénariser.");
   if (!(tr.duration > 0)) tr.duration = tr.words[tr.words.length - 1].t1;
   const lang = tr.lang || "fr";
-  const chunks = makeChunks(tr.words, tr.duration);
+  // best-of (shorts) : une idée = un moment (frontières données par la découpe), sinon découpage régulier
+  const chunks = Array.isArray(tr.moments) && tr.moments.length >= 2
+    ? tr.moments.map((m, k, arr) => {
+      const ws = tr.words.filter((w) => w.t0 >= m.t0 - 0.05 && w.t0 < (k + 1 < arr.length ? arr[k + 1].t0 - 0.01 : 1e9));
+      return { t0: k === 0 ? 0 : m.t0, t1: k + 1 < arr.length ? arr[k + 1].t0 : tr.duration, words: ws, text: ws.map((x) => x.w).join(" ").replace(/\s+/g, " ").trim() };
+    }).filter((c) => c.words.length)
+    : makeChunks(tr.words, tr.duration);
   const kwAll = keywords(chunks.map((c) => c.text).join(" "));
   console.log(`Langue ${lang}, ${chunks.length} beats sur ${tr.duration.toFixed(0)} s.`);
 

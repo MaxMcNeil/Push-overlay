@@ -22,16 +22,21 @@ on:
         description: "Lien Google Drive, tag de la release qui contient la vidéo, ou lien direct .mp4 (vide = dernière release « shorts… »)"
         required: false
         default: ""
+      formule:
+        description: "🔥 best = 2 shorts best-of (45-55 s + nerveux 30-35 s) des moments les plus intenses de TOUTE la vidéo ; classique = un short par passage (réglages ci-dessous)"
+        type: choice
+        options: [best, classique]
+        default: best
       nombre:
-        description: "Nombre de shorts"
+        description: "Nombre de shorts (formule classique)"
         required: false
         default: "5"
       duree_min:
-        description: "Durée minimale d'un short (s)"
+        description: "Durée minimale d'un short (s, formule classique)"
         required: false
         default: "30"
       duree_max:
-        description: "Durée maximale d'un short (s, YouTube accepte jusqu'à 180)"
+        description: "Durée maximale d'un short (s, formule classique ; YouTube accepte jusqu'à 180)"
         required: false
         default: "90"
       recadrage:
@@ -151,7 +156,11 @@ jobs:
           SHORTS_MIN: ${{ inputs.duree_min || '30' }}
           SHORTS_MAX: ${{ inputs.duree_max || '90' }}
           SHORTS_FOCUS: ${{ inputs.consigne }}
-        run: node scripts/shorts/select.mjs
+          # chaîne (fond vert → Montage) et lancement à la main : best-of par défaut ; « classique » = ancien comportement
+          FORMULE: ${{ inputs.formule || github.event.client_payload.formule || 'best' }}
+        run: |
+          if [ "$FORMULE" = classique ]; then node scripts/shorts/select.mjs
+          else echo "Formule BEST-OF : 2 shorts des moments les plus intenses de toute la vidéo"; node scripts/shorts/best.mjs; fi
         timeout-minutes: 30
 
       - name: Découper les passages
@@ -224,6 +233,8 @@ jobs:
           python3 scripts/face-box.py input/video.mp4 60 > content/face.json 2>/dev/null || echo '{"found":false}' > content/face.json
           echo "Visage / sous-titres incrustés : $(cat content/face.json)"
           echo "SHORT_STYLE=$(node -p "require('./$D/meta.json').theme")" >> "$GITHUB_ENV"
+          echo "SHORT_FORMULE=$(node -p "require('./$D/meta.json').formule || ''")" >> "$GITHUB_ENV"
+          echo "SHORT_HOOK=$(node -p "(require('./$D/meta.json').hook || '').replace(/[\\r\\n]+/g, ' ')")" >> "$GITHUB_ENV"
           echo "KEY_OFFSET=$((10#${{ matrix.id }} - 1))" >> "$GITHUB_ENV"
 
       # ---------- musique de fond : retirée automatiquement (lancement à la main uniquement) ----------
@@ -299,7 +310,7 @@ jobs:
       - name: Nommer le short
         run: |
           D="shorts/clip-${{ matrix.id }}"
-          SLUG=$(node -e "const m=require('./$D/meta.json');const t=(m.title||m.hook||'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,40);process.stdout.write(t||'short')")
+          SLUG=$(node -e "const m=require('./$D/meta.json');const t=((m.label?m.label.toUpperCase()+' ':'')+(m.title||m.hook||'')).normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,52);process.stdout.write(t||'short')")
           mkdir -p out
           cp output/final.mp4 "out/short-${{ matrix.id }}-${SLUG}.mp4"
           cp content/plan.json "out/short-${{ matrix.id }}.plan.json"
