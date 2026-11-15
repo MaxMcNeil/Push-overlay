@@ -5,7 +5,7 @@
 // Construction (pensée rétention) :
 //   1. OUVERTURE CHOC : le moment le plus explosif en premier (aucune intro) ;
 //   2. MONTÉE : les autres du fort au très fort ;
-//   3. POINT CULMINANT à la fin (la punchline la plus forte) ; la fin se fond dans la 1re image (le short boucle).
+//   3. POINT CULMINANT (la punchline la plus forte), puis ÉCRAN DE FIN (s'abonner, j'aime, cloche, vidéo complète).
 // Sélection : 1 demande à l'IA (Gemini ENTEND l'audio : ton, colère, ironie) qui note des « moments » de 1 à 3
 // phrases ; puis 1 demande de « rédacteur en chef » qui relit les deux montages, écarte ce qui ne se comprend pas seul,
 // et écrit titre provocateur, description, hashtags et tags. Sans IA : intensité mesurée (volume, débit, ! ? chiffres).
@@ -27,6 +27,7 @@ const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(
 const str = (v, n) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, n) : "");
 const ENDS = /[.!?؟…]["»”]?$/;
 const MOM_MIN = 2.5, MOM_MAX = 15;
+const OUTRO_TAIL = 4.6;   // durée de l'écran de fin (abonnement, j'aime, cloche, vidéo complète)
 export const VARIANTS = [
   { id: "01", label: "best-of", lo: 45, hi: 55, target: 50, maxMoments: 8, momentMax: 12 },
   { id: "02", label: "nerveux", lo: 30, hi: 35, target: 32, maxMoments: 5, momentMax: 8 },
@@ -256,7 +257,12 @@ function cutBounds(t0, t1) {
 const clips = shorts.filter((s) => s.moments.length).map((s) => {
   const segments = s.moments.map((m) => ({ ...cutBounds(m.t0, m.t1), type: m.type, resume: m.resume, intensity: +m.intensity.toFixed(1), text: textOf(m.a, m.b).slice(0, 600) }));
   const duration = +segments.reduce((n, g) => n + g.end - g.start, 0).toFixed(2);
-  return { id: s.id, label: s.label, formule: "best", loop: true, segments, start: segments[0].start, end: segments[0].end, duration,
+  // ÉCRAN DE FIN : la suite réelle de ta dernière phrase (≈ 4,6 s) passe dans une carte pendant l'appel à s'abonner,
+  // le point culminant reste donc entier, plein écran
+  const last = segments[segments.length - 1];
+  last.end = +Math.min(DUR, last.end + OUTRO_TAIL).toFixed(3);
+  last.outro = true;
+  return { id: s.id, label: s.label, formule: "best", loop: false, outro_tail: OUTRO_TAIL, segments, start: segments[0].start, end: segments[0].end, duration,
     title: s.title || "", hook: s.hook || "", description: s.description || "", hashtags: s.hashtags || [], tags: s.tags || [],
     why: `best-of ${s.label} : ${segments.length} moments, ouverture choc puis montée`, score: Math.round(10 * s.moments[0].intensity),
     source: engine === "mesure" ? "mesure" : "ia", text: segments.map((g) => g.text).join(" … ").slice(0, 3000) };

@@ -124,7 +124,8 @@ for (const c of sel.clips) {
   const best = Array.isArray(c.segments) && c.segments.length > 0;
   // BEST-OF : plusieurs moments de la vidéo ; silences resserrés plus fort (0,3 s) : rythme maximal
   const segs = best ? c.segments : [{ start: c.start, end: c.end }];
-  const pieces = segs.map((g) => pieceOf(g.start, g.end, best ? Math.min(TIGHT, 0.3) : TIGHT));
+  // (la suite réelle qui passe sous l'écran de fin n'est pas resserrée : rien à couper sous une carte)
+  const pieces = segs.map((g) => pieceOf(g.start, g.end, best ? (g.outro ? 0 : Math.min(TIGHT, 0.3)) : TIGHT));
   const moved = pieces.reduce((n, p) => n + p.moved, 0);
   if (moved) console.log(`  #${c.id} : ${moved} coupe(s) décalée(s) pour ne manger aucun début ni fin de mot`);
   const dur = pieces.reduce((n, p) => n + p.dur, 0);
@@ -172,7 +173,8 @@ for (const c of sel.clips) {
   });
   if (nParts > 1) console.log(`  #${c.id} : ${(dur - newDur).toFixed(1)} s de silences retirés${best ? `, ${pieces.length} moments enchaînés` : ""} (${nParts - 1} coupes)`);
   if (!words.length) { console.log(`  #${c.id} : aucun mot dans le passage, ignoré.`); continue; }
-  writeFileSync(`${dir}/transcript.json`, JSON.stringify({ lang: tr.lang, duration: +newDur.toFixed(3), words, cuts: cutsAt, ...(best ? { moments } : {}) }, null, 1));
+  const outroTail = best && c.outro_tail ? +Math.min(c.outro_tail, pieces.at(-1).dur * 0.6).toFixed(2) : 0;
+  writeFileSync(`${dir}/transcript.json`, JSON.stringify({ lang: tr.lang, duration: +newDur.toFixed(3), words, cuts: cutsAt, ...(best ? { moments } : {}), ...(outroTail ? { outro_tail: outroTail } : {}) }, null, 1));
   const theme = forced || styles[sel.clips.indexOf(c)];
   writeFileSync(`${dir}/meta.json`, JSON.stringify({ ...c, final_duration: +newDur.toFixed(2), silences_removed: +(dur - newDur).toFixed(2), theme, channel, crop: vf ? ratio.join(":") : "none" }, null, 2));
   console.log(`  #${c.id} : ${newDur.toFixed(1)} s (${best ? `${pieces.length} moments` : `passage ${dur.toFixed(1)} s`}), ${words.length} mots, thème ${theme}`);

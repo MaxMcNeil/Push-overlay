@@ -238,7 +238,8 @@ const beats = plan.beats.filter((b) => b.t0 < D - 0.3).map((b) => ({ ...b, t1: M
 const HOOK_END = plan.hook ? Math.min(3.0, D * 0.3) : 0.2;
 // écran de fin (abonnement + j'aime + vidéo complète)
 const END_LEN = Math.min(5, Math.max(3.6, D * 0.1));
-const CTA_START = BEST ? D + 5 : Math.max(HOOK_END + 2, D - END_LEN);   // best-of : aucun écran de fin (boucle)
+// best-of : l'écran de fin passe sur la suite réelle ajoutée après le point culminant (outro_tail)
+const CTA_START = BEST && tr.outro_tail > 2 ? D - tr.outro_tail : Math.max(HOOK_END + 2, D - END_LEN);
 // badge « extrait » : dans la zone des puces s'il y en a une, sinon à la place de la 1re étiquette (qui attend)
 const BADGE = { t0: HOOK_END + 0.1, t1: Math.min(HOOK_END + 3.2, CTA_START - 0.3) };
 const BADGE_IN_TAG = !CHIPS || NO_TAG;
@@ -537,7 +538,7 @@ const SFX = {
   riser: synth(`riser-${ST.sfx}`, `aevalsrc='0.35*sin(2*PI*(${V.rs}+${V.rs * 2}*t)*t)':d=1.1:s=48000,afade=t=in:d=0.6,afade=t=out:st=0.95:d=0.15`),
 };
 const sfxEvents = [{ type: "boom", t: 0.05, v: 0.8 }];
-if (BEST) beats.forEach((b, i) => { if (i > 0) sfxEvents.push({ type: "boom", t: b.t0 - 0.02, v: 0.55 }); });   // impact grave à chaque moment
+if (BEST) beats.forEach((b, i) => { if (i > 0 && b.t0 < CTA_START - 0.5) sfxEvents.push({ type: "boom", t: b.t0 - 0.02, v: 0.55 }); });   // impact grave à chaque moment
 else beats.forEach((b, i) => { if (i > 0 && b.t0 < CTA_START) sfxEvents.push({ type: "swish", t: b.t0 - 0.05, v: 0.5 }); if (b.headline && b.t0 < CTA_START) sfxEvents.push({ type: "click", t: Math.max(b.t0, HOOK_END), v: 0.45 }); });
 if (D - CTA_START > 2) {
   sfxEvents.push({ type: "riser", t: Math.max(0, CTA_START - 1.05), v: 0.45 }, { type: "swish", t: CTA_START, v: 0.6 });
