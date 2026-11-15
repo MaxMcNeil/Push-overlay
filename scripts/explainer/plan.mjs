@@ -957,6 +957,23 @@ async function main() {
   for (const v of speech) if (!shown.has(v.file)) notes.push(`ℹ ${path.basename(v.orig || v.file)} : aucune pause disponible pour la jouer avec son son (non montrée muette)`);
   const broll2 = [...broll, ...rest];
   const { cuts, shift } = insertClips(scenes, inserts, lang);
+  // style des extraits décidé ICI (et non dans le gabarit) : identique dans toutes les tranches de rendu et les deux formats.
+  // Un extrait à paroles sur deux (hors ouverture) = « médaillon » doré ; les autres = plein écran sur fond flouté.
+  { let k = 0; for (const x of scenes) if (x.big && !x.opener && x.data?.media?.[0]?.subs?.length) { if (k++ % 2 === 1) x.medal = true; } }
+  // panneau horizontal (mot ou pays mis en avant) décidé ICI aussi : jamais le même sur 4 scènes, quelle que soit la tranche
+  { const recent = [], norm = (x) => String(x).replace(/^(ال|وال|بال|لل)/u, "").toLowerCase();
+    for (const x of scenes) {
+      if (x.big || !["hook", "headline", "quote", "list", "timeline"].includes(x.type)) continue;
+      const d = x.data || {}, seen = recent.map(norm);
+      let word = (String(d.highlight || "").trim() || String(d.kicker || "").trim()).replace(/[.,;:!?،؛؟«»"“”()…]/g, "").trim();
+      let chip = !!x.chip; if (chip && seen.includes(norm(x.chip.name))) chip = false;
+      if (!chip && (!word || seen.includes(norm(word)))) {
+        const alt = String(d.title || d.quote || "").replace(/[.,;:!?،؛؟«»"“”()…%]/g, " ").split(/\s+/).filter((w) => w.length >= 4 && !/\d/.test(w) && !seen.includes(norm(w))).sort((a, b) => b.length - a.length)[0];
+        word = alt || (x.chip ? "" : word);
+      }
+      x.aside = chip ? { chip: true } : { word };
+      recent.push(chip ? x.chip.name : word); if (recent.length > 4) recent.shift();
+    } }
   const total0 = duration + shift;
 
   const ch = process.env.EXPLAINER_LOGO === "non" ? { nom: "", logo: null, why: "logo désactivé" } : channelFor(lang);

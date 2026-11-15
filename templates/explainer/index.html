@@ -321,7 +321,7 @@ const src=d=>d.source?`<div class="src" ${A("fade",.5)}>${esc(d.source)}</div>`:
 const ARROW=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M5 13l7 7 7-7"/></svg>`;
 const PLUS=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg>`;
 
-const ASIDE_RECENT=[];let MEDN=0;
+const ASIDE_RECENT=[];
 /* filet d'arabesque doré (cartouches, citations) */
 const ORN=(flip,cls="orn")=>`<span class="${cls}" data-a="fade" data-d=".4"><svg viewBox="0 0 400 40" preserveAspectRatio="none" style="${flip?"transform:scaleY(-1)":""}"><path d="M10,20 H150 M250,20 H390" stroke-width="1.5"/><path d="M150,20 C165,4 185,4 200,20 C215,4 235,4 250,20 M150,20 C165,36 185,36 200,20 C215,36 235,36 250,20" stroke-width="2"/><circle cx="200" cy="20" r="5" fill="var(--accent)" stroke="none"/><circle cx="10" cy="20" r="3" fill="var(--accent)" stroke="none"/><circle cx="390" cy="20" r="3" fill="var(--accent)" stroke="none"/></svg></span>`;
 const BUILD={
@@ -342,7 +342,8 @@ const BUILD={
        le plus parlant du titre qui n'a pas encore servi */
     const norm=x=>String(x).replace(/^(ال|وال|بال|لل)/,"").toLowerCase(),seen=ASIDE_RECENT.map(norm);
     let chip=sc.chip;if(chip&&seen.includes(norm(chip.name)))chip=null;
-    if(!chip&&(!word||seen.includes(norm(word)))){const alt=String(d.title||d.quote||"").replace(/[.,;:!?،؛؟«»"“”()…%]/g," ").split(/\s+/).filter(w=>w.length>=4&&!/\d/.test(w)&&!seen.includes(norm(w))).sort((a,b)=>b.length-a.length)[0];word=alt||(chip?"":word)}
+    if(sc.aside){chip=sc.aside.chip?sc.chip:null;word=sc.aside.word||""}            /* choix fait par le plan (stable entre tranches) */
+    else if(!chip&&(!word||seen.includes(norm(word)))){const alt=String(d.title||d.quote||"").replace(/[.,;:!?،؛؟«»"“”()…%]/g," ").split(/\s+/).filter(w=>w.length>=4&&!/\d/.test(w)&&!seen.includes(norm(w))).sort((a,b)=>b.length-a.length)[0];word=alt||(chip?"":word)}
     ASIDE_RECENT.push(chip?chip.name:word);if(ASIDE_RECENT.length>4)ASIDE_RECENT.shift();
     const core=chip?`<div class="flag" ${A("pop",.35)}><div class="nm big">${esc(chip.name)}</div><div class="bars">${(chip.colors||[]).map(c=>`<i style="background:${esc(c)}"></i>`).join("")}</div></div>`
       :word?`<div class="big" ${A("pop",.35)}>${esc(word.split(/\s+/).slice(0,3).join(" "))}</div>`:"";
@@ -350,7 +351,7 @@ const BUILD={
   shot:(d,sc)=>{const M=(d.media&&d.media.length?d.media:[{kind:"img",image:d.image,iw:d.iw,ih:d.ih,crop:d.crop}]),m0=M[0],c0=m0.crop||{x:0,y:0,w:1,h:1},
     ar=(c0.w*(m0.iw||1))/(c0.h*(m0.ih||1)),vert=H>W,big=sc&&sc.big,R=big?clamp(ar,.5,1.9):clamp(ar,vert?.95:1.25,vert?1.78:1.9);
     const med=M.map((m,k)=>{const c=m.crop||{x:0,y:0,w:1,h:1};return `<img ${m.kind==="vid"?`data-dir="${esc(m.dir)}" data-n="${m.n|0}" data-fps="${m.fps||30}" src="${esc(m.dir)}/00001.jpg"`:`src="${esc(m.image)}"`} data-a="media" data-k="${k}" data-m="${M.length}" data-c="${[c.x,c.y,c.w,c.h].join(",")}" data-iw="${m.iw||0}" data-ih="${m.ih||0}">`}).join("");
-    if(big&&!sc.opener&&m0.subs&&m0.subs.length&&(MEDN++)%2===1){                 /* un extrait sur deux : médaillon doré + cartouche */
+    if(big&&sc.medal&&m0.subs&&m0.subs.length){                 /* un extrait sur deux : médaillon doré + cartouche */
       const iw=m0.iw||1,ih=m0.ih||1,c=m0.crop||{x:0,y:0,w:1,h:1},pw=c.w*iw,ph=c.h*ih,side=Math.min(pw,ph);
       const sq={x:c.x+(pw-side)/2/iw,y:c.y+Math.max(0,Math.min(ph-side,ph*.36-side/2))/ih,w:side/iw,h:side/ih};   /* carré centré sur le haut (visage) */
       const P=(n,r,rot)=>Array.from({length:n},(_,k)=>{const a=(k/n)*6.2832+rot;return [100+r*Math.cos(a),100+r*Math.sin(a)]});
@@ -359,8 +360,8 @@ const BUILD={
       const rose=(k)=>`<svg viewBox="0 0 200 200"><g data-a="rot" data-v="${k}">${P(12,0,0).map((_,i)=>`<path d="M100,100 C120,70 120,30 100,6 C80,30 80,70 100,100Z" transform="rotate(${i*30} 100 100)" stroke-width=".8"/>`).join("")}<circle cx="100" cy="100" r="40" stroke-width=".7"/><circle cx="100" cy="100" r="96" stroke-width=".6" stroke-dasharray="2 5"/></g></svg>`;
       const orn=(flip)=>`<span class="orn" ${A("fade",.4)}><svg viewBox="0 0 400 40" preserveAspectRatio="none" style="${flip?"transform:scaleY(-1)":""}"><path d="M10,20 H150 M250,20 H390" stroke-width="1.5"/><path d="M150,20 C165,4 185,4 200,20 C215,4 235,4 250,20 M150,20 C165,36 185,36 200,20 C215,36 235,36 250,20" stroke-width="2"/><circle cx="200" cy="20" r="5" fill="var(--accent)" stroke="none"/><circle cx="10" cy="20" r="3" fill="var(--accent)" stroke="none"/><circle cx="390" cy="20" r="3" fill="var(--accent)" stroke="none"/></svg></span>`;
       const vimg=`<img data-dir="${esc(m0.dir)}" data-n="${m0.n|0}" data-fps="${m0.fps||30}" src="${esc(m0.dir)}/00001.jpg" data-a="media" data-k="0" data-m="1" data-c="${[sq.x,sq.y,sq.w,sq.h].join(",")}" data-iw="${iw}" data-ih="${ih}">`;
-      return `<div class="medal"><div class="corner c1">${rose(3)}</div><div class="corner c2">${rose(-2)}</div>
-        <div class="disc" ${A("pop",.05)}><div class="mring"><svg viewBox="0 0 200 200"><g data-a="rot" data-v="5">${petals}</g><g data-a="rot" data-v="-3">${beads}</g><circle cx="100" cy="100" r="99" stroke-width="1"/><circle cx="100" cy="100" r="88" stroke-width=".6" stroke-dasharray="1 3"/></svg></div><div class="face">${vimg}</div></div>
+      return `<div class="medal"><div class="corner c1">${rose(9)}</div><div class="corner c2">${rose(-7)}</div>
+        <div class="disc" ${A("pop",.05)}><div class="mring"><svg viewBox="0 0 200 200"><g data-a="rot" data-v="14">${petals}</g><g data-a="rot" data-v="-10">${beads}<circle cx="100" cy="100" r="88" stroke-width=".6" stroke-dasharray="1 3"/></g><g data-a="rot" data-v="7"><circle cx="100" cy="100" r="99" stroke-width="1" stroke-dasharray="14 4 2 4"/>${P(8,113,0).map(([x,y])=>`<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="2.6" fill="var(--accent)" stroke="none"/>`).join("")}</g></svg></div><div class="face">${vimg}</div></div>
         <div class="cart">${orn(false)}<div class="box" ${A("rise",.3)}>${m0.subs&&m0.subs.length?`<div class="csub" data-a="csub" data-hold="1" data-subs="${esc(JSON.stringify(m0.subs))}"><span></span></div>`:`<div class="csub"><span>${esc(d.title||"")}</span></div>`}</div>${orn(true)}</div>${src(d)}</div>`}
     if(big){const bgm=M[0];
       return `<div class="cine"><div class="cbg"><img src="${esc(bgm.dir)}/${String(Math.max(1,Math.round((bgm.n|0)/2))).padStart(5,"0")}.jpg"></div><div class="cveil"></div><div class="frame" style="aspect-ratio:${R.toFixed(3)};--r:${R.toFixed(3)}" ${A("tilt",.12)}>${med}<div class="shine" data-a="shine" data-d=".7"></div><div class="live"><i data-a="pulse"></i></div></div>${m0.subs&&m0.subs.length?`<div class="csub" data-a="csub" data-subs="${esc(JSON.stringify(m0.subs))}"><span></span></div>`:""}${src(d)}</div>`}
