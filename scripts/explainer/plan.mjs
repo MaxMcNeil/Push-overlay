@@ -471,6 +471,48 @@ async function askJson(list, sys, user, label, maxTokens = 4000) {
   }
   return null;
 }
+// ---------- pertinence des vidéos jointes par rapport à TA voix (une vidéo hors sujet n'est jamais montée) ----------
+const lexTok = (s) => String(s).toLowerCase().replace(/[ً-ٰٟـ]/g, "").replace(/[أإآٱ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه")
+  .replace(/[^\p{L}\p{N}]+/gu, " ").split(" ").map((w) => w.replace(/^(وال|بال|فال|لل|ال|و)(?=\p{L}{3})/u, "")).filter((w) => w.length >= 3);
+/** score lexical : mots rares de la voix retrouvés dans le texte (pondérés par leur rareté dans la voix) */
+export function lexScore(text, voiceDf, nDocs) {
+  const set = new Set(lexTok(text)); if (!set.size) return 0;
+  let sc = 0; for (const w of set) { const d = voiceDf.get(w); if (d) sc += Math.log(1 + nDocs / d); }
+  return sc / Math.sqrt(set.size);
+}
+export function voiceIndex(sents) { const df = new Map(); for (const s of sents) for (const w of new Set(lexTok(s.text))) df.set(w, (df.get(w) || 0) + 1); return { df, n: sents.length }; }
+/** Vidéos À PAROLES en rapport avec le sujet de la voix. IA (une note 0-10 par vidéo) puis repli lexical. Une vidéo déposée
+ *  pour un autre montage (ex. restée dans la release) est écartée : jamais d'ouverture ni d'extrait hors sujet. */
+export async function topicFilter(speech, sents, lang, list, notes) {
+  if (speech.length === 0) return speech;
+  const vi = voiceIndex(sents);
+  const lex = speech.map((c) => lexScore(c.ss.map((x) => x.text).join(" "), vi.df, vi.n));
+  let ai = null;
+  if (list.length && process.env.EXPLAINER_NO_LLM !== "1") {
+    const voice = clipLines(sents.map((x) => ({ a: x.t0, b: x.t1, text: x.text })), 6000);
+    const vids = speech.map((c, k) => `Vidéo ${k} « ${path.basename(c.orig || c.file)} » :\n${clipLines(c.ss, Math.max(1200, 9000 / speech.length))}`).join("\n\n");
+    const j = await askJson(list, "Tu es le rédacteur en chef d'une chaîne d'analyse. Réponds UNIQUEMENT en JSON.",
+      `Voici la VOIX OFF d'une vidéo, puis des vidéos jointes. Pour chaque vidéo jointe, note de 0 à 10 son rapport avec le SUJET de la voix off (10 = même sujet, mêmes faits ; 5 = même thème général ; 0 = autre sujet sans rapport, ex. fait divers sans lien).\n\nVOIX OFF :\n${voice}\n\nVIDÉOS :\n${vids}\n\nJSON : {"videos":[{"video": numéro, "lien": 0-10, "sujet": "sujet de la vidéo en 5 mots"}]}`, "pertinence des vidéos", 1500);
+    if (Array.isArray(j?.videos)) { ai = speech.map(() => null); for (const r of j.videos) { const k = Math.round(Number(r?.video)); if (k >= 0 && k < speech.length && isFinite(Number(r.lien))) ai[k] = { lien: Number(r.lien), sujet: cutWords(r.sujet, 8) }; } }
+  }
+  const max = Math.max(...lex, 1e-9);
+  const keep = speech.map((c, k) => (ai && ai[k] ? ai[k].lien >= 3 : lex[k] >= 0.3 * max));
+  if (!keep.some(Boolean)) return speech;                       // rien ne semble lié : on ne prive pas le montage de ses vidéos
+  speech.forEach((c, k) => { if (!keep[k]) notes.push(`🚫 ${path.basename(c.orig || c.file)} écartée : hors sujet par rapport à ta voix${ai && ai[k] ? ` (note ${ai[k].lien}/10${ai[k].sujet ? ` — « ${ai[k].sujet} »` : ""})` : " (aucun mot en commun)"}`); });
+  return speech.filter((_, k) => keep[k]);
+}
+/** passage (DMIN–DMAX s, phrases entières) d'une vidéo le plus proche par les mots de ce que tu dis autour du créneau */
+function lexPassage(clips, text, used, dmax) {
+  const vi = voiceIndex([{ text }]); let best = null;
+  for (const c of clips) for (let i = 0; i < c.ss.length; i++) {
+    const ab = snapPassage(c.ss, c.ss[i].a, c.ss[i].a + Math.min(dmax, 11), CL.DMIN, dmax, c.p.dur);
+    if (!ab || overlaps(used, c.file, ab[0], ab[1])) continue;
+    const txt = c.ss.filter((x) => x.a >= ab[0] - 0.05 && x.b <= ab[1] + 0.05).map((x) => x.text).join(" ");
+    const sc = lexScore(txt, vi.df, 2) + (ab[0] < 1.5 ? -0.2 : 0);   // évite le générique du début
+    if (!best || sc > best.sc) best = { c, a: ab[0], b: ab[1], sc };
+  }
+  return best;
+}
 export async function pickOpener(clips, lang, subject, list) {
   const sp = clips.filter((c) => c.ss.length);
   if (!sp.length) return null;
@@ -478,7 +520,7 @@ export async function pickOpener(clips, lang, subject, list) {
   if (list.length && process.env.EXPLAINER_NO_LLM !== "1") {
     const txt = sp.map((c, k) => `Vidéo ${k} « ${path.basename(c.file)} » (${c.p.dur.toFixed(0)} s) :\n${clipLines(c.ss, Math.max(2500, 16000 / sp.length))}`).join("\n\n");
     const j = await askJson(list, `Tu es le monteur d'une chaîne d'analyse géopolitique (langue ${pick(L.langName, lang)}). Réponds UNIQUEMENT en JSON.`,
-      `La vidéo doit COMMENCER par une OUVERTURE CHOC : le passage le plus fort, le plus choquant ou le plus saisissant d'une des vidéos ci-dessous (phrase qui choque, chiffre terrible, aveu, accusation, moment d'émotion), compréhensible seul, qui donne envie de rester. Sujet de la vidéo : ${subject}\n\n${txt}\n\nChoisis UN passage de ${CL.OMIN} à ${CL.OMAX} secondes, qui commence et finit sur une phrase complète (bornes [début-fin] ci-dessus), jamais le générique du début.\nJSON : {"video": numéro, "start": secondes, "end": secondes, "why": "pourquoi c'est le plus fort"}`, "ouverture choc");
+      `La vidéo doit COMMENCER par une OUVERTURE CHOC : le passage le plus fort, le plus choquant ou le plus saisissant d'une des vidéos ci-dessous (phrase qui choque, chiffre terrible, aveu, accusation, moment d'émotion), compréhensible seul, qui donne envie de rester. Sujet de la vidéo : ${subject}\n\n${txt}\n\nLe passage doit porter sur LE MÊME SUJET que la vidéo (jamais un fait divers ou un thème sans rapport, même très choquant). Choisis UN passage de ${CL.OMIN} à ${CL.OMAX} secondes, qui commence et finit sur une phrase complète (bornes [début-fin] ci-dessus), jamais le générique du début.\nJSON : {"video": numéro, "start": secondes, "end": secondes, "why": "pourquoi c'est le plus fort"}`, "ouverture choc");
     const c = j && sp[Math.round(Number(j.video))];
     if (c && isFinite(Number(j.start)) && Number(j.end) > Number(j.start)) choice = { c, a0: Number(j.start), b0: Number(j.end), why: cutWords(j.why, 25) };
   }
@@ -510,11 +552,14 @@ export async function fillSlots(slots, clips, words, used, lang, list) {
       let got = null;
       if (r && r.video !== null && r.video !== undefined) {
         const c = sp[Math.round(Number(r.video))];
-        if (c && isFinite(Number(r.start)) && (s.must || Number(r.score) >= 6)) {
+        if (c && isFinite(Number(r.start)) && (s.must || Number(r.score) >= 4)) {
           const ab = snapPassage(c.ss, Number(r.start), Number(r.end), CL.DMIN, s.must ? CL.TMAX : CL.DMAX, c.p.dur);
           if (ab && !overlaps(used, c.file, ab[0], ab[1])) got = { c, a: ab[0], b: ab[1] };
         }
       }
+      // pas de réponse de l'IA pour ce créneau : passage le plus proche par les MOTS de ce que tu dis autour (rythme
+      // soutenu comme Montage LV, même sans mot-clé) ; seulement des vidéos en rapport avec ton sujet (filtrées avant)
+      if (!got) { const [bf, af] = voiceAround(words, s.t, 30, 15); const lp = lexPassage(sp, `${bf} ${af}`, used, s.must ? CL.TMAX : CL.DMAX); if (lp) got = { c: lp.c, a: lp.a, b: lp.b }; }
       if (!got && s.must) {                                // annonce entendue : on joue toujours quelque chose
         for (const c of sp) { for (const x of c.ss) { const ab = snapPassage(c.ss, x.a, x.a + 10, 8, CL.DMAX, c.p.dur); if (ab && !overlaps(used, c.file, ab[0], ab[1])) { got = { c, a: ab[0], b: ab[1] }; break; } } if (got) break; }
       }
@@ -756,6 +801,35 @@ export function insertClips(scenes, inserts, lang) {
 const hasAlpha = (f) => { try { return /a|pal8/.test(execFileSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=pix_fmt", "-of", "csv=p=0", f]).toString().trim().replace(/^gray$|^rgb24$|^yuv.*$/, "")); } catch { return false; } };
 const hash = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) % 100000 + 1; };
 
+// ---------- orthographe : la transcription automatique déforme les noms (« الحثيبن » pour « الحوثيين ») ----------
+// UN appel IA relit toute la transcription et ne rend QUE les mots mal transcrits avec leur orthographe juste ; appliqué
+// aux mots de ta voix ET aux sous-titres des vidéos jointes, donc à tout ce qui s'affiche (titres, bandeau, sous-titres).
+const FIX = new Map();
+const bare = (w) => String(w).replace(/[ً-ٰٟـ]/g, "").replace(/[.,،؛;:!?؟«»"“”()]/g, "");
+export function fixWord(w) {
+  const b = bare(w); if (!b || !FIX.size) return w;
+  if (FIX.has(b)) return w.replace(b, FIX.get(b));
+  const m = b.match(/^(و|ف|ب|ل|وال|بال|فال|لل|ك)(.{3,})$/u);
+  if (m && FIX.has(m[2])) return w.replace(b, m[1] + FIX.get(m[2]));
+  return w;
+}
+const letters = (x) => new Set(bare(x).replace(/\s/g, ""));
+export async function fixSpelling(words, lang, listIn) {
+  const list = listIn || (process.env.EXPLAINER_NO_LLM === "1" || process.env.EXPLAINER_ORTHO === "non" ? [] : providers());
+  if (!list.length) return;
+  const text = sentencesOf(words, 30).map((x) => x.text).join("\n").slice(0, 60000), have = new Set(words.map((w) => bare(w.w)));
+  const j = await askJson(list, `Tu es correcteur ${pick(L.langName, lang)} spécialiste de l'actualité du Golfe et du Moyen-Orient. Réponds UNIQUEMENT en JSON.`,
+    `Voici la transcription AUTOMATIQUE d'une voix (elle déforme souvent les noms propres). Liste UNIQUEMENT les mots mal transcrits de façon évidente — noms de personnes, de pays, de villes, de groupes, d'organisations, d'entreprises, termes techniques — avec leur orthographe correcte (ex. « الحثيبن » → « الحوثيين », « ارامكوا » → « أرامكو »). Ne touche pas au dialecte, au style ni à la grammaire ; dans le doute, ne propose rien.\n\n${text}\n\nJSON : {"fix":[{"faux": "mot tel qu'il est écrit", "juste": "orthographe correcte"}]}`, "orthographe", 3000);
+  for (const r of Array.isArray(j?.fix) ? j.fix.slice(0, 80) : []) {
+    const f = bare(r?.faux), t = clean(r?.juste, 40);
+    if (!f || !t || f === bare(t) || !have.has(f) || f.includes(" ") || wc(t) > 3 || (t.match(EMOJI) || []).length) continue;
+    const A = letters(f), B = letters(t); let common = 0; for (const c of A) if (B.has(c)) common++;
+    if (common / Math.max(A.size, B.size) < 0.45 || t.length > f.length * 2.2 + 2) continue;   // pas une correction : une réécriture
+    FIX.set(f, t);
+  }
+  let n = 0; for (const w of words) { const v = fixWord(w.w); if (v !== w.w) { w.w = v; n++; } }
+  if (FIX.size) console.log(`  orthographe : ${FIX.size} mot(s) corrigé(s), ${n} occurrence(s) — ${[...FIX].slice(0, 12).map(([a, b]) => `${a}→${b}`).join(", ")}`);
+}
 async function main() {
   if (!existsSync(IN)) throw new Error(`${IN} introuvable : la transcription n'a pas tourné.`);
   const tr = JSON.parse(readFileSync(IN, "utf8"));
@@ -764,6 +838,7 @@ async function main() {
   const lang = ["ar", "fr", "en", "it"].includes(String(tr.lang).slice(0, 2)) ? String(tr.lang).slice(0, 2) : "fr";
   const words = sane(tr.words, duration);
   if (!words.length) throw new Error("aucune parole détectée dans le fichier voix.");
+  await fixSpelling(words, String(tr.lang).slice(0, 2)).catch((e) => console.log(`  orthographe : relecture impossible (${String(e.message).slice(0, 100)})`));
   let sents = sentencesOf(words);
   const full = sents.map((s) => s.text).join(" ");
   const th = detectTheme(full, process.env.EXPLAINER_PAYS === "auto" ? "" : process.env.EXPLAINER_PAYS);
@@ -817,11 +892,13 @@ async function main() {
   let asr = {}; try { asr = JSON.parse(readFileSync("content/clips-asr.json", "utf8")); } catch { /* pas de transcription : images seulement */ }
   for (const v of okVids) {
     const a = asr[path.basename(v.orig || v.file)], off = v.file !== v.orig && v.prep && Number(v.prep.t0) > 0 ? Number(v.prep.t0) : 0;
-    const ws = v.p.audio && a && Array.isArray(a.words) ? a.words.map((w) => ({ ...w, t0: Number(w.t0) - off, t1: Number(w.t1) - off })).filter((w) => w.t0 >= 0 && w.t1 <= v.p.dur + 0.3) : [];
+    const ws = v.p.audio && a && Array.isArray(a.words) ? a.words.map((w) => ({ ...w, w: fixWord(w.w), t0: Number(w.t0) - off, t1: Number(w.t1) - off })).filter((w) => w.t0 >= 0 && w.t1 <= v.p.dur + 0.3) : [];
     v.ss = ws.length >= 4 ? clipSentences(ws) : [];
     if (ws.length) v.heardText = ws.slice(0, 70).map((w) => w.w).join(" ");      // évite une 2e transcription pour l'association
   }
-  const speech = okVids.filter((v) => v.ss.length);
+  const speechAll = okVids.filter((v) => v.ss.length);
+  const speech = await topicFilter(speechAll, sents, lang, list, notes);
+  const offTopic = new Set(speechAll.filter((v) => !speech.includes(v)).map((v) => v.file));
   const subsOf = (c, a, b) => c.ss.filter((x) => x.b > a + 0.2 && x.a < b - 0.2).map((x) => ({ t0: Number(Math.max(0, x.a - a).toFixed(2)), t1: Number(Math.min(b - a, x.b - a).toFixed(2)), text: clean(x.text, 160) }));
   const mk = (c, a, b, extra) => {
     const m = { ...clipInfo(c, 0, b - a, side, a), kind: "vid", iw: c.p.w, ih: c.p.h, subs: subsOf(c, a, b) };
@@ -873,10 +950,11 @@ async function main() {
   if (fill.res.some((r) => r.reused)) notes.push(`⚠ ${fill.res.filter((r) => r.reused).length} annonce(s) ont rejoué un passage déjà montré : pas assez de vidéo pour toutes tes annonces`);
   if (fill.mustLost) notes.push(`⚠ ${fill.mustLost} annonce(s) « écoutez » sans extrait : ${!speech.length ? "aucune vidéo jointe avec paroles" : "plus d'annonces que de vidéos (chaque vidéo annoncée est déjà jouée en entier) — dépose une vidéo par annonce"}`);
   for (const x of [...imgs, ...okVids]) if (x.credit) notes.push(`© ${path.basename(x.orig || x.file)} : source affichée « ${x.credit} »`);
-  // 8) vidéos à paroles jamais montrées : posées en image (sans leur son) pour que chaque pièce jointe apparaisse
+  // 8) une vidéo À PAROLES n'est jamais montrée muette (ton commentaire par-dessus quelqu'un qui parle sans le son) :
+  //    si elle n'a pu être jouée avec son son, elle est simplement signalée
   const shown = new Set([...used.map((u) => u.f), ...reserved]);
-  const rest = speech.filter((v) => !shown.has(v.file));
-  if (rest.length) { rest.forEach((v) => { v.frames = clipInfo(v, 0, 20, side); v.sentence = null; }); placeMedia(scenes, rest, lang); }
+  const rest = [];
+  for (const v of speech) if (!shown.has(v.file)) notes.push(`ℹ ${path.basename(v.orig || v.file)} : aucune pause disponible pour la jouer avec son son (non montrée muette)`);
   const broll2 = [...broll, ...rest];
   const { cuts, shift } = insertClips(scenes, inserts, lang);
   const total0 = duration + shift;

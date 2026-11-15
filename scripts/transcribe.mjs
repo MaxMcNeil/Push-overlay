@@ -44,6 +44,8 @@ async function groqFile(mp3) {
       fd.append("timestamp_granularities[]", "segment"); // les segments portent la ponctuation (les mots Groq n'en ont pas)
       fd.append("temperature", "0");
       if (process.env.ASR_LANGUAGE) fd.append("language", process.env.ASR_LANGUAGE);
+      // vocabulaire attendu (noms propres) : Whisper les écrit correctement au lieu de les déformer
+      if (process.env.ASR_PROMPT) fd.append("prompt", process.env.ASR_PROMPT.slice(0, 600));
       const res = await fetch(`${GROQ_BASE}/openai/v1/audio/transcriptions`, { method: "POST", headers: { authorization: `Bearer ${keys[ki]}` }, body: fd, signal: AbortSignal.timeout(5 * 60 * 1000) });
       if (res.status === 429) {
         const ra = Number(res.headers.get("retry-after")) || 20;
