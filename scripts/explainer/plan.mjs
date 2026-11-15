@@ -366,7 +366,7 @@ function clipInfo(v, idx, maxDur, side, ss = 0) {
 // entre deux extraits ; jamais deux fois le même passage ; un extrait n'est posé que dans une vraie pause, en fin de
 // phrase, et seulement s'il est COHÉRENT avec ce qui est dit (mieux vaut un trou qu'un hors-sujet). Tes « écoutez » /
 // « خلينا نسمع » passent toujours.
-const CL = { FIRST: 300, GAP1: 60, GAP2: 120, AUTO_SEP: 90, MIN_SEP: 25, DMIN: 6, DMAX: 15, TMAX: 25, OMIN: 4, OMAX: 12, BATCH: 16 };
+const CL = { FIRST: 300, GAP1: 60, GAP2: 60, AUTO_SEP: 55, MIN_SEP: 25, DMIN: 6, DMAX: 15, TMAX: 25, OMIN: 4, OMAX: 12, BATCH: 16 };
 export function clipSentences(words) {
   return sentencesOf(sane(words, Infinity), 14).map((s) => ({ a: s.t0, b: s.t1, text: s.text }));
 }
