@@ -31,6 +31,11 @@ on:
         description: "Nom de l'émission annoncé à l'antenne (vide = Le Journal du NON en français, Gulf think-tank en arabe)"
         required: false
         default: ""
+      musique:
+        description: "Musique de fond des audios des auditeurs : retirer (IA, on n'entend que leur voix) ou garder"
+        type: choice
+        options: [retirer, garder]
+        default: retirer
       video:
         description: "Après le montage : lancer « Faceless live arabic » pour faire la vidéo de l'émission"
         type: choice
@@ -79,6 +84,21 @@ jobs:
           ETAPE: ${{ inputs.etape }}
           MAIN: ${{ github.ref_name == 'main' && '1' || '' }}
         run: bash scripts/radio/etat.sh
+
+      - name: Cache Demucs (séparation voix / musique)
+        if: steps.etat.outputs.etape != 'attente' && inputs.musique != 'garder'
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/torch/hub
+            ~/.cache/pip
+          key: radio-demucs-htdemucs-v1-${{ runner.os }}
+
+      - name: Retirer la musique de fond des auditeurs
+        if: steps.etat.outputs.etape != 'attente' && inputs.musique != 'garder'
+        timeout-minutes: 40
+        continue-on-error: true
+        run: bash scripts/radio/sans_musique.sh
 
       - name: Cache whisper.cpp (repli si Groq indisponible)
         if: steps.etat.outputs.etape != 'attente'

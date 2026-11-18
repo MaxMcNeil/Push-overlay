@@ -34,6 +34,12 @@ async function transcrire(f, d) {
   return transcribeAll(f, d);
 }
 
+// Voix SANS la musique de fond (séparée par scripts/radio/sans_musique.sh) si elle existe, sinon l'audio d'origine
+function source(fichier) {
+  const v = path.join(IN, "voix-seules", fichier.replace(/\.[^.]+$/, "") + ".wav");
+  return existsSync(v) ? v : path.join(IN, "clips", fichier);
+}
+
 // ------------------------------------------------------------------ phrases d'un extrait (découpage aux fins de phrase)
 export function phrases(words) {
   const out = [];
@@ -119,6 +125,30 @@ export function aligner(lignes, words) {
   return out;
 }
 
+// ------------------------------------------------------------------ SALUTATIONS : jamais à l'antenne (ni toi, ni les auditeurs)
+const SALUT = new Set(norm("bonjour bonsoir salut coucou hello hi hey salam salamalaykoum salamalekoum slm ciao buongiorno buonasera salve hola " +
+  "هلا مرحبا اهلا السلام سلام مساء صباح مساكم صباحكم يسعد").join(" ").split(" "));
+const SUITE = new Set(norm("a à tous toutes tout monde amis mes chers chères mesdames messieurs et bienvenue everyone everybody all guys folks " +
+  "there a tutti amici alaykoum aleykoum alikoum alaikum wa rahmatullah wabarakatuh عليكم عليكم ورحمه ورحمة الله وبركاته يسعد مساكم الخير بالخير " +
+  "بكل خير النور جميعا يا جماعه شباب اخواني اخوتي الكرام ومرحبا واهلا بكم فيكم").join(" ").split(" "));
+export const SALUT_ANIM = /\b(bonjour|bonsoir|salut|coucou|hello|good (evening|morning|afternoon)|buonasera|buongiorno|ciao|salam)\b|السلام عليكم|سلام عليكم|مساء الخير|صباح الخير|مرحبا|أهلا|اهلا|يسعد مساكم|مساكم الله/i;
+/** Index du premier mot APRÈS une salutation d'ouverture (« Salam aleykoum à tous… », « Bonsoir tout le monde… »). */
+export function apresSalut(mots, i0, i1) {
+  const tok = (k) => (k <= i1 ? norm(mots[k][2]) : []);
+  const ok = (k) => { const t = tok(k); return t.length > 0 && t.every((x) => SALUT.has(x) || SUITE.has(x)); };
+  // une salutation dans les 2 premiers mots (« Bonsoir… », « الله يسعد مساكم… »), et rien d'autre avant elle
+  const debut = [i0, i0 + 1].find((k) => tok(k).some((t) => SALUT.has(t)));
+  if (debut === undefined || (debut > i0 && !ok(i0))) return i0;
+  let k = i0;
+  while (k <= i1 && k - i0 < 14) {
+    if (ok(k)) { k++; continue; }
+    const t = tok(k);       // « tout le monde », « les amis » : « le/les » seulement devant « monde/amis »
+    if (t.length === 1 && ["le", "les"].includes(t[0]) && tok(k + 1).some((x) => x === "monde" || x === "amis")) { k++; continue; }
+    break;
+  }
+  return k;
+}
+
 // ------------------------------------------------------------------ IA
 async function ia(sys, user, essais = 3) {
   const prov = providers();
@@ -150,6 +180,7 @@ export function valider(j, clips) {
       const t = String(it.texte || "").replace(/\s+/g, " ").trim();
       if (!t) continue;
       if (/\b(nous|notre|nos)\b/i.test(t)) erreurs.push(`« nous » interdit : « ${t.slice(0, 60)} »`);
+      if (SALUT_ANIM.test(t)) erreurs.push(`salutation interdite (bonjour, bonsoir, salam…) : « ${t.slice(0, 60)} »`);
       if (t.split(" ").length < 5) { erreurs.push(`phrase trop courte pour être reconnue (5 mots minimum) : « ${t} »`); continue; }
       let mode = String(it.mode || "normal").toLowerCase();
       mode = mode.startsWith("coup") ? "coupe" : mode.startsWith("sil") ? "silence" : "normal";
@@ -186,7 +217,7 @@ async function analyse() {
   if (!files.length) throw new Error("aucun audio dans la release");
   const clips = [];
   for (const f of files) {
-    const p = path.join(IN, "clips", f), d = duree(p);
+    const p = source(f), d = duree(p);
     if (d < 1) { console.log(`  ${f} : illisible ou vide, ignoré`); continue; }
     console.log(`Transcription de ${f} (${d.toFixed(0)} s)…`);
     const r = await transcrire(p, d);
@@ -206,7 +237,7 @@ async function analyse() {
   const user = `Les EXTRAITS ci-dessous seront diffusés comme des AUDITEURS QUI APPELLENT L'ÉMISSION (voix au téléphone). Écris le déroulé
 complet d'une émission RÉALISTE, en ${LANGS[lang]}, où l'animateur (l'utilisateur, qui lira tes phrases à voix haute) :
 - ouvre l'émission${nom ? ` « ${nom} »` : ""} : accroche forte sur le ou les sujets du jour, annonce que le standard est ouvert ;
-- présente CHAQUE appel avant de le diffuser (« On a un auditeur en ligne… bonsoir, vous êtes à l'antenne, je vous écoute. ») ;
+- présente CHAQUE appel avant de le diffuser (« Un auditeur en ligne… vous êtes à l'antenne, je vous écoute. ») ;
 - découpe les appels longs (plus de 25 s) en morceaux de 15 à 40 s environ et intervient entre eux de DEUX façons, en les variant :
   « coupe » = l'animateur COUPE LA PAROLE à l'auditeur (qui parle encore) : 5 à 12 mots, réflexe, vif (« Attendez, attendez… vous êtes
   en train de dire que… ? »), puis l'auditeur enchaîne ; « silence » = l'animateur profite d'une pause de l'auditeur pour glisser une
@@ -224,6 +255,9 @@ punchline d'humour noir après les moments forts ; rythme varié (phrases d'un m
 même formule de présentation ; chaque appel a sa propre couleur (colère, témoignage, expert du quotidien, contradicteur) d'après ce
 qu'il dit ; tension qui monte jusqu'au dernier appel. Pour CHAQUE phrase de l'animateur, indique le TON de lecture en 2 à 4 mots
 (« sec, indigné », « ironique », « complice », « grave, lent », « amusé », « faussement naïf »…).
+AUCUNE SALUTATION, nulle part : jamais « bonjour », « bonsoir », « salut », « salam aleykoum », « مساء الخير », « السلام عليكم », « مرحبا »
+(ni au début, ni avec les auditeurs) : on entre directement dans le vif du sujet. Côté auditeurs, ne diffuse pas leurs phrases de
+salutation (« Salam aleykoum », « Bonsoir à tous »…) : commence leurs morceaux après.
 STYLE : oral, vivant, phrases courtes, animateur de libre antenne provocateur mais crédible ; vouvoiement du public et des
 auditeurs. HORS DU CONTEXTE : jamais « nous », « notre », « nos » (ni leur équivalent dans la langue de l'émission) : dis « la France »,
 « les Français », « vous », « je ». N'invente AUCUN fait, aucun prénom, aucune ville d'auditeur ; ne dis jamais que ce sont des vidéos
@@ -261,7 +295,8 @@ ${listing}`;
   for (const x of best.deroule) if (x.type === "animateur") x.n = ++n;
   const plan = {
     version: 1, langue: lang, nom, titre: best.titre, defauts: best.erreurs,
-    clips: clips.map((c) => ({ fichier: c.fichier, origine: origines[c.fichier] || c.fichier, duree: c.duree, langue: c.langue, phrases: c.phrases.map(({ i0, i1, t0, t1, texte }) => ({ i0, i1, t0, t1, texte })) })),
+    clips: clips.map((c) => ({ fichier: c.fichier, origine: origines[c.fichier] || c.fichier, duree: c.duree, langue: c.langue, phrases: c.phrases.map(({ i0, i1, t0, t1, texte }) => ({ i0, i1, t0, t1, texte })),
+      mots: c.words.map((w) => [r2(w.t0), r2(w.t1), w.w]) })),
     deroule: best.deroule,
   };
   writeFileSync(path.join(OUT, "emission-plan.json"), JSON.stringify(plan, null, 1));
@@ -370,10 +405,21 @@ async function montage() {
       add(animPiece(x), x.mode === "silence" ? 0.15 : 0.3);
     } else {
       const c = plan.clips[x.extrait - 1];
-      const src = path.join(IN, "clips", c.fichier);
-      const p0 = c.phrases[x.phrases[0]], p1 = c.phrases[x.phrases[1]];
+      const src = source(c.fichier);
+      let p0 = c.phrases[x.phrases[0]];
+      const p1 = c.phrases[x.phrases[1]];
+      let avant = x.phrases[0] > 0 ? c.phrases[x.phrases[0] - 1].t1 : 0;
+      // « Salam aleykoum à tous… », « Bonsoir tout le monde… » : jamais diffusé, l'auditeur entre dans le sujet
+      if (Array.isArray(c.mots) && c.mots.length > p1.i1) {
+        const k = apresSalut(c.mots, p0.i0, p1.i1);
+        if (k > p1.i1) {                       // le morceau n'était qu'une salutation : sauté
+          console.log(`  auditeur ${x.extrait} : morceau de salutation seule, retiré`);
+          if (x.nouvel_appel) { const nx = d.slice(i + 1).find((y) => y.type === "appel" && y.extrait === x.extrait); if (nx) nx.nouvel_appel = true; }
+          continue;
+        }
+        if (k > p0.i0) { console.log(`  auditeur ${x.extrait} : salutation retirée (« ${c.mots.slice(p0.i0, k).map((w) => w[2]).join(" ")} »)`); avant = c.mots[k - 1][1]; p0 = { ...p0, t0: c.mots[k][0] }; }
+      }
       if (x.nouvel_appel) add(sonnerie(path.join(TMP, `sonnerie-${i}.wav`)), 0.15);
-      const avant = x.phrases[0] > 0 ? c.phrases[x.phrases[0] - 1].t1 : 0;
       const apres = x.phrases[1] + 1 < c.phrases.length ? c.phrases[x.phrases[1] + 1].t0 : c.duree;
       const b0 = Math.max(p0.t0 - 0.08, Math.min(p0.t0, avant + 0.03));
       const b1 = Math.min(p1.t1 + 0.25, Math.max(p1.t1, apres - 0.03));
