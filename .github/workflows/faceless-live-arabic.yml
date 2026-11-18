@@ -44,10 +44,10 @@ on:
         options: [radio, radio + fort, radio + très fort, naturel, naturel + fort]
         default: radio
       debruitage:
-        description: "Bruit de fond : léger (souffle constant, comme avant) ou fort (IA) — enlève aussi rue, télé, ventilateur, voix au loin"
+        description: "Bruit de fond : fort (IA, défaut) — enlève aussi rue, télé, ventilateur, voix au loin ; léger = ancien filtre (souffle constant seulement)"
         type: choice
-        options: [léger, fort (IA)]
-        default: léger
+        options: [fort (IA), léger]
+        default: fort (IA)
       extraits:
         description: "Extraits de tes vidéos jointes (comme Montage LV) : ouverture choc + rythme régulier + « إسمع / écoutez »"
         type: choice
@@ -322,7 +322,7 @@ jobs:
           EXPLAINER_SFX: ${{ inputs.effets_sonores }}
           EXPLAINER_VOICE: ${{ startsWith(inputs.voix, 'naturel') && 'naturel' || 'radio' }}
           EXPLAINER_VOLUME: ${{ endsWith(inputs.voix, 'très fort') && 'tres-fort' || endsWith(inputs.voix, '+ fort') && 'fort' || 'auto' }}
-          EXPLAINER_DEBRUITAGE: ${{ inputs.debruitage }}
+          EXPLAINER_DEBRUITAGE: ${{ inputs.debruitage || 'fort (IA)' }}
           MATRIX: ${{ needs.plan.outputs.matrix }}
         run: |
           set -euo pipefail
