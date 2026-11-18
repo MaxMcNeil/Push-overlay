@@ -1,0 +1,167 @@
+name: Émission radio
+# Tes audios (TikTok, Shorts…) deviennent des AUDITEURS AU BOUT DU FIL, et toi l'ANIMATEUR d'une émission de libre antenne.
+#   1) Dépose tes audios dans une release (n'importe quel nom) → lance ce workflow (champs vides) :
+#      il les écoute et écrit TES phrases (accueil, présentation des appels, relances, questions, remarques, transitions,
+#      clôture) → fichier « emission-a-lire.txt » dans la MÊME release. Il s'arrête là.
+#   2) Enregistre-toi en lisant toutes les phrases d'affilée, dépose ton audio dans la MÊME release → relance ce workflow
+#      (champs vides) : il retrouve chaque phrase dans ta voix et monte l'émission (jingle, sonnerie, auditeurs « au
+#      téléphone », tes relances…) → release « out-radio-… » (emission.mp3), puis lance tout seul « Faceless live arabic »
+#      pour en faire la vidéo.
+# Aucun nom de fichier imposé : l'étape est devinée toute seule (pas encore de phrases → étape 1 ; nouvel audio déposé
+# après les phrases → c'est ta voix → étape 2). Lancé depuis une branche d'essai : rien n'est écrit dans ta release,
+# résultats dans « out-radio-essai », jamais de vidéo lancée.
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Release de tes audios (vide = la dernière où tu as déposé un son ou une vidéo)"
+        required: false
+        default: ""
+      etape:
+        description: "Étape (auto = devinée : phrases à écrire, ou montage si ta voix est déposée)"
+        type: choice
+        options: [auto, réécrire mes phrases, monter l'émission]
+        default: auto
+      langue:
+        description: "Langue de TES phrases (auto = français)"
+        type: choice
+        options: [auto, fr, ar, en, it]
+        default: auto
+      nom:
+        description: "Nom de l'émission annoncé à l'antenne (vide = Le Journal du NON en français, Gulf think-tank en arabe)"
+        required: false
+        default: ""
+      video:
+        description: "Après le montage : lancer « Faceless live arabic » pour faire la vidéo de l'émission"
+        type: choice
+        options: [oui, non]
+        default: oui
+
+concurrency:
+  group: emission-radio-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  GEMINI_API_KEY: ${{ secrets.EXPLAINER_GEMINI_API_KEY || secrets.GEMINI_API_KEY }}
+  GEMINI_API_KEYS: ${{ secrets.EXPLAINER_GEMINI_API_KEY == '' && secrets.GEMINI_API_KEYS || '' }}
+  GEMINI_API_KEYS_PLUS: ${{ secrets.EXPLAINER_GEMINI_API_KEY == '' && secrets.GEMINI_API_KEYS_PLUS || '' }}
+  GROQ_API_KEY: ${{ secrets.EXPLAINER_GROQ_API_KEY || secrets.GROQ_API_KEY }}
+  GROQ_API_KEYS: ${{ secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS || '' }}
+  GROQ_API_KEYS_PLUS: ${{ secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS_PLUS || '' }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+jobs:
+  radio:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: ffmpeg (préinstallé sur l'image ; installé seulement s'il manque)
+        run: |
+          command -v ffmpeg >/dev/null || { for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg && break; sleep 10; done; }
+          ffmpeg -version | head -1
+
+      - name: Quelle étape ? (devinée d'après ta release)
+        id: etat
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SOURCE: ${{ inputs.release }}
+          ETAPE: ${{ inputs.etape }}
+          MAIN: ${{ github.ref_name == 'main' && '1' || '' }}
+        run: bash scripts/radio/etat.sh
+
+      - name: Cache whisper.cpp (repli si Groq indisponible)
+        if: steps.etat.outputs.etape != 'attente'
+        id: whisper-cache
+        uses: actions/cache@v5
+        with:
+          path: whisper.cpp
+          key: whispercpp-build-v4-${{ runner.os }}
+
+      - name: Compiler whisper.cpp (si pas en cache)
+        if: steps.etat.outputs.etape != 'attente' && steps.whisper-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
+          cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+            -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
+          cmake --build whisper.cpp/build -j"$(nproc)" --config Release
+          cd whisper.cpp
+          bash models/download-ggml-model.sh small
+          bash models/download-ggml-model.sh large-v3-turbo-q5_0 || echo "modèle turbo indisponible : whisper small sera utilisé"
+
+      - name: Étape 1 — écouter tes audios et écrire tes phrases
+        if: steps.etat.outputs.etape == 'analyse'
+        timeout-minutes: 60
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RADIO_LANGUE: ${{ inputs.langue }}
+          RADIO_NOM: ${{ inputs.nom }}
+          STATE: ${{ steps.etat.outputs.state }}
+          SRC: ${{ steps.etat.outputs.src }}
+        run: |
+          set -euo pipefail
+          node scripts/radio/emission.mjs analyse
+          for i in 1 2 3; do
+            gh release upload "$STATE" output/radio/emission-a-lire.txt output/radio/emission-plan.json --repo "$REPO" --clobber && break
+            sleep $((i * 10))
+          done
+          N=$(grep -cE '^[0-9]+\.$' output/radio/emission-a-lire.txt || true)
+          {
+            echo "## 🎙 Tes $N phrases sont prêtes"
+            echo
+            echo "Fichier **emission-a-lire.txt** dans la release **$STATE**. Enregistre-les d'affilée, dépose ton audio dans la release **$SRC**, puis relance « Émission radio » (champs vides)."
+            echo; echo '```'; head -n 400 output/radio/emission-a-lire.txt; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::$N phrases à enregistrer : emission-a-lire.txt dans la release « $STATE »"
+
+      - name: Étape 2 — monter l'émission avec ta voix
+        if: steps.etat.outputs.etape == 'montage'
+        id: montage
+        timeout-minutes: 60
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          STATE: ${{ steps.etat.outputs.state }}
+          MAIN: ${{ github.ref_name == 'main' && '1' || '' }}
+        run: |
+          set -euo pipefail
+          node scripts/radio/emission.mjs montage
+          if [ -n "$MAIN" ]; then
+            T="out-radio-$(date -u +%Y%m%d-%H%M)"
+            TITRE=$(node -e 'const p=require("./input/radio/plan.json");process.stdout.write((p.titre||"Émission radio").slice(0,90))')
+            for i in 1 2 3; do
+              gh release create "$T" --repo "$REPO" --prerelease --target "${{ github.sha }}" --title "🎙 $TITRE" \
+                --notes-file output/radio/rapport.md output/radio/emission.mp3 && break
+              sleep $((i * 10)); gh release delete "$T" --repo "$REPO" -y --cleanup-tag >/dev/null 2>&1 || true
+            done
+          else
+            T="$STATE"
+            gh release upload "$T" output/radio/emission.mp3 output/radio/rapport.md --repo "$REPO" --clobber
+          fi
+          echo "tag=$T" >> "$GITHUB_OUTPUT"
+          cat output/radio/rapport.md >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::Émission prête : emission.mp3 dans la release « $T »"
+
+      - name: Vidéo de l'émission (Faceless live arabic)
+        if: steps.etat.outputs.etape == 'montage' && inputs.video != 'non' && github.ref_name == 'main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          # l'émission est déjà traitée (voix nettoyée, auditeurs au téléphone) : pas de second débruitage, voix « naturel »
+          gh workflow run faceless-live-arabic.yml --repo "$REPO" --ref main \
+            -f source="${{ steps.montage.outputs.tag }}" -f voix=naturel -f debruitage="léger" \
+            && echo "::notice::Vidéo lancée : « Faceless live arabic » avec la release ${{ steps.montage.outputs.tag }}" \
+            || echo "::warning::Lancement de la vidéo impossible : lance « Faceless live arabic » avec source = ${{ steps.montage.outputs.tag }}"
