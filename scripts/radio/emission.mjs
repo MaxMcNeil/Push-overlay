@@ -150,8 +150,12 @@ export function valider(j, clips) {
       const t = String(it.texte || "").replace(/\s+/g, " ").trim();
       if (!t) continue;
       if (/\b(nous|notre|nos)\b/i.test(t)) erreurs.push(`« nous » interdit : « ${t.slice(0, 60)} »`);
-      if (t.split(" ").length < 5) { erreurs.push(`phrase trop courte pour être reconnue : « ${t} »`); continue; }
-      out.push({ type: "animateur", role: String(it.role || "relance"), texte: t });
+      if (t.split(" ").length < 5) { erreurs.push(`phrase trop courte pour être reconnue (5 mots minimum) : « ${t} »`); continue; }
+      let mode = String(it.mode || "normal").toLowerCase();
+      mode = mode.startsWith("coup") ? "coupe" : mode.startsWith("sil") ? "silence" : "normal";
+      // couper la parole / profiter d'un silence : seulement AU MILIEU d'un appel (l'auditeur était en train de parler)
+      if (mode !== "normal" && out[out.length - 1]?.type !== "appel") mode = "normal";
+      out.push({ type: "animateur", role: String(it.role || "relance"), mode, ton: String(it.ton || "").replace(/\s+/g, " ").trim().slice(0, 60), texte: t });
     } else if (type.startsWith("appel") || type.startsWith("extrait")) {
       const e = Number(it.extrait) - 1, c = clips[e];
       if (!c) { erreurs.push(`extrait ${it.extrait} inexistant`); continue; }
@@ -203,28 +207,39 @@ async function analyse() {
 complet d'une émission RÉALISTE, en ${LANGS[lang]}, où l'animateur (l'utilisateur, qui lira tes phrases à voix haute) :
 - ouvre l'émission${nom ? ` « ${nom} »` : ""} : accroche forte sur le ou les sujets du jour, annonce que le standard est ouvert ;
 - présente CHAQUE appel avant de le diffuser (« On a un auditeur en ligne… bonsoir, vous êtes à l'antenne, je vous écoute. ») ;
-- COUPE les appels longs (plus de 25 s) en morceaux de 15 à 40 s environ, à des fins de phrase, et glisse entre eux une relance, une question
-  précise, une objection ou une remarque ironique qui rebondit EXACTEMENT sur ce que l'auditeur vient de dire et amène la suite ;
+- découpe les appels longs (plus de 25 s) en morceaux de 15 à 40 s environ et intervient entre eux de DEUX façons, en les variant :
+  « coupe » = l'animateur COUPE LA PAROLE à l'auditeur (qui parle encore) : 5 à 12 mots, réflexe, vif (« Attendez, attendez… vous êtes
+  en train de dire que… ? »), puis l'auditeur enchaîne ; « silence » = l'animateur profite d'une pause de l'auditeur pour glisser une
+  question précise, une objection ou une remarque ironique. Dans les deux cas, la phrase rebondit EXACTEMENT sur ce que l'auditeur vient
+  de dire et amène ce qu'il dit ensuite (le morceau suivant doit y répondre de façon crédible) ;
 - peut écarter des phrases sans intérêt d'un extrait (bégaiements, hors-sujet, musique), sans jamais changer l'ordre d'un extrait ;
 - réagit après chaque appel (analyse, contradiction, humour noir, chiffre ou fait SEULEMENT s'il est dit dans les extraits),
   remercie l'auditeur, puis fait la TRANSITION vers l'appel suivant : même sujet → « un autre auditeur n'est pas d'accord… » ;
   sujet différent → vraie transition de radio vers le nouveau sujet ;
 - relance l'écoute de temps en temps (« appelez, réagissez dans les commentaires, partagez »), sans jamais donner d'heure ni de date ;
 - conclut : synthèse percutante, question ouverte au public, au revoir.
-STYLE : oral, vivant, phrases courtes, ton d'animateur de libre antenne provocateur mais crédible ; vouvoiement du public et des
+ÉCRITURE DE SCÉNARISTE RADIO EXPERT : cold open qui accroche dès la première phrase ; promesses et teasers avant les appels (« écoutez
+bien la suite, elle va vous faire bondir ») ; reformulation choc de ce que vient de dire l'auditeur ; contradiction et avocat du diable ;
+punchline d'humour noir après les moments forts ; rythme varié (phrases d'un mot, questions rapides, silences) ; jamais deux fois la
+même formule de présentation ; chaque appel a sa propre couleur (colère, témoignage, expert du quotidien, contradicteur) d'après ce
+qu'il dit ; tension qui monte jusqu'au dernier appel. Pour CHAQUE phrase de l'animateur, indique le TON de lecture en 2 à 4 mots
+(« sec, indigné », « ironique », « complice », « grave, lent », « amusé », « faussement naïf »…).
+STYLE : oral, vivant, phrases courtes, animateur de libre antenne provocateur mais crédible ; vouvoiement du public et des
 auditeurs. HORS DU CONTEXTE : jamais « nous », « notre », « nos » (ni leur équivalent dans la langue de l'émission) : dis « la France »,
 « les Français », « vous », « je ». N'invente AUCUN fait, aucun prénom, aucune ville d'auditeur ; ne dis jamais que ce sont des vidéos
-ou TikTok : ce sont des auditeurs au téléphone. Chaque phrase de l'animateur fait AU MOINS 8 mots (elle doit être reconnue quand il la
-lira) et au plus 70 mots. Environ ${motsAnim} mots d'animateur au total. Tous les extraits sont diffusés, dans l'ordre donné.
+ou TikTok : ce sont des auditeurs au téléphone. Chaque phrase de l'animateur fait AU MOINS 8 mots (5 pour une « coupe ») pour être
+reconnue quand il la lira, et au plus 70 mots. Environ ${motsAnim} mots d'animateur au total. Tous les extraits sont diffusés, dans l'ordre donné.
 Réponds en JSON :
 {"titre": "titre accrocheur de l'émission",
  "deroule": [
-  {"type": "animateur", "role": "ouverture", "texte": "…"},
-  {"type": "animateur", "role": "presentation", "texte": "…"},
+  {"type": "animateur", "role": "ouverture", "ton": "…", "texte": "…"},
+  {"type": "animateur", "role": "presentation", "ton": "…", "texte": "…"},
   {"type": "appel", "extrait": 1, "phrases": [0, 4], "nouvel_appel": true},
-  {"type": "animateur", "role": "relance", "texte": "…"},
+  {"type": "animateur", "role": "relance", "mode": "coupe", "ton": "sec, incrédule", "texte": "…"},
   {"type": "appel", "extrait": 1, "phrases": [5, 9], "nouvel_appel": false},
-  {"type": "animateur", "role": "reaction", "texte": "…"},
+  {"type": "animateur", "role": "relance", "mode": "silence", "ton": "faussement naïf", "texte": "…"},
+  {"type": "appel", "extrait": 1, "phrases": [10, 14], "nouvel_appel": false},
+  {"type": "animateur", "role": "reaction", "ton": "…", "texte": "…"},
   …
   {"type": "animateur", "role": "cloture", "texte": "…"}]}
 ("phrases": [première, dernière] = numéros [i] des phrases de l'extrait diffusées dans ce morceau.)
@@ -272,6 +287,8 @@ export function aLire(plan) {
     const apres = d[k + 1]?.type === "appel" ? d[k + 1] : null;
     L.push(`${x.n}.`);
     if (avant && d[k - 1]?.type === "appel") L.push(`[ l'auditeur vient de dire : « ${extraitCourt(plan, avant, true)} » ]`);
+    const consigne = [x.mode === "coupe" ? "TU LUI COUPES LA PAROLE" : x.mode === "silence" ? "tu profites de son silence" : "", x.ton ? `ton : ${x.ton}` : ""].filter(Boolean).join(" — ");
+    if (consigne) L.push(`[ ${consigne} ]`);
     L.push(x.texte);
     if (apres) L.push(`[ ${apres.nouvel_appel ? "☎ sonnerie, puis l'auditeur" : "l'auditeur reprend"} : « ${extraitCourt(plan, apres)} » ]`);
     L.push("");
@@ -340,14 +357,17 @@ async function montage() {
   const add = (f, gap = 0.35) => { pieces.push(f); if (gap > 0) pieces.push(silence(path.join(TMP, `sil-${k++}.wav`), gap)); };
   add(jingle(path.join(TMP, "jingle-debut.wav")), 0.25);
   const d = plan.deroule;
+  const animPiece = (x) => {
+    // marges sans jamais mordre sur le mot d'avant / d'après (autre phrase, prise ratée)
+    const a0 = Math.max(x.al.t0 - 0.12, Math.min(x.al.t0, x.al.avant + 0.03));
+    const a1 = Math.min(x.al.t1 + 0.3, Math.max(x.al.t1, x.al.apres - 0.03));
+    return couper(vtrait, a0, a1, path.join(TMP, `anim-${x.n}.wav`));
+  };
   for (let i = 0; i < d.length; i++) {
     const x = d[i];
     if (x.type === "animateur") {
-      if (!x.al) continue;
-      // marges sans jamais mordre sur le mot d'avant / d'après (autre phrase, prise ratée)
-      const a0 = Math.max(x.al.t0 - 0.12, Math.min(x.al.t0, x.al.avant + 0.03));
-      const a1 = Math.min(x.al.t1 + 0.3, Math.max(x.al.t1, x.al.apres - 0.03));
-      add(couper(vtrait, a0, a1, path.join(TMP, `anim-${x.n}.wav`)), 0.3);
+      if (!x.al || x.fait) continue;
+      add(animPiece(x), x.mode === "silence" ? 0.15 : 0.3);
     } else {
       const c = plan.clips[x.extrait - 1];
       const src = path.join(IN, "clips", c.fichier);
@@ -357,10 +377,23 @@ async function montage() {
       const apres = x.phrases[1] + 1 < c.phrases.length ? c.phrases[x.phrases[1] + 1].t0 : c.duree;
       const b0 = Math.max(p0.t0 - 0.08, Math.min(p0.t0, avant + 0.03));
       const b1 = Math.min(p1.t1 + 0.25, Math.max(p1.t1, apres - 0.03));
-      const brut = couper(src, b0, b1, path.join(TMP, `appel-${i}-brut.wav`), TEL);
+      const suivant = d[i + 1];
+      const coupe = suivant?.type === "animateur" && suivant.mode === "coupe" && suivant.al;
+      // COUPE : l'auditeur continue de parler ~0,8 s (le début de sa phrase suivante), sa voix s'efface sous la tienne
+      const OVL = coupe ? Math.max(0, Math.min(0.8, c.duree - b1 - 0.05)) : 0;
+      const brut = couper(src, b0, b1 + OVL, path.join(TMP, `appel-${i}-brut.wav`), TEL);
       const fin = path.join(TMP, `appel-${i}.wav`);
       sh(["-i", brut, "-af", "loudnorm=I=-19:TP=-2:LRA=9", "-ar", String(SR), "-c:a", "pcm_s16le", fin]);
-      add(fin, 0.3);
+      if (coupe && OVL > 0.3) {
+        const lg = duree(fin), host = animPiece(suivant), mix = path.join(TMP, `coupe-${i}.wav`);
+        const st = Math.max(0, lg - OVL);
+        sh(["-i", fin, "-i", host, "-filter_complex",
+          `[0:a]volume='if(gte(t,${st.toFixed(3)}),max(0.12,1-(t-${st.toFixed(3)})/${OVL.toFixed(3)}),1)':eval=frame[a];` +
+          `[1:a]adelay=${Math.round(st * 1000)}:all=1[b];[a][b]amix=inputs=2:duration=longest:normalize=0[o]`,
+          "-map", "[o]", "-ar", String(SR), "-ac", "1", "-c:a", "pcm_s16le", mix]);
+        suivant.fait = true;
+        add(mix, 0.12);                    // l'auditeur enchaîne tout de suite
+      } else add(fin, suivant?.type === "animateur" && suivant.mode === "silence" ? 0.18 : 0.3);
     }
   }
   add(jingle(path.join(TMP, "jingle-fin.wav"), true), 0);
