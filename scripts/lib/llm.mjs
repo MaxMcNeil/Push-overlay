@@ -5,7 +5,7 @@
 //   GROQ_API_KEYS   ou GROQ_API_KEY     (console.groq.com, gratuit)
 //   ANTHROPIC_API_KEY                   (payant, optionnel)
 // Stratégie : pour chaque modèle Gemini (du meilleur au plus léger), on essaie chaque clé ; une clé saturée (429)
-// ou refusée (400/403) est mise de côté pour ce modèle et on passe à la suivante, sans longues pauses inutiles.
+// ou refusée (400/403, et confirmée invalide par une vérification chez Google) est mise de côté et on passe à la suivante, sans longues pauses inutiles.
 // Les clés n'apparaissent jamais dans les logs (seulement « clé 2/5 »).
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -57,6 +57,21 @@ async function geminiModels(key) {
   const list = [...new Set([...out, "gemini-flash-lite-latest", ...lite])];
   modelCache.set("list", list);
   return list;
+}
+
+// Une clé n'est déclarée morte qu'après VÉRIFICATION auprès de Google (liste des modèles avec cette clé) :
+// un 400/403 peut viser UN modèle (préversion, région, option refusée) alors que la clé est bonne.
+const keyCheck = new Map();
+export async function geminiKeyOk(key) {
+  if (!keyCheck.has(key)) {
+    keyCheck.set(key, (async () => {
+      try {
+        const r = await fetch(`${GEMINI_BASE}/v1beta/models?pageSize=1`, { headers: { "x-goog-api-key": key }, signal: AbortSignal.timeout(20000) });
+        return ![400, 401, 403].includes(r.status);
+      } catch { return true; } // vérification impossible : on ne condamne pas la clé sur un doute
+    })());
+  }
+  return keyCheck.get(key);
 }
 
 /** Gemini : renvoie le texte. ctx.audio = part inlineData facultative ; ctx.parts = autres parts (images) facultatives. */
@@ -131,9 +146,15 @@ export async function callGemini(sys, user, ctx = {}) {
               if (thinking !== undefined) { thinking = undefined; ki--; continue; }
               continue modelLoop;
             }
+            if ((res.status === 400 || res.status === 403) && (await geminiKeyOk(keys[ki]))) {
+              // la clé est valide (vérifié chez Google) : c'est CE modèle qui la refuse → modèle suivant
+              console.log(`  ${tag} : modèle refusé à cette clé (HTTP ${res.status} : ${body.slice(0, 160)}) — la clé est valide → modèle suivant`);
+              lastErr = new Error(`${tag} : HTTP ${res.status} ${body}`);
+              continue modelLoop;
+            }
             if (res.status === 400 || res.status === 403) {
               dead.add(ki);
-              console.log(`  ${tag} : CLÉ REFUSÉE (HTTP ${res.status}). Recrée-la sur https://aistudio.google.com/apikey (« Create API key in new project »).`);
+              console.log(`  ${tag} : CLÉ REFUSÉE (HTTP ${res.status}, vérifiée chez Google). Recrée-la sur https://aistudio.google.com/apikey (« Create API key in new project »).`);
               lastErr = new Error(`${tag} : HTTP ${res.status} ${body}`);
               continue;
             }

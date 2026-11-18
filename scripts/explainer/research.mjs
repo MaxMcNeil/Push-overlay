@@ -73,14 +73,19 @@ Réponds UNIQUEMENT en JSON : {"moments":[{"phrase":n,"sujet":"…","youtube":["
 const ytKeys = () => keysOf("YOUTUBE_API_KEYS", "YOUTUBE_API_KEY", "YOUTUBE_API_KEYS_PLUS", "YT_API_KEYS", "YT_API_KEY");
 const isoDur = (d) => { const m = String(d || "").match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/); return m ? (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0) : 0; };
 let ytDead = false;
+const ytKeyDead = new Set();
 async function ytApi(pathq) {
+  let reseau = false;
   for (const k of ytKeys()) {
     if (ytDead) return null;
+    if (ytKeyDead.has(k)) continue;
     const r = await fetch(`https://www.googleapis.com/youtube/v3/${pathq}&key=${k}`, { signal: AbortSignal.timeout(20000) }).catch(() => null);
     if (r && r.ok) return r.json();
-    if (r && r.status === 403) continue;                 // quota de la clé épuisé : clé suivante
+    if (!r || r.status >= 500) { reseau = true; continue; }   // réseau / panne passagère : jamais retenu contre la clé
+    if (r.status === 403 || r.status === 400) ytKeyDead.add(k); // quota du jour ou clé refusée : clé suivante
   }
-  ytDead = true;
+  // YouTube coupé pour le run seulement si TOUTES les clés sont refusées ; un souci réseau ne coupe que cette requête
+  if (!reseau && ytKeys().every((k) => ytKeyDead.has(k))) ytDead = true;
   return null;
 }
 export async function youtube(m, lang) {
