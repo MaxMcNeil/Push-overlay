@@ -11,6 +11,8 @@ name: Émission radio
 # après les phrases → c'est ta voix → étape 2). Lancé depuis une branche d'essai : rien n'est écrit dans ta release,
 # résultats dans « out-radio-essai », jamais de vidéo lancée.
 on:
+  push:                      # ESSAI SUR BRANCHE UNIQUEMENT — retiré avant la mise sur main
+    branches: [emission-radio]
   workflow_dispatch:
     inputs:
       release:
