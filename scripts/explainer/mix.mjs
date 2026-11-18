@@ -6,6 +6,7 @@
 import { execFileSync, spawnSync } from "child_process";
 import { readFileSync, writeFileSync, existsSync, statSync, mkdirSync, rmSync, renameSync } from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 
 const VOICE = process.argv[2] || "input/voice.wav";
 const SPEC = process.argv[3] || "content/explainer.json";
@@ -73,7 +74,7 @@ function main() {
   // voix : coupe-bas (souffle, chocs de micro), niveau YouTube (−16 LUFS)
   const voice = Number(spec.voice || total), norm = `${tmp}-voice.wav`;
   // « radio » (défaut) : traitement de studio d'émission — souffle réduit, grave chaleureux (profondeur), médiums boueux
-  // creusés, présence et air pour l'intelligibilité, sifflantes adoucies, compression qui rapproche la voix, niveau YouTube.
+  // creusés, aucune montée des aigus (voix chaude et basse), sifflantes adoucies, compression qui rapproche la voix, niveau YouTube.
   // « naturel » : simple nettoyage + niveau. Si le traitement studio échoue (ffmpeg ancien), repli automatique sur « naturel ».
   const base = `aresample=${SR},aformat=channel_layouts=mono`;
   const STYLE = (process.env.EXPLAINER_VOICE || "radio").toLowerCase();
@@ -89,12 +90,21 @@ function main() {
   // voix lointaine ou très faible : gain avant le traitement (jusqu'à +30 dB) et réduction de bruit plus forte
   const far = isFinite(inI) && inI < -30;
   const pre = isFinite(inI) ? Math.max(0, Math.min(30, -20 - inI)) : 0;
-  const nr = far || VOL !== "auto" ? "afftdn=nr=16:nf=-50" : "afftdn=nr=10:nf=-52";
+  // DÉBRUITAGE (option « débruitage ») : léger = filtre classique (souffle constant) ; fort (IA) = RNNoise, réseau de
+  // neurones entraîné sur la parole : enlève aussi les bruits qui varient (rue, télé, ventilateur, voix au loin).
+  // Le modèle est dans le dépôt (aucun téléchargement) ; s'il manque ou si ffmpeg le refuse → filtre classique.
+  const RNN = path.join(path.dirname(fileURLToPath(import.meta.url)), "rnnoise", "sh.rnnn");
+  let IA = /fort|ia/i.test(process.env.EXPLAINER_DEBRUITAGE || "") && existsSync(RNN);
+  const classic = far || VOL !== "auto" ? "afftdn=nr=16:nf=-50" : "afftdn=nr=10:nf=-52";
+  const ia = () => `arnndn=m='${RNN.replace(/\\/g, "/").replace(/'/g, "")}':mix=0.92,afftdn=nr=4:nf=-55`;
+  const nrOf = () => (IA ? ia() : classic);
   const comp = VOL.startsWith("tr") ? "acompressor=threshold=-26dB:ratio=5:attack=4:release=120:knee=6:makeup=4"
     : VOL === "fort" ? "acompressor=threshold=-24dB:ratio=4:attack=5:release=130:knee=6:makeup=4" : "acompressor=threshold=-22dB:ratio=3.5:attack=6:release=140:knee=6:makeup=3.5";
-  const studio = ["highpass=f=75", nr, ...(pre ? [`volume=${pre.toFixed(1)}dB`] : []), "equalizer=f=115:t=q:w=0.9:g=3.5", "equalizer=f=290:t=q:w=1.2:g=-2.5", "equalizer=f=3300:t=q:w=1.4:g=2.5",
-    "treble=g=2:f=9500", "deesser=i=0.3", comp, "alimiter=limit=0.9"].join(",");
-  const natural = ["highpass=f=70", ...(far ? ["afftdn=nr=12:nf=-50"] : []), ...(pre ? [`volume=${pre.toFixed(1)}dB`] : []), ...(VOL !== "auto" ? [comp, "alimiter=limit=0.9"] : [])].join(",");
+  // voix chaude et basse : graves de poitrine, « carton » retiré, AUCUNE montée des aigus (règle de la chaîne : jamais
+  // un son aigu) ; le dé-esseur adoucit les « s »
+  const studio = () => ["highpass=f=75", nrOf(), ...(pre ? [`volume=${pre.toFixed(1)}dB`] : []), "equalizer=f=115:t=q:w=0.9:g=3.5", "equalizer=f=290:t=q:w=1.2:g=-2.5",
+    "deesser=i=0.3", comp, "alimiter=limit=0.9"].join(",");
+  const natural = () => ["highpass=f=70", ...(IA ? [ia()] : far ? ["afftdn=nr=12:nf=-50"] : []), ...(pre ? [`volume=${pre.toFixed(1)}dB`] : []), ...(VOL !== "auto" ? [comp, "alimiter=limit=0.9"] : [])].join(",");
   // niveau final EXACT : loudnorm en deux passes (mesure, puis correction linéaire) — pas de « pompage » du son
   const twoPass = (chain) => {
     const r = spawnSync("ffmpeg", ["-v", "info", "-nostats", "-i", VOICE, "-af", `${base},${chain},loudnorm=I=${target}:TP=-1.5:LRA=11:print_format=json`, "-f", "null", "-"], { encoding: "utf8", maxBuffer: 1 << 27 });
@@ -107,7 +117,16 @@ function main() {
     execFileSync("ffmpeg", ["-y", "-v", "error", "-i", VOICE, "-af", `${base},${chain},${ln},aresample=${SR}`, "-c:a", "pcm_s16le", norm], { stdio: ["ignore", "ignore", "pipe"] });
   };
   let voiceStyle = STYLE === "naturel" ? "naturel" : "radio";
-  try { twoPass(voiceStyle === "radio" ? studio : natural); }
+  const chain = () => (voiceStyle === "radio" ? studio() : natural());
+  if (IA) console.log("  débruitage : fort (IA RNNoise)");
+  try {
+    try { twoPass(chain()); }
+    catch (e) {
+      if (!IA) throw e;
+      console.log(`⚠ débruitage IA refusé (${String(e.stderr || e.message).trim().slice(-160)}) : débruitage classique`);
+      IA = false; twoPass(chain());
+    }
+  }
   catch (e) { console.log(`⚠ traitement « ${voiceStyle} » impossible (${String(e.stderr || e.message).trim().slice(-160)}) : traitement simple`); voiceStyle = "simple";
     execFileSync("ffmpeg", ["-y", "-v", "error", "-i", VOICE, "-af", `${base},highpass=f=70,${pre ? `volume=${pre.toFixed(1)}dB,` : ""}loudnorm=I=${target}:TP=-1.5:LRA=11,aresample=${SR}`, "-c:a", "pcm_s16le", norm]); }
   // Certains filtres (réduction de bruit, limiteur) retardent le son de quelques dizaines de ms : mesuré ici puis

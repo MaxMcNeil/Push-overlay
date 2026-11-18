@@ -43,6 +43,11 @@ on:
         type: choice
         options: [radio, radio + fort, radio + très fort, naturel, naturel + fort]
         default: radio
+      debruitage:
+        description: "Bruit de fond : léger (souffle constant, comme avant) ou fort (IA) — enlève aussi rue, télé, ventilateur, voix au loin"
+        type: choice
+        options: [léger, fort (IA)]
+        default: léger
       extraits:
         description: "Extraits de tes vidéos jointes (comme Montage LV) : ouverture choc + rythme régulier + « إسمع / écoutez »"
         type: choice
@@ -317,6 +322,7 @@ jobs:
           EXPLAINER_SFX: ${{ inputs.effets_sonores }}
           EXPLAINER_VOICE: ${{ startsWith(inputs.voix, 'naturel') && 'naturel' || 'radio' }}
           EXPLAINER_VOLUME: ${{ endsWith(inputs.voix, 'très fort') && 'tres-fort' || endsWith(inputs.voix, '+ fort') && 'fort' || 'auto' }}
+          EXPLAINER_DEBRUITAGE: ${{ inputs.debruitage }}
           MATRIX: ${{ needs.plan.outputs.matrix }}
         run: |
           set -euo pipefail
