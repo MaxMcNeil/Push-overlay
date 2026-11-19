@@ -141,7 +141,11 @@ const SALUT = new Set(norm("bonjour bonsoir salut coucou hello hi hey salam sala
 const SUITE = new Set(norm("a à tous toutes tout monde amis mes chers chères mesdames messieurs et bienvenue everyone everybody all guys folks " +
   "there a tutti amici alaykoum aleykoum alikoum alaikum wa rahmatullah wabarakatuh عليكم عليكم ورحمه ورحمة الله وبركاته يسعد مساكم الخير بالخير " +
   "بكل خير النور جميعا يا جماعه شباب اخواني اخوتي الكرام ومرحبا واهلا بكم فيكم").join(" ").split(" "));
-export const SALUT_ANIM = /\b(bonjour|bonsoir|salut|coucou|hello|good (evening|morning|afternoon)|buonasera|buongiorno|ciao|salam)\b|السلام عليكم|سلام عليكم|مساء الخير|صباح الخير|مرحبا|أهلا|اهلا|يسعد مساكم|مساكم الله/i;
+// arabe : mots ENTIERS (\b ne marche pas pour l'arabe) — « اهلا » ne doit pas se déclencher dans « متجاهلاً »
+const AR = (mots) => new RegExp(`(^|[\\s،؛.؟!«»"'(])(${mots})(?=$|[\\s،؛.؟!«»"')ًٌٍ])`);
+const SALUT_LAT = /\b(bonjour|bonsoir|salut|coucou|hello|good (evening|morning|afternoon)|buonasera|buongiorno|ciao|salam)\b/i;
+const SALUT_AR = AR("السلام عليكم|سلام عليكم|مساء الخير|صباح الخير|مرحبا|مرحباً|أهلا|أهلاً|اهلا|اهلاً|يسعد مساكم|مساكم الله");
+export const SALUT_ANIM = { test: (t) => SALUT_LAT.test(t) || SALUT_AR.test(t) };
 /** Index du premier mot APRÈS une salutation d'ouverture (« Salam aleykoum à tous… », « Bonsoir tout le monde… »). */
 export function apresSalut(mots, i0, i1) {
   const tok = (k) => (k <= i1 ? norm(mots[k][2]) : []);
@@ -188,7 +192,9 @@ async function ia(sys, user, { tours = 4, maxTokens = 8000 } = {}) {
   throw last || new Error("IA indisponible");
 }
 
-const NOUS = { fr: /\b(nous|notre|nos)\b/i, it: /\b(noi|nostro|nostra|nostri|nostre)\b/i, en: /\b(we|our|ours)\b/i };
+const NOUS = { fr: /\b(nous|notre|nos)\b/i, it: /\b(noi|nostro|nostra|nostri|nostre)\b/i, en: /\b(we|our|ours)\b/i,
+  // arabe : « nous » et ses formes courantes à l'antenne (معنا، ننتقل، تابعونا…) — l'animateur reste HORS DU CONTEXTE
+  ar: AR("نحن|معنا|لنا|عندنا|بلادنا|وطننا|شعبنا|حلقتنا|برنامجنا|ننتقل|نستمع|نتابع|نرحب|نذهب|نعود|نستقبل|نسمع|شاركونا|تابعونا|راسلونا|اتصلوا بنا|ابقوا معنا") };
 
 /** Vérifie et répare le déroulé proposé par l'IA pour un bloc d'auditeurs. { deroule, erreurs[] }. */
 export function valider(j, clips, lang = "fr") {
@@ -243,7 +249,8 @@ async function reparer(deroule, clips, lang) {
     try {
       const { j } = await ia("Tu corriges des phrases d'animateur radio. Réponds en JSON valide.",
         `Réécris chaque phrase en ${LANGS[lang]} en gardant le sens, le ton et la longueur, SANS aucune salutation (bonjour, bonsoir, salut,
-salam, مساء الخير, السلام عليكم, مرحبا…) et SANS « nous / notre / nos » (dis « la France », « les Français », « vous », « je », « l'auditeur »).
+salam, مساء الخير, السلام عليكم, مرحبا…) et SANS « nous / notre / nos » ni leur équivalent (arabe : نحن، معنا، لنا، ننتقل، نستمع، شاركونا، تابعونا، ابقوا معنا…) : dis « la France »,
+« les Français », « vous », « je », « l'auditeur » (arabe : أنا، أنتم، المستمع).
 Réponds : {"phrases": ["…", "…"]} (même nombre, même ordre).
 ${fautives.map((x, i) => `${i + 1}. ${x.texte}`).join("\n")}`, { tours: 3, maxTokens: 3000 });
       (Array.isArray(j.phrases) ? j.phrases : []).forEach((t, i) => {
@@ -311,7 +318,8 @@ lecture en 2 à 4 mots (« sec, indigné », « ironique », « complice », « 
 AUCUNE SALUTATION, nulle part : jamais « bonjour », « bonsoir », « salut », « salam aleykoum », « مساء الخير », « السلام عليكم », « مرحبا ».
 Ne diffuse pas les phrases de salutation des auditeurs (« Salam aleykoum », « Bonsoir à tous »…) : commence leurs morceaux après.
 STYLE : oral, vivant, phrases courtes, provocateur mais crédible ; vouvoiement. HORS DU CONTEXTE : jamais « nous », « notre », « nos »
-(ni leur équivalent dans la langue de l'émission) : « la France », « les Français », « vous », « je », « l'auditeur ». N'invente AUCUN
+(ni leur équivalent dans la langue de l'émission ; en arabe : jamais « نحن، معنا، لنا، ننتقل، نستمع، شاركونا، تابعونا، ابقوا معنا »…,
+utilise « أنا » / la 1re personne du singulier, « أنتم » et le nom du pays) : « la France », « les Français », « vous », « je », « l'auditeur ». N'invente AUCUN
 fait, aucun prénom, aucune ville d'auditeur ; ne dis jamais que ce sont des vidéos ou TikTok : ce sont des auditeurs au téléphone.
 Chaque phrase de l'animateur fait AU MOINS 8 mots (5 pour une « coupe ») pour être reconnue quand il la lira, et au plus 70 mots.
 Émission${nom ? ` « ${nom} »` : ""}. Tous les extraits du bloc sont diffusés, dans l'ordre donné.

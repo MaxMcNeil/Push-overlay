@@ -14,8 +14,6 @@ name: Émission radio
 # (≈ 20 min d'audio chacune), l'écriture est faite par BLOCS d'auditeurs (aucune IA ne sature), une IA surchargée est
 # attendue puis réessayée, et rien de ce qui est déjà fait n'est perdu : 10 fois plus long ≠ 10 fois plus de risques.
 on:
-  push:                      # ESSAI SUR BRANCHE UNIQUEMENT — retiré avant la mise sur main
-    branches: [radio-long]
   workflow_dispatch:
     inputs:
       release:
