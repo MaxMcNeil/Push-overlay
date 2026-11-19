@@ -330,7 +330,8 @@ RÈGLES DE L'ÉMISSION — l'animateur (l'utilisateur, qui lira tes phrases à v
 ÉCRITURE DE SCÉNARISTE RADIO EXPERT : promesses et teasers avant les appels ; reformulation choc de ce que vient de dire l'auditeur ;
 contradiction et avocat du diable ; punchline d'humour noir après les moments forts ; rythme varié ; chaque appel a sa propre couleur
 (colère, témoignage, expert du quotidien, contradicteur) d'après ce qu'il dit ; tension qui monte. Pour CHAQUE phrase, le TON de
-lecture en 2 à 4 mots (« sec, indigné », « ironique », « complice », « grave, lent », « amusé », « faussement naïf »…).
+lecture en 2 à 4 mots, écrit lui aussi en ${LANGS[lang]} (en français par exemple : « sec, indigné », « ironique », « complice »,
+« grave, lent », « faussement naïf »).
 AUCUNE SALUTATION, nulle part : jamais « bonjour », « bonsoir », « salut », « salam aleykoum », « مساء الخير », « السلام عليكم », « مرحبا ».
 Ne diffuse pas les phrases de salutation des auditeurs (« Salam aleykoum », « Bonsoir à tous »…) : commence leurs morceaux après.
 STYLE : oral, vivant, phrases courtes, provocateur mais crédible ; vouvoiement. HORS DU CONTEXTE : jamais « nous », « notre », « nos »
@@ -483,9 +484,12 @@ async function analyse() {
   console.log(`Prêt : ${n} phrases à lire (${deroule.filter((x) => x.type === "animateur").reduce((s, x) => s + x.texte.split(" ").length, 0)} mots), ${Math.round((Date.now() - T0) / 60000)} min d'écriture.`);
 }
 
-/** Ce que tu lis : TES phrases, dans l'ordre, rien d'autre (le scénario complet reste dans emission-plan.json). */
+/** Ce que tu lis : TES phrases numérotées, dans l'ordre, avec le ton — rien d'autre (le scénario reste dans emission-plan.json).
+ *  Le ton n'est affiché que s'il est dans la langue de l'émission. */
 export function aLire(plan) {
-  return plan.deroule.filter((x) => x.type === "animateur").map((x) => x.texte).join("\n\n") + "\n";
+  const lang = plan.langue || "fr";
+  return plan.deroule.filter((x) => x.type === "animateur")
+    .map((x) => `${x.n}. ${x.ton && langueOk(x.ton, lang) ? `(${x.ton}) ` : ""}${x.texte}`).join("\n\n") + "\n";
 }
 
 // ------------------------------------------------------------------ sons d'habillage (synthétisés, bas, sans aigus)
