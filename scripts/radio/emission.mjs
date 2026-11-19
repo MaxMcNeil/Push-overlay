@@ -194,7 +194,9 @@ async function ia(sys, user, { tours = 4, maxTokens = 8000 } = {}) {
 
 const NOUS = { fr: /\b(nous|notre|nos)\b/i, it: /\b(noi|nostro|nostra|nostri|nostre)\b/i, en: /\b(we|our|ours)\b/i,
   // arabe : « nous » et ses formes courantes à l'antenne (معنا، ننتقل، تابعونا…) — l'animateur reste HORS DU CONTEXTE
-  ar: AR("نحن|معنا|لنا|عندنا|نناقش|لنناقش|نتحدث|لنتحدث|لنستمع|بلادنا|وطننا|شعبنا|حلقتنا|برنامجنا|ننتقل|نستمع|نتابع|نرحب|نذهب|نعود|نستقبل|نسمع|شاركونا|تابعونا|راسلونا|اتصلوا بنا|ابقوا معنا") };
+  // verbes à la 1re personne du pluriel, avec ou sans « و / ف / ل » collés devant (ولننتقل، فلنستمع، نترك…)
+  ar: AR("(?:و|ف)?(?:ل)?(?:ننتقل|نستمع|نتابع|نرحب|نذهب|نعود|نستقبل|نسمع|نناقش|نتحدث|نترك|نبدأ|نختم|نفتح|نطرح|نرى|نتوقف|نكمل|نواصل|نعرض|نسأل)|" +
+    "نحن|معنا|لنا|عندنا|بلادنا|وطننا|شعبنا|حلقتنا|برنامجنا|سمعنا|سمعناه|رأينا|قلنا|شاهدنا|شاركونا|تابعونا|راسلونا|اتصلوا بنا|ابقوا معنا|معاً|معا") };
 
 /** La phrase est-elle bien dans la langue de l'émission ? (arabe : au moins 60 % de lettres arabes ; sinon : presque aucune) */
 export function langueOk(t, lang) {
@@ -325,8 +327,8 @@ RÈGLES DE L'ÉMISSION — l'animateur (l'utilisateur, qui lira tes phrases à v
 - peut écarter des phrases sans intérêt (bégaiements, hors-sujet, musique), sans jamais changer l'ordre d'un extrait ;
 - réagit après chaque appel (analyse, contradiction, humour noir, chiffre ou fait SEULEMENT s'il est dit dans les extraits), remercie
   l'auditeur, puis fait la TRANSITION vers l'appel suivant : même sujet → « un autre auditeur n'est pas d'accord… » ; sujet différent →
-  vraie transition de radio ; relance l'écoute de temps en temps (« appelez, réagissez dans les commentaires, partagez »), sans jamais
-  donner d'heure ni de date.
+  vraie transition de radio ; de temps en temps, une vraie QUESTION OUVERTE au public sur le sujet (jamais « likez », « partagez »,
+  « abonnez-vous », ni « écrivez 1 si… / tapez X si… ») ; jamais d'heure ni de date.
 ÉCRITURE DE SCÉNARISTE RADIO EXPERT : promesses et teasers avant les appels ; reformulation choc de ce que vient de dire l'auditeur ;
 contradiction et avocat du diable ; punchline d'humour noir après les moments forts ; rythme varié ; chaque appel a sa propre couleur
 (colère, témoignage, expert du quotidien, contradicteur) d'après ce qu'il dit ; tension qui monte. Pour CHAQUE phrase, le TON de
@@ -360,7 +362,7 @@ async function ecrireBloc(b, ctx, profondeur = 0) {
   const place = [
     premier ? `CE BLOC OUVRE L'ÉMISSION : commence par une ouverture qui accroche dès la première phrase (sujets du jour, standard ouvert)${ouverture ? `, juste après l'ouverture enregistrée qu'on vient d'entendre : « ${ouverture} »` : ""}.`
       : `CE BLOC CONTINUE L'ÉMISSION (pas de nouvelle ouverture). Juste avant, l'animateur disait : « ${avant || "…"} ». Commence par une transition vers le premier appel de ce bloc.`,
-    dernier ? "CE BLOC TERMINE L'ÉMISSION : après le dernier appel, conclus (synthèse percutante, question ouverte au public, appel à réagir), sans formule de salutation."
+    dernier ? "CE BLOC TERMINE L'ÉMISSION : après le dernier appel, conclus (synthèse percutante, question ouverte au public), sans formule de salutation ni appel à liker ou partager."
       : "Ne conclus PAS l'émission : termine par ta réaction au dernier appel du bloc (un teaser « restez à l'écoute » est possible).",
   ].join("\n");
   const user = `${REGLES(lang, nom)}
