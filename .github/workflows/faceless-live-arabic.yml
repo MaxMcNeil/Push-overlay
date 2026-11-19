@@ -163,7 +163,8 @@ jobs:
       - name: Transcription de la voix (par morceaux de 10 min)
         run: |
           rm -f content/script.txt content/transcript.json
-          node scripts/transcribe.mjs
+          # voix déjà transcrite (émission radio : voix-transcript.json joint) → reprise telle quelle, sinon transcription
+          node scripts/explainer/transcript-fourni.mjs || node scripts/transcribe.mjs
         timeout-minutes: 240
 
       # « download search pour montages.txt » : vidéos YouTube (+ passage précis à filmer), presse (liens), photos libres
@@ -263,6 +264,9 @@ jobs:
         with:
           name: explainer-work
 
+      - name: Outils (ffmpeg) — avec cache
+        uses: ./.github/actions/setup-media
+
       - name: Chrome et ffmpeg (préinstallés sur l'image ; installés seulement s'ils manquent)
         run: |
           command -v ffmpeg >/dev/null || { for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg && break; sleep 10; done; }
@@ -302,10 +306,9 @@ jobs:
         with:
           node-version: "22"
 
-      - name: ffmpeg
-        run: |
-          command -v ffmpeg >/dev/null || { for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg && break; sleep 10; done; }
-          ffmpeg -version | head -1
+      # ffmpeg avec CACHE des paquets : un serveur sans ffmpeg perdait jusqu'à 10 min à l'installer depuis un miroir lent
+      - name: Outils (ffmpeg) — avec cache
+        uses: ./.github/actions/setup-media
 
       - uses: actions/download-artifact@v7
         with:

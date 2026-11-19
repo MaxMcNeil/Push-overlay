@@ -36,8 +36,9 @@ async function transcrire(f, d) {
 
 // Voix SANS la musique de fond (séparée par scripts/radio/sans_musique.sh) si elle existe, sinon l'audio d'origine
 function source(fichier) {
-  const v = path.join(IN, "voix-seules", fichier.replace(/\.[^.]+$/, "") + ".wav");
-  return existsSync(v) ? v : path.join(IN, "clips", fichier);
+  const b = path.join(IN, "voix-seules", fichier.replace(/\.[^.]+$/, ""));
+  for (const ext of [".wav", ".opus"]) if (existsSync(b + ext)) return b + ext;
+  return path.join(IN, "clips", fichier);
 }
 
 // ------------------------------------------------------------------ phrases d'un extrait (découpage aux fins de phrase)
@@ -80,11 +81,20 @@ export function aligner(lignes, words) {
   words.forEach((w, wi) => { const n = norm(w.w); (n.length ? n : ["∅"]).forEach((t) => J.push({ t, wi })); });
   const T = J.map((x) => x.t);
   const L = lignes.map((l) => norm(l));
-  const cands = (li, from) => {                       // fenêtres où la phrase li est lue (score ≥ seuil), maxima locaux
+  // fenêtres où la phrase li est lue (score ≥ seuil), maxima locaux. Recherche BORNÉE après la position courante (une voix
+  // d'une heure = des milliers de mots) ; élargie seulement si rien n'est trouvé (phrase sautée, long bavardage).
+  const cands = (li, from) => {
+    for (const lim of [700, 3000, Infinity]) {
+      const r = cands0(li, from, Math.min(T.length, from + lim));
+      if (r.length || from + lim >= T.length) return r;
+    }
+    return [];
+  };
+  const cands0 = (li, from, fin) => {
     const toks = L[li], n = toks.length, res = [];
     if (!n) return res;
     const seuil = n <= 6 ? 0.72 : 0.6;
-    for (let p = from; p < T.length; p++) {
+    for (let p = from; p < fin; p++) {
       if (!toks.slice(0, 4).some((t) => T[p] === t) && !toks.includes(T[p])) continue;   // doit commencer sur un mot de la phrase
       let best = null;
       for (const k of [Math.round(n * 0.8), n, Math.round(n * 1.25)]) {
@@ -149,15 +159,26 @@ export function apresSalut(mots, i0, i1) {
   return k;
 }
 
-// ------------------------------------------------------------------ IA
-async function ia(sys, user, essais = 3) {
+// ------------------------------------------------------------------ IA (patiente : une IA surchargée est réessayée, jamais abandonnée trop tôt)
+const T0 = Date.now();
+const BUDGET = Number(process.env.RADIO_BUDGET_MIN || 100) * 60 * 1000;      // temps max pour toute l'écriture
+const reste = () => BUDGET - (Date.now() - T0);
+const dormir = (s) => new Promise((r) => setTimeout(r, s * 1000));
+async function ia(sys, user, { tours = 4, maxTokens = 8000 } = {}) {
   const prov = providers();
   if (!prov.length) throw new Error("aucune clé IA (GEMINI_API_KEY / GROQ_API_KEY) : impossible d'écrire tes phrases");
   let last = null;
-  for (let k = 0; k < essais; k++) {
+  for (let k = 0; k < tours; k++) {
+    if (k) {                                   // tout le monde a échoué : surcharge passagère → on patiente puis on réessaie
+      const w = [0, 45, 90, 180, 240][k] || 240;
+      if (reste() < (w + 120) * 1000) break;
+      console.log(`  IA indisponible pour l'instant : nouvel essai dans ${w} s`);
+      await dormir(w);
+    }
     for (const [nom, fn] of prov) {
+      if (reste() < 90 * 1000) break;
       try {
-        const raw = await fn(sys, user, { json: true, temperature: 0.75, maxTokens: 12000, deadline: Date.now() + 8 * 60 * 1000 });
+        const raw = await fn(sys, user, { json: true, temperature: 0.75, maxTokens, deadline: Date.now() + Math.min(7 * 60 * 1000, reste() - 60 * 1000) });
         const j = parseJson(raw);
         if (j) return { j, nom };
         last = new Error(`${nom} : réponse illisible`);
@@ -167,8 +188,10 @@ async function ia(sys, user, essais = 3) {
   throw last || new Error("IA indisponible");
 }
 
-/** Vérifie et répare le déroulé proposé par l'IA. Renvoie { deroule, erreurs[] } (erreurs bloquantes → nouvel essai). */
-export function valider(j, clips) {
+const NOUS = { fr: /\b(nous|notre|nos)\b/i, it: /\b(noi|nostro|nostra|nostri|nostre)\b/i, en: /\b(we|our|ours)\b/i };
+
+/** Vérifie et répare le déroulé proposé par l'IA pour un bloc d'auditeurs. { deroule, erreurs[] }. */
+export function valider(j, clips, lang = "fr") {
   const erreurs = [];
   const d = Array.isArray(j?.deroule) ? j.deroule : [];
   const out = [];
@@ -179,14 +202,16 @@ export function valider(j, clips) {
     if (type.startsWith("anim")) {
       const t = String(it.texte || "").replace(/\s+/g, " ").trim();
       if (!t) continue;
-      if (/\b(nous|notre|nos)\b/i.test(t)) erreurs.push(`« nous » interdit : « ${t.slice(0, 60)} »`);
-      if (SALUT_ANIM.test(t)) erreurs.push(`salutation interdite (bonjour, bonsoir, salam…) : « ${t.slice(0, 60)} »`);
+      const defauts = [];
+      if (NOUS[lang]?.test(t)) defauts.push("nous");
+      if (SALUT_ANIM.test(t)) defauts.push("salutation");
       if (t.split(" ").length < 5) { erreurs.push(`phrase trop courte pour être reconnue (5 mots minimum) : « ${t} »`); continue; }
+      defauts.forEach((x) => erreurs.push(`${x === "nous" ? "« nous » interdit" : "salutation interdite"} : « ${t.slice(0, 60)} »`));
       let mode = String(it.mode || "normal").toLowerCase();
       mode = mode.startsWith("coup") ? "coupe" : mode.startsWith("sil") ? "silence" : "normal";
       // couper la parole / profiter d'un silence : seulement AU MILIEU d'un appel (l'auditeur était en train de parler)
       if (mode !== "normal" && out[out.length - 1]?.type !== "appel") mode = "normal";
-      out.push({ type: "animateur", role: String(it.role || "relance"), mode, ton: String(it.ton || "").replace(/\s+/g, " ").trim().slice(0, 60), texte: t });
+      out.push({ type: "animateur", role: String(it.role || "relance"), mode, ton: String(it.ton || "").replace(/\s+/g, " ").trim().slice(0, 60), texte: t, ...(defauts.length ? { defauts } : {}) });
     } else if (type.startsWith("appel") || type.startsWith("extrait")) {
       const e = Number(it.extrait) - 1, c = clips[e];
       if (!c) { erreurs.push(`extrait ${it.extrait} inexistant`); continue; }
@@ -202,106 +227,217 @@ export function valider(j, clips) {
   }
   const manquants = clips.map((_, i) => i).filter((i) => !vus.has(i));
   if (manquants.length) erreurs.push(`extrait(s) jamais diffusé(s) : ${manquants.map((i) => i + 1).join(", ")}`);
-  if (!out.length || out[0].type !== "animateur") erreurs.push("l'émission doit commencer par l'animateur");
-  if (!out.length || out[out.length - 1].type !== "animateur") erreurs.push("l'émission doit finir par l'animateur");
+  if (!out.length || out[0].type !== "animateur") erreurs.push("le bloc doit commencer par l'animateur");
+  if (!out.length || out[out.length - 1].type !== "animateur") erreurs.push("le bloc doit finir par l'animateur");
   for (let k = 1; k < out.length; k++) {
     if (out[k].type === "appel" && out[k].nouvel_appel && out[k - 1].type !== "animateur") erreurs.push(`appel de l'extrait ${out[k].extrait} lancé sans présentation`);
   }
   return { deroule: out, erreurs };
 }
 
-// ------------------------------------------------------------------ ÉTAPE 1 : analyse → tes phrases à lire
-async function analyse() {
-  mkdirSync(OUT, { recursive: true }); mkdirSync(TMP, { recursive: true });
-  const files = readdirSync(path.join(IN, "clips")).filter((f) => !f.startsWith(".")).sort();
-  if (!files.length) throw new Error("aucun audio dans la release");
-  const clips = [];
-  for (const f of files) {
-    const p = source(f), d = duree(p);
-    if (d < 1) { console.log(`  ${f} : illisible ou vide, ignoré`); continue; }
-    console.log(`Transcription de ${f} (${d.toFixed(0)} s)…`);
-    const r = await transcrire(p, d);
-    const ph = phrases(r.words);
-    if (!ph.length) { console.log(`  ${f} : aucune parole reconnue, ignoré`); continue; }
-    clips.push({ fichier: f, duree: r2(d), langue: r.lang, words: r.words, phrases: ph });
+/** Répare ce qui reste après les essais, sans jamais bloquer l'émission : phrases avec « nous » / salutation → réécrites
+ *  par l'IA (petite demande, n'importe quelle IA), sinon retirées ; auditeurs oubliés → ajoutés (avec leur sonnerie). */
+async function reparer(deroule, clips, lang) {
+  const fautives = deroule.filter((x) => x.type === "animateur" && x.defauts?.length);
+  if (fautives.length) {
+    try {
+      const { j } = await ia("Tu corriges des phrases d'animateur radio. Réponds en JSON valide.",
+        `Réécris chaque phrase en ${LANGS[lang]} en gardant le sens, le ton et la longueur, SANS aucune salutation (bonjour, bonsoir, salut,
+salam, مساء الخير, السلام عليكم, مرحبا…) et SANS « nous / notre / nos » (dis « la France », « les Français », « vous », « je », « l'auditeur »).
+Réponds : {"phrases": ["…", "…"]} (même nombre, même ordre).
+${fautives.map((x, i) => `${i + 1}. ${x.texte}`).join("\n")}`, { tours: 3, maxTokens: 3000 });
+      (Array.isArray(j.phrases) ? j.phrases : []).forEach((t, i) => {
+        const x = fautives[i], n = String(t || "").replace(/\s+/g, " ").trim();
+        if (x && n.split(" ").length >= 5 && !SALUT_ANIM.test(n) && !NOUS[lang]?.test(n)) { x.texte = n; delete x.defauts; }
+      });
+    } catch (e) { console.log(`  réécriture des phrases fautives impossible (${String(e.message).slice(0, 100)})`); }
   }
-  if (!clips.length) throw new Error("aucun audio avec de la parole");
-  const env = (process.env.RADIO_LANGUE || "auto").toLowerCase();
-  const lang = LANGS[env] ? env : "fr";
-  const nom = (process.env.RADIO_NOM || "").trim() || NOM_DEFAUT[lang] || "";
-  const total = clips.reduce((s, c) => s + c.duree, 0);
-  const motsAnim = Math.round(Math.max(150, Math.min(2500, total / 60 * 55)));     // ≈ 1/3 du temps d'antenne pour toi
-  const listing = clips.map((c, k) => `EXTRAIT ${k + 1} — ${c.duree.toFixed(0)} s, langue ${c.langue} :\n` +
-    c.phrases.map((p, i) => `  [${i}] ${p.texte}`).join("\n")).join("\n\n");
-  const sys = `Tu es le producteur d'une émission de radio parlée (talk-show, libre antenne). Tu écris UNIQUEMENT ce que dit l'ANIMATEUR. Réponds en JSON valide.`;
-  const user = `Les EXTRAITS ci-dessous seront diffusés comme des AUDITEURS QUI APPELLENT L'ÉMISSION (voix au téléphone). Écris le déroulé
-complet d'une émission RÉALISTE, en ${LANGS[lang]}, où l'animateur (l'utilisateur, qui lira tes phrases à voix haute) :
-- ouvre l'émission${nom ? ` « ${nom} »` : ""} : accroche forte sur le ou les sujets du jour, annonce que le standard est ouvert ;
-- présente CHAQUE appel avant de le diffuser (« Un auditeur en ligne… vous êtes à l'antenne, je vous écoute. ») ;
+  let out = deroule.filter((x) => !(x.type === "animateur" && x.defauts?.length));
+  const retirees = deroule.length - out.length;
+  if (retirees) console.log(`  ${retirees} phrase(s) avec salutation ou « nous » retirée(s) (non corrigeables)`);
+  out.forEach((x) => delete x.defauts);
+  const vus = new Set(out.filter((x) => x.type === "appel").map((x) => x.extrait));
+  clips.forEach((c, i) => { if (!vus.has(i + 1)) { out.push({ type: "appel", extrait: i + 1, phrases: [0, c.phrases.length - 1], nouvel_appel: true }); console.log(`  auditeur oublié par l'IA ajouté : ${c.fichier}`); } });
+  return out;
+}
+
+// ------------------------------------------------------------------ TRANSCRIPTION (machines de préparation)
+async function transcrireFichiers(fichiers) {
+  mkdirSync(path.join(IN, "transcripts"), { recursive: true });
+  let echecs = 0;
+  for (const f of fichiers) {
+    const p = source(f), d = duree(p);
+    if (d < 1) { console.log(`  ${f} : illisible ou vide`); continue; }
+    console.log(`Transcription de ${f} (${d.toFixed(0)} s)…`);
+    try {
+      const r = await transcrire(p, d);
+      writeFileSync(path.join(IN, "transcripts", f + ".json"), JSON.stringify({ lang: r.lang, duree: r2(d), words: r.words }));
+    } catch (e) { echecs++; console.log(`::warning::${f} : transcription impossible (${String(e.message).slice(0, 120)})`); }
+  }
+  if (echecs) throw new Error(`${echecs} audio(s) non transcrit(s)`);
+}
+
+// ------------------------------------------------------------------ ÉTAPE 1 : analyse → tes phrases à lire
+const BLOC_CAR = Number(process.env.RADIO_BLOC_CAR || 4500);    // taille d'un bloc envoyé à l'IA : petit, pour que même l'offre gratuite de Groq l'accepte
+export function blocs(clips) {
+  const out = [];
+  let cur = [], n = 0;
+  for (const c of clips) {
+    const t = c.phrases.reduce((s, p) => s + p.texte.length + 8, 0);
+    if (cur.length && (n + t > BLOC_CAR || cur.length >= 6)) { out.push(cur); cur = []; n = 0; }
+    cur.push(c); n += t;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+
+const REGLES = (lang, nom) => `RÈGLES DE L'ÉMISSION (en ${LANGS[lang]}) — l'animateur (l'utilisateur, qui lira tes phrases à voix haute) :
+- présente CHAQUE nouvel appel avant de le diffuser (« Un auditeur en ligne… vous êtes à l'antenne, je vous écoute. »), jamais deux fois
+  la même formule ;
 - découpe les appels longs (plus de 25 s) en morceaux de 15 à 40 s environ et intervient entre eux de DEUX façons, en les variant :
-  « coupe » = l'animateur COUPE LA PAROLE à l'auditeur (qui parle encore) : 5 à 12 mots, réflexe, vif (« Attendez, attendez… vous êtes
-  en train de dire que… ? »), puis l'auditeur enchaîne ; « silence » = l'animateur profite d'une pause de l'auditeur pour glisser une
-  question précise, une objection ou une remarque ironique. Dans les deux cas, la phrase rebondit EXACTEMENT sur ce que l'auditeur vient
-  de dire et amène ce qu'il dit ensuite (le morceau suivant doit y répondre de façon crédible) ;
-- peut écarter des phrases sans intérêt d'un extrait (bégaiements, hors-sujet, musique), sans jamais changer l'ordre d'un extrait ;
-- réagit après chaque appel (analyse, contradiction, humour noir, chiffre ou fait SEULEMENT s'il est dit dans les extraits),
-  remercie l'auditeur, puis fait la TRANSITION vers l'appel suivant : même sujet → « un autre auditeur n'est pas d'accord… » ;
-  sujet différent → vraie transition de radio vers le nouveau sujet ;
-- relance l'écoute de temps en temps (« appelez, réagissez dans les commentaires, partagez »), sans jamais donner d'heure ni de date ;
-- conclut : synthèse percutante, question ouverte au public, au revoir.
-ÉCRITURE DE SCÉNARISTE RADIO EXPERT : cold open qui accroche dès la première phrase ; promesses et teasers avant les appels (« écoutez
-bien la suite, elle va vous faire bondir ») ; reformulation choc de ce que vient de dire l'auditeur ; contradiction et avocat du diable ;
-punchline d'humour noir après les moments forts ; rythme varié (phrases d'un mot, questions rapides, silences) ; jamais deux fois la
-même formule de présentation ; chaque appel a sa propre couleur (colère, témoignage, expert du quotidien, contradicteur) d'après ce
-qu'il dit ; tension qui monte jusqu'au dernier appel. Pour CHAQUE phrase de l'animateur, indique le TON de lecture en 2 à 4 mots
-(« sec, indigné », « ironique », « complice », « grave, lent », « amusé », « faussement naïf »…).
-AUCUNE SALUTATION, nulle part : jamais « bonjour », « bonsoir », « salut », « salam aleykoum », « مساء الخير », « السلام عليكم », « مرحبا »
-(ni au début, ni avec les auditeurs) : on entre directement dans le vif du sujet. Côté auditeurs, ne diffuse pas leurs phrases de
-salutation (« Salam aleykoum », « Bonsoir à tous »…) : commence leurs morceaux après.
-STYLE : oral, vivant, phrases courtes, animateur de libre antenne provocateur mais crédible ; vouvoiement du public et des
-auditeurs. HORS DU CONTEXTE : jamais « nous », « notre », « nos » (ni leur équivalent dans la langue de l'émission) : dis « la France »,
-« les Français », « vous », « je ». N'invente AUCUN fait, aucun prénom, aucune ville d'auditeur ; ne dis jamais que ce sont des vidéos
-ou TikTok : ce sont des auditeurs au téléphone. Chaque phrase de l'animateur fait AU MOINS 8 mots (5 pour une « coupe ») pour être
-reconnue quand il la lira, et au plus 70 mots. Environ ${motsAnim} mots d'animateur au total. Tous les extraits sont diffusés, dans l'ordre donné.
-Réponds en JSON :
+  « coupe » = il COUPE LA PAROLE à l'auditeur (qui parle encore) : 5 à 12 mots, réflexe, vif (« Attendez, attendez… vous êtes en train
+  de dire que… ? »), puis l'auditeur enchaîne ; « silence » = il profite d'une pause de l'auditeur pour glisser une question précise,
+  une objection ou une remarque ironique. Dans les deux cas, la phrase rebondit EXACTEMENT sur ce que l'auditeur vient de dire et amène
+  ce qu'il dit ensuite (le morceau suivant doit y répondre de façon crédible) ;
+- peut écarter des phrases sans intérêt (bégaiements, hors-sujet, musique), sans jamais changer l'ordre d'un extrait ;
+- réagit après chaque appel (analyse, contradiction, humour noir, chiffre ou fait SEULEMENT s'il est dit dans les extraits), remercie
+  l'auditeur, puis fait la TRANSITION vers l'appel suivant : même sujet → « un autre auditeur n'est pas d'accord… » ; sujet différent →
+  vraie transition de radio ; relance l'écoute de temps en temps (« appelez, réagissez dans les commentaires, partagez »), sans jamais
+  donner d'heure ni de date.
+ÉCRITURE DE SCÉNARISTE RADIO EXPERT : promesses et teasers avant les appels ; reformulation choc de ce que vient de dire l'auditeur ;
+contradiction et avocat du diable ; punchline d'humour noir après les moments forts ; rythme varié ; chaque appel a sa propre couleur
+(colère, témoignage, expert du quotidien, contradicteur) d'après ce qu'il dit ; tension qui monte. Pour CHAQUE phrase, le TON de
+lecture en 2 à 4 mots (« sec, indigné », « ironique », « complice », « grave, lent », « amusé », « faussement naïf »…).
+AUCUNE SALUTATION, nulle part : jamais « bonjour », « bonsoir », « salut », « salam aleykoum », « مساء الخير », « السلام عليكم », « مرحبا ».
+Ne diffuse pas les phrases de salutation des auditeurs (« Salam aleykoum », « Bonsoir à tous »…) : commence leurs morceaux après.
+STYLE : oral, vivant, phrases courtes, provocateur mais crédible ; vouvoiement. HORS DU CONTEXTE : jamais « nous », « notre », « nos »
+(ni leur équivalent dans la langue de l'émission) : « la France », « les Français », « vous », « je », « l'auditeur ». N'invente AUCUN
+fait, aucun prénom, aucune ville d'auditeur ; ne dis jamais que ce sont des vidéos ou TikTok : ce sont des auditeurs au téléphone.
+Chaque phrase de l'animateur fait AU MOINS 8 mots (5 pour une « coupe ») pour être reconnue quand il la lira, et au plus 70 mots.
+Émission${nom ? ` « ${nom} »` : ""}. Tous les extraits du bloc sont diffusés, dans l'ordre donné.
+FORMAT JSON :
 {"titre": "titre accrocheur de l'émission",
  "deroule": [
-  {"type": "animateur", "role": "ouverture", "ton": "…", "texte": "…"},
   {"type": "animateur", "role": "presentation", "ton": "…", "texte": "…"},
   {"type": "appel", "extrait": 1, "phrases": [0, 4], "nouvel_appel": true},
   {"type": "animateur", "role": "relance", "mode": "coupe", "ton": "sec, incrédule", "texte": "…"},
   {"type": "appel", "extrait": 1, "phrases": [5, 9], "nouvel_appel": false},
   {"type": "animateur", "role": "relance", "mode": "silence", "ton": "faussement naïf", "texte": "…"},
   {"type": "appel", "extrait": 1, "phrases": [10, 14], "nouvel_appel": false},
-  {"type": "animateur", "role": "reaction", "ton": "…", "texte": "…"},
-  …
-  {"type": "animateur", "role": "cloture", "texte": "…"}]}
-("phrases": [première, dernière] = numéros [i] des phrases de l'extrait diffusées dans ce morceau.)
+  {"type": "animateur", "role": "reaction", "ton": "…", "texte": "…"}, …]}
+("extrait" = numéro de l'extrait DANS CE BLOC ; "phrases": [première, dernière] = numéros [i] des phrases diffusées dans ce morceau.)`;
+
+async function ecrireBloc(b, ctx, profondeur = 0) {
+  const { lang, nom, sommaire, premier, dernier, avant, ouverture } = ctx;
+  const total = b.reduce((s, c) => s + c.duree, 0);
+  const mots = Math.round(Math.max(60, Math.min(900, total / 60 * 55)));
+  const listing = b.map((c, k) => `EXTRAIT ${k + 1} — ${c.duree.toFixed(0)} s :\n` + c.phrases.map((p, i) => `  [${i}] ${p.texte}`).join("\n")).join("\n\n");
+  const place = [
+    premier ? `CE BLOC OUVRE L'ÉMISSION : commence par une ouverture qui accroche dès la première phrase (sujets du jour, standard ouvert)${ouverture ? `, juste après l'ouverture enregistrée qu'on vient d'entendre : « ${ouverture} »` : ""}.`
+      : `CE BLOC CONTINUE L'ÉMISSION (pas de nouvelle ouverture). Juste avant, l'animateur disait : « ${avant || "…"} ». Commence par une transition vers le premier appel de ce bloc.`,
+    dernier ? "CE BLOC TERMINE L'ÉMISSION : après le dernier appel, conclus (synthèse percutante, question ouverte au public, appel à réagir), sans formule de salutation."
+      : "Ne conclus PAS l'émission : termine par ta réaction au dernier appel du bloc (un teaser « restez à l'écoute » est possible).",
+  ].join("\n");
+  const user = `${REGLES(lang, nom)}
+
+SOMMAIRE DE TOUTE L'ÉMISSION (pour tes teasers et transitions) :
+${sommaire}
+
+${place}
+Environ ${mots} mots d'animateur pour ce bloc.
 
 ${listing}`;
+  const sys = `Tu es le producteur d'une émission de radio parlée (talk-show, libre antenne). Tu écris UNIQUEMENT ce que dit l'ANIMATEUR. Réponds en JSON valide.`;
   let best = null;
   for (let essai = 1; essai <= 3; essai++) {
-    const { j, nom: fournisseur } = await ia(sys, essai === 1 ? user : user + `\n\nATTENTION, ta proposition précédente avait ces défauts, corrige-les : ${best.erreurs.join(" ; ")}`, 2);
-    const v = valider(j, clips);
-    console.log(`  déroulé (${fournisseur}, essai ${essai}) : ${v.deroule.length} éléments, ${v.erreurs.length} défaut(s)${v.erreurs.length ? " — " + v.erreurs.join(" ; ").slice(0, 300) : ""}`);
-    if (!best || v.erreurs.length < best.erreurs.length) best = { ...v, titre: String(j.titre || "").trim() };
+    let r;
+    try {
+      r = await ia(sys, essai === 1 || !best ? user : user + `\n\nATTENTION, ta proposition précédente avait ces défauts, corrige-les : ${best.erreurs.join(" ; ").slice(0, 1500)}`,
+        { tours: best ? 2 : 4, maxTokens: 8000 });
+    } catch (e) {
+      if (best) break;                               // une proposition existe déjà : on la garde (réparée plus bas)
+      if (b.length > 1 && profondeur < 3) {          // bloc trop gros ou IA saturée : on le coupe en deux
+        console.log(`  bloc de ${b.length} auditeurs sans réponse : coupé en deux`);
+        const m = Math.ceil(b.length / 2);
+        const a1 = await ecrireBloc(b.slice(0, m), { ...ctx, dernier: false }, profondeur + 1);
+        const derniereLigne = [...a1.deroule].reverse().find((x) => x.type === "animateur")?.texte || avant;
+        const a2 = await ecrireBloc(b.slice(m), { ...ctx, premier: false, avant: derniereLigne }, profondeur + 1);
+        return { titre: a1.titre || a2.titre, deroule: [...a1.deroule, ...a2.deroule.map((x) => x.type === "appel" ? { ...x, extrait: x.extrait + m } : x)] };
+      }
+      console.log(`  ⚠ IA indisponible pour « ${b[0].fichier} » : diffusé sans tes phrases autour`);
+      return { titre: "", deroule: b.map((c, i) => ({ type: "appel", extrait: i + 1, phrases: [0, c.phrases.length - 1], nouvel_appel: true })) };
+    }
+    const v = valider(r.j, b, lang);
+    console.log(`    ${r.nom}, essai ${essai} : ${v.deroule.length} éléments, ${v.erreurs.length} défaut(s)${v.erreurs.length ? " — " + v.erreurs.join(" ; ").slice(0, 240) : ""}`);
+    if (!best || v.erreurs.length < best.erreurs.length) best = { ...v, titre: String(r.j.titre || "").trim() };
     if (!v.erreurs.length) break;
   }
-  if (!best.deroule.some((x) => x.type === "animateur")) throw new Error("l'IA n'a écrit aucune phrase d'animateur");
-  let origines = {};
-  try { origines = JSON.parse(readFileSync(path.join(IN, "clips.json"), "utf8")); } catch {}
-  // numérotation des phrases à lire
+  return { titre: best.titre, deroule: await reparer(best.deroule, b, lang) };
+}
+
+async function analyse() {
+  mkdirSync(OUT, { recursive: true }); mkdirSync(TMP, { recursive: true });
+  let liste = [];
+  try { liste = JSON.parse(readFileSync(path.join(IN, "clips.json"), "utf8")); } catch {}
+  if (!Array.isArray(liste) || !liste.length)
+    liste = readdirSync(path.join(IN, "clips")).filter((f) => !f.startsWith(".")).sort().map((f) => ({ fichier: f, origine: f, role: "auditeur" }));
+  const tous = [];
+  for (const c of liste) {
+    const tj = path.join(IN, "transcripts", c.fichier + ".json");
+    let r = null;
+    if (existsSync(tj)) r = JSON.parse(readFileSync(tj, "utf8"));
+    else if (existsSync(path.join(IN, "clips", c.fichier))) {     // pas préparé ailleurs : transcrit ici
+      const p = source(c.fichier), d = duree(p);
+      if (d >= 1) { console.log(`Transcription de ${c.fichier} (${d.toFixed(0)} s)…`); r = { ...(await transcrire(p, d)), duree: r2(d) }; }
+    }
+    if (!r) { console.log(`  ${c.origine} : illisible ou absent, ignoré`); continue; }
+    const ph = phrases(r.words || []);
+    if (!ph.length) { console.log(`  ${c.origine} : aucune parole reconnue, ignoré`); continue; }
+    tous.push({ ...c, duree: r2(r.duree || duree(source(c.fichier))), langue: r.lang, words: r.words, phrases: ph, role: c.role || "auditeur" });
+  }
+  const clips = tous.filter((c) => c.role === "auditeur");
+  if (!clips.length) throw new Error("aucun audio d'auditeur avec de la parole");
+  // LANGUE : choisie, sinon celle des auditeurs (la majorité de leurs mots)
+  const env = (process.env.RADIO_LANGUE || "auto").toLowerCase();
+  const comptes = {};
+  for (const c of clips) comptes[c.langue] = (comptes[c.langue] || 0) + c.words.length;
+  const majo = Object.entries(comptes).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const lang = LANGS[env] ? env : LANGS[majo] ? majo : "fr";
+  if (!LANGS[env]) console.log(`Langue de tes phrases : ${LANGS[lang]} (celle des auditeurs)`);
+  const nom = (process.env.RADIO_NOM || "").trim() || NOM_DEFAUT[lang] || "";
+  const ouv = tous.find((c) => c.role === "ouverture"), fin = tous.find((c) => c.role === "fin");
+  // SOMMAIRE court de toute l'émission + découpage en blocs (chaque appel à l'IA reste petit : aucune IA ne sature)
+  const motsSom = Math.max(4, Math.min(12, Math.floor(2400 / (clips.length * 7))));        // tous les auditeurs tiennent dans le sommaire
+  const sommaire = clips.map((c, i) => `${i + 1}. ${c.phrases.map((p) => p.texte).join(" ").split(" ").slice(0, motsSom).join(" ")}…`).join("\n").slice(0, 3000);
+  const B = blocs(clips);
+  console.log(`${clips.length} auditeurs (${Math.round(clips.reduce((s, c) => s + c.duree, 0) / 60)} min) → ${B.length} bloc(s) écrits l'un après l'autre`);
+  const deroule = [];
+  let titre = "", base = 0, avant = "";
+  for (let k = 0; k < B.length; k++) {
+    console.log(`  bloc ${k + 1}/${B.length} : ${B[k].length} auditeur(s)`);
+    const r = await ecrireBloc(B[k], { lang, nom, sommaire, premier: k === 0, dernier: k === B.length - 1, avant,
+      ouverture: ouv ? ouv.phrases.map((p) => p.texte).join(" ").slice(0, 400) : "" });
+    titre = titre || r.titre;
+    for (const x of r.deroule) deroule.push(x.type === "appel" ? { ...x, extrait: x.extrait + base } : x);
+    avant = [...r.deroule].reverse().find((x) => x.type === "animateur")?.texte || avant;
+    base += B[k].length;
+  }
+  if (!deroule.some((x) => x.type === "animateur")) throw new Error("l'IA n'a écrit aucune phrase d'animateur (IA indisponible) : relance plus tard");
+  // ordre final des fichiers du plan : auditeurs (numérotés comme dans le déroulé), puis ouverture / fin enregistrées
+  const planClips = [...clips, ...(ouv ? [ouv] : []), ...(fin ? [fin] : [])];
+  if (ouv) deroule.unshift({ type: "enregistre", extrait: clips.length + 1, role: "ouverture" });
+  if (fin) deroule.push({ type: "enregistre", extrait: planClips.length, role: "fin" });
   let n = 0;
-  for (const x of best.deroule) if (x.type === "animateur") x.n = ++n;
+  for (const x of deroule) if (x.type === "animateur") x.n = ++n;
   const plan = {
-    version: 1, langue: lang, nom, titre: best.titre, defauts: best.erreurs,
-    clips: clips.map((c) => ({ fichier: c.fichier, origine: origines[c.fichier] || c.fichier, duree: c.duree, langue: c.langue, phrases: c.phrases.map(({ i0, i1, t0, t1, texte }) => ({ i0, i1, t0, t1, texte })),
-      mots: c.words.map((w) => [r2(w.t0), r2(w.t1), w.w]) })),
-    deroule: best.deroule,
+    version: 2, langue: lang, nom, titre,
+    clips: planClips.map((c) => ({ fichier: c.fichier, origine: c.origine || c.fichier, role: c.role, duree: c.duree, langue: c.langue,
+      phrases: c.phrases.map(({ i0, i1, t0, t1, texte }) => ({ i0, i1, t0, t1, texte })), mots: c.words.map((w) => [r2(w.t0), r2(w.t1), w.w]) })),
+    deroule,
   };
-  writeFileSync(path.join(OUT, "emission-plan.json"), JSON.stringify(plan, null, 1));
+  writeFileSync(path.join(OUT, "emission-plan.json"), JSON.stringify(plan));
   writeFileSync(path.join(OUT, "emission-a-lire.txt"), aLire(plan));
-  console.log(`Prêt : ${n} phrases à lire (${best.deroule.filter((x) => x.type === "animateur").reduce((s, x) => s + x.texte.split(" ").length, 0)} mots).`);
+  console.log(`Prêt : ${n} phrases à lire (${deroule.filter((x) => x.type === "animateur").reduce((s, x) => s + x.texte.split(" ").length, 0)} mots), ${Math.round((Date.now() - T0) / 60000)} min d'écriture.`);
 }
 
 function extraitCourt(plan, x, fin = false) {
@@ -387,22 +523,38 @@ async function montage() {
   const vtrait = path.join(TMP, "voix-traitee.wav");
   voixAnimateur(voix, vtrait);
   // pièces dans l'ordre
-  const pieces = [];
-  let k = 0;
-  const add = (f, gap = 0.35) => { pieces.push(f); if (gap > 0) pieces.push(silence(path.join(TMP, `sil-${k++}.wav`), gap)); };
+  const pieces = [], mots = [];
+  let k = 0, t = 0;
+  // chaque pièce ajoutée avance l'horloge de l'émission ; ses mots (connus) sont recalés : la vidéo n'a rien à re-transcrire
+  const add = (f, gap = 0.35, ws = []) => {
+    for (const w of ws) mots.push({ t0: r2(t + w[0]), t1: r2(t + w[1]), w: w[2] });
+    pieces.push(f); t += duree(f);
+    if (gap > 0) { pieces.push(silence(path.join(TMP, `sil-${k++}.wav`), gap)); t += gap; }
+  };
+  const motsDe = (liste, a, b, decal = 0) => liste.filter((w) => w[0] >= a - 0.01 && w[1] <= b + 0.01).map((w) => [w[0] - a + decal, w[1] - a + decal, w[2]]);
+  const motsVoix = rv.words.map((w) => [w.t0, w.t1, w.w]);
   add(jingle(path.join(TMP, "jingle-debut.wav")), 0.25);
   const d = plan.deroule;
   const animPiece = (x) => {
     // marges sans jamais mordre sur le mot d'avant / d'après (autre phrase, prise ratée)
     const a0 = Math.max(x.al.t0 - 0.12, Math.min(x.al.t0, x.al.avant + 0.03));
     const a1 = Math.min(x.al.t1 + 0.3, Math.max(x.al.t1, x.al.apres - 0.03));
+    x.bornes = [a0, a1];
     return couper(vtrait, a0, a1, path.join(TMP, `anim-${x.n}.wav`));
   };
   for (let i = 0; i < d.length; i++) {
     const x = d[i];
     if (x.type === "animateur") {
       if (!x.al || x.fait) continue;
-      add(animPiece(x), x.mode === "silence" ? 0.15 : 0.3);
+      const f = animPiece(x);
+      add(f, x.mode === "silence" ? 0.15 : 0.3, motsDe(motsVoix, ...x.bornes));
+    } else if (x.type === "enregistre") {
+      // ouverture / fin que TU as préparées (nom « start / intro / générique… ») : diffusées telles quelles, musique comprise
+      const c = plan.clips[x.extrait - 1];
+      const src = existsSync(path.join(IN, "clips", c.fichier)) ? path.join(IN, "clips", c.fichier) : source(c.fichier);
+      const f = path.join(TMP, `enregistre-${i}.wav`);
+      sh(["-i", src, "-vn", "-af", `aresample=${SR},aformat=channel_layouts=mono,loudnorm=I=-16:TP=-1.5:LRA=11`, "-ar", String(SR), "-ac", "1", "-c:a", "pcm_s16le", f]);
+      add(f, 0.4, (c.mots || []).map((w) => [w[0], w[1], w[2]]));
     } else {
       const c = plan.clips[x.extrait - 1];
       const src = source(c.fichier);
@@ -438,8 +590,8 @@ async function montage() {
           `[1:a]adelay=${Math.round(st * 1000)}:all=1[b];[a][b]amix=inputs=2:duration=longest:normalize=0[o]`,
           "-map", "[o]", "-ar", String(SR), "-ac", "1", "-c:a", "pcm_s16le", mix]);
         suivant.fait = true;
-        add(mix, 0.12);                    // l'auditeur enchaîne tout de suite
-      } else add(fin, suivant?.type === "animateur" && suivant.mode === "silence" ? 0.18 : 0.3);
+        add(mix, 0.12, [...motsDe(c.mots || [], b0, b1), ...motsDe(motsVoix, ...suivant.bornes, st)]);   // l'auditeur enchaîne tout de suite
+      } else add(fin, suivant?.type === "animateur" && suivant.mode === "silence" ? 0.18 : 0.3, motsDe(c.mots || [], b0, b1));
     }
   }
   add(jingle(path.join(TMP, "jingle-fin.wav"), true), 0);
@@ -454,7 +606,10 @@ async function montage() {
   const ln = j && Number(j.input_i) > -70 ? `loudnorm=I=-14:TP=-1.5:LRA=11:measured_I=${j.input_i}:measured_TP=${j.input_tp}:measured_LRA=${j.input_lra}:measured_thresh=${j.input_thresh}:offset=${j.target_offset}:linear=true` : "loudnorm=I=-14:TP=-1.5:LRA=11";
   const mp3 = path.join(OUT, "emission.mp3");
   sh(["-i", brut, "-af", `${ln},aresample=44100`, "-ac", "1", "-c:a", "libmp3lame", "-b:a", "160k", mp3]);
-  const rapport = [`# 🎙 ${plan.titre || "Émission"}`, "", `Durée : ${(duree(mp3) / 60).toFixed(1)} min — ${plan.clips.length} auditeur(s), ${anim.length - manquent.length}/${anim.length} phrases de toi.`,
+  mots.sort((x, y) => x.t0 - y.t0);
+  writeFileSync(path.join(OUT, "voix-transcript.json"), JSON.stringify({ lang: plan.langue || "fr", duration: r2(duree(mp3)), words: mots, source: "emission-radio" }));
+  const auditeurs = plan.clips.filter((c) => (c.role || "auditeur") === "auditeur").length;
+  const rapport = [`# 🎙 ${plan.titre || "Émission"}`, "", `Durée : ${(duree(mp3) / 60).toFixed(1)} min — ${auditeurs} auditeur(s), ${anim.length - manquent.length}/${anim.length} phrases de toi.`,
     ...(manquent.length ? ["", `⚠ Phrases introuvables dans ta voix (sautées) : n° ${manquent.join(", ")}.`] : []),
     "", "| n° | trouvée | prises | début dans ta voix |", "|---|---|---|---|",
     ...anim.map((x) => `| ${x.n} | ${x.al ? `oui (${Math.round(x.al.score * 100)} %)` : "**non**"} | ${x.al ? x.al.prises : "–"} | ${x.al ? x.al.t0.toFixed(1) + " s" : "–"} |`)];
@@ -465,9 +620,10 @@ async function montage() {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const etape = process.argv[2];
   try {
-    if (etape === "analyse") await analyse();
+    if (etape === "transcrire") await transcrireFichiers(process.argv.slice(3));
+    else if (etape === "analyse") await analyse();
     else if (etape === "montage") await montage();
-    else throw new Error("usage : node emission.mjs analyse|montage");
+    else throw new Error("usage : node emission.mjs transcrire <fichiers>|analyse|montage");
   } catch (e) {
     console.log(`::error::${e.message}`);
     process.exit(1);

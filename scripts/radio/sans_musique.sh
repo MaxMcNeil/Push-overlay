@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Émission radio : retire la MUSIQUE DE FOND des audios des auditeurs (Demucs, IA libre et gratuite, sur le serveur GitHub).
-# input/radio/clips/NN-nom.ext → input/radio/voix-seules/NN-nom.wav (même durée, mêmes horaires que l'original).
+# input/radio/clips/NN-nom.ext (tous, ou ceux passés en arguments) → input/radio/voix-seules/NN-nom.wav (même durée, mêmes horaires).
 # Jamais bloquant : si la séparation échoue pour un audio, son original est utilisé (avertissement dans le journal).
 set -uo pipefail
 warn() { echo "::warning::$*"; }
 mkdir -p input/radio/voix-seules
 shopt -s nullglob
-F=(input/radio/clips/*)
+if [ $# -gt 0 ]; then F=("$@"); else F=(input/radio/clips/*); fi
 [ ${#F[@]} -gt 0 ] || exit 0
 if ! python3 -c "import demucs" 2>/dev/null; then
   echo "Installation de Demucs (séparation voix / musique)…"
@@ -19,7 +19,7 @@ for f in "${F[@]}"; do
   n=$(basename "${f%.*}")
   ffmpeg -v error -y -i "$f" -vn -ac 2 -ar 44100 "$IN/$n.wav" || warn "« $(basename "$f") » illisible pour la séparation"
 done
-python3 -m demucs.separate --two-stems=vocals -n htdemucs -d cpu -j 2 -o "$OUT" "$IN"/*.wav \
+python3 -m demucs.separate --two-stems=vocals -n htdemucs -d cpu -j "$(nproc)" -o "$OUT" "$IN"/*.wav \
   || warn "Séparation voix / musique en échec : audios d'origine gardés pour ce qui n'a pas été séparé"
 ok=0
 for f in "${F[@]}"; do

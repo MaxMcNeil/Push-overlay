@@ -10,6 +10,9 @@ name: Émission radio
 # Aucun nom de fichier imposé : l'étape est devinée toute seule (pas encore de phrases → étape 1 ; nouvel audio déposé
 # après les phrases → c'est ta voix → étape 2). Lancé depuis une branche d'essai : rien n'est écrit dans ta release,
 # résultats dans « out-radio-essai », jamais de vidéo lancée.
+# ÉMISSIONS LONGUES : la préparation (musique retirée, transcription) est RÉPARTIE sur plusieurs machines en parallèle
+# (≈ 20 min d'audio chacune), l'écriture est faite par BLOCS d'auditeurs (aucune IA ne sature), une IA surchargée est
+# attendue puis réessayée, et rien de ce qui est déjà fait n'est perdu : 10 fois plus long ≠ 10 fois plus de risques.
 on:
   workflow_dispatch:
     inputs:
@@ -23,7 +26,7 @@ on:
         options: [auto, réécrire mes phrases, monter l'émission]
         default: auto
       langue:
-        description: "Langue de TES phrases (auto = français)"
+        description: "Langue de TES phrases (auto = celle des auditeurs)"
         type: choice
         options: [auto, fr, ar, en, it]
         default: auto
@@ -60,21 +63,23 @@ env:
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
 jobs:
-  radio:
+  # ------------------------------------------------------------------ 1) quelle étape, quels fichiers, combien de machines
+  etat:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 30
+    outputs:
+      etape: ${{ steps.etat.outputs.etape }}
+      src: ${{ steps.etat.outputs.src }}
+      state: ${{ steps.etat.outputs.state }}
+      prep: ${{ steps.etat.outputs.prep }}
+      groupes: ${{ steps.etat.outputs.groupes }}
     steps:
       - uses: actions/checkout@v5
-
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
-
-      - name: ffmpeg (préinstallé sur l'image ; installé seulement s'il manque)
-        run: |
-          command -v ffmpeg >/dev/null || { for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg && break; sleep 10; done; }
-          ffmpeg -version | head -1
-
+      - name: Outils (ffmpeg) — avec cache
+        uses: ./.github/actions/setup-media
       - name: Quelle étape ? (devinée d'après ta release)
         id: etat
         env:
@@ -82,35 +87,113 @@ jobs:
           REPO: ${{ github.repository }}
           SOURCE: ${{ inputs.release }}
           ETAPE: ${{ inputs.etape }}
+          MUSIQUE: ${{ inputs.musique }}
           MAIN: ${{ github.ref_name == 'main' && '1' || '' }}
         run: bash scripts/radio/etat.sh
+      - uses: actions/upload-artifact@v6
+        if: steps.etat.outputs.etape != 'attente'
+        with:
+          name: radio-etat
+          path: input/radio
+          retention-days: 2
 
+  # ------------------------------------------------------------------ 2) préparation répartie (en parallèle)
+  prep:
+    needs: etat
+    if: needs.etat.outputs.prep == 'oui'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        groupe: ${{ fromJSON(needs.etat.outputs.groupes) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Outils (ffmpeg) — avec cache
+        uses: ./.github/actions/setup-media
+      - uses: actions/download-artifact@v7
+        with:
+          name: radio-etat
+          path: input/radio
       - name: Cache Demucs (séparation voix / musique)
-        if: steps.etat.outputs.etape != 'attente' && inputs.musique != 'garder'
+        if: inputs.musique != 'garder'
         uses: actions/cache@v5
         with:
           path: |
             ~/.cache/torch/hub
             ~/.cache/pip
           key: radio-demucs-htdemucs-v1-${{ runner.os }}
-
-      - name: Retirer la musique de fond des auditeurs
-        if: steps.etat.outputs.etape != 'attente' && inputs.musique != 'garder'
-        timeout-minutes: 40
-        continue-on-error: true
-        run: bash scripts/radio/sans_musique.sh
-
       - name: Cache whisper.cpp (repli si Groq indisponible)
-        if: steps.etat.outputs.etape != 'attente'
+        if: needs.etat.outputs.etape == 'analyse'
         id: whisper-cache
         uses: actions/cache@v5
         with:
           path: whisper.cpp
           key: whispercpp-build-v4-${{ runner.os }}
-
       - name: Compiler whisper.cpp (si pas en cache)
-        if: steps.etat.outputs.etape != 'attente' && steps.whisper-cache.outputs.cache-hit != 'true'
+        if: needs.etat.outputs.etape == 'analyse' && steps.whisper-cache.outputs.cache-hit != 'true'
         run: |
+          sudo apt-get install -y -qq --no-install-recommends cmake build-essential >/dev/null
+          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
+          cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+            -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
+          cmake --build whisper.cpp/build -j"$(nproc)" --config Release
+          cd whisper.cpp
+          bash models/download-ggml-model.sh small
+          bash models/download-ggml-model.sh large-v3-turbo-q5_0 || echo "modèle turbo indisponible : whisper small sera utilisé"
+      - name: Préparer ma part (musique retirée, transcription)
+        env:
+          GROUPE: ${{ matrix.groupe }}
+          ETAPE: ${{ needs.etat.outputs.etape }}
+          MUSIQUE: ${{ inputs.musique }}
+        run: bash scripts/radio/prep.sh
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: radio-prep-${{ matrix.groupe }}
+          path: prep-out
+          retention-days: 2
+
+  # ------------------------------------------------------------------ 3) écriture de tes phrases, ou montage de l'émission
+  radio:
+    needs: [etat, prep]
+    # une machine de préparation en échec ne bloque rien : ce qui lui manque est refait ici (transcription) ou remplacé
+    # par l'original (musique)
+    if: always() && needs.etat.result == 'success' && needs.etat.outputs.etape != 'attente' && needs.prep.result != 'cancelled'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Outils (ffmpeg) — avec cache
+        uses: ./.github/actions/setup-media
+      - uses: actions/download-artifact@v7
+        with:
+          name: radio-etat
+          path: input/radio
+      - uses: actions/download-artifact@v7
+        if: needs.prep.result != 'skipped'
+        continue-on-error: true
+        with:
+          pattern: radio-prep-*
+          path: input/radio
+          merge-multiple: true
+      - name: Cache whisper.cpp (repli si Groq indisponible)
+        id: whisper-cache
+        uses: actions/cache@v5
+        with:
+          path: whisper.cpp
+          key: whispercpp-build-v4-${{ runner.os }}
+      - name: Compiler whisper.cpp (si pas en cache)
+        if: steps.whisper-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get install -y -qq --no-install-recommends cmake build-essential >/dev/null
           git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
           cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release \
             -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
@@ -120,21 +203,27 @@ jobs:
           bash models/download-ggml-model.sh small
           bash models/download-ggml-model.sh large-v3-turbo-q5_0 || echo "modèle turbo indisponible : whisper small sera utilisé"
 
-      - name: Étape 1 — écouter tes audios et écrire tes phrases
-        if: steps.etat.outputs.etape == 'analyse'
-        timeout-minutes: 60
+      - name: Étape 1 — écrire tes phrases (par blocs d'auditeurs)
+        if: needs.etat.outputs.etape == 'analyse'
+        timeout-minutes: 150
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RADIO_LANGUE: ${{ inputs.langue }}
           RADIO_NOM: ${{ inputs.nom }}
-          STATE: ${{ steps.etat.outputs.state }}
-          SRC: ${{ steps.etat.outputs.src }}
+          RADIO_BUDGET_MIN: "130"
+          STATE: ${{ needs.etat.outputs.state }}
+          SRC: ${{ needs.etat.outputs.src }}
         run: |
           set -euo pipefail
           node scripts/radio/emission.mjs analyse
+          UP=(output/radio/emission-a-lire.txt output/radio/emission-plan.json)
+          # voix des auditeurs sans musique : rangées avec tes phrases, l'étape 2 n'a pas à les refaire
+          if ls input/radio/voix-seules/*.opus >/dev/null 2>&1; then
+            tar -cf output/radio/emission-voix-seules.tar -C input/radio/voix-seules . && UP+=(output/radio/emission-voix-seules.tar)
+          fi
           for i in 1 2 3; do
-            gh release upload "$STATE" output/radio/emission-a-lire.txt output/radio/emission-plan.json --repo "$REPO" --clobber && break
+            gh release upload "$STATE" "${UP[@]}" --repo "$REPO" --clobber && break
             sleep $((i * 10))
           done
           N=$(grep -cE '^[0-9]+\.$' output/radio/emission-a-lire.txt || true)
@@ -147,23 +236,24 @@ jobs:
           echo "::notice::$N phrases à enregistrer : emission-a-lire.txt dans la release « $STATE »"
 
       - name: Étape 2 — monter l'émission avec ta voix
-        if: steps.etat.outputs.etape == 'montage'
+        if: needs.etat.outputs.etape == 'montage'
         id: montage
-        timeout-minutes: 60
+        timeout-minutes: 150
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          STATE: ${{ steps.etat.outputs.state }}
+          STATE: ${{ needs.etat.outputs.state }}
           MAIN: ${{ github.ref_name == 'main' && '1' || '' }}
         run: |
           set -euo pipefail
+          # voix sans musique : celles de la préparation de CE run, sinon celles rangées à l'étape 1 (déjà dans radio-etat)
           node scripts/radio/emission.mjs montage
           if [ -n "$MAIN" ]; then
             T="out-radio-$(date -u +%Y%m%d-%H%M)"
             TITRE=$(node -e 'const p=require("./input/radio/plan.json");process.stdout.write((p.titre||"Émission radio").slice(0,90))')
             for i in 1 2 3; do
               gh release create "$T" --repo "$REPO" --prerelease --target "${{ github.sha }}" --title "🎙 $TITRE" \
-                --notes-file output/radio/rapport.md output/radio/emission.mp3 && break
+                --notes-file output/radio/rapport.md output/radio/emission.mp3 output/radio/voix-transcript.json && break
               sleep $((i * 10)); gh release delete "$T" --repo "$REPO" -y --cleanup-tag >/dev/null 2>&1 || true
             done
           else
@@ -175,12 +265,13 @@ jobs:
           echo "::notice::Émission prête : emission.mp3 dans la release « $T »"
 
       - name: Vidéo de l'émission (Faceless live arabic)
-        if: steps.etat.outputs.etape == 'montage' && inputs.video != 'non' && github.ref_name == 'main'
+        if: needs.etat.outputs.etape == 'montage' && inputs.video != 'non' && github.ref_name == 'main'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
-          # l'émission est déjà traitée (voix nettoyée, auditeurs au téléphone) : pas de second débruitage, voix « naturel »
+          # l'émission est déjà traitée (voix nettoyée, auditeurs au téléphone) et déjà transcrite (voix-transcript.json) :
+          # pas de second débruitage, voix « naturel », aucune re-transcription
           gh workflow run faceless-live-arabic.yml --repo "$REPO" --ref main \
             -f source="${{ steps.montage.outputs.tag }}" -f voix=naturel -f debruitage="léger" \
             && echo "::notice::Vidéo lancée : « Faceless live arabic » avec la release ${{ steps.montage.outputs.tag }}" \
