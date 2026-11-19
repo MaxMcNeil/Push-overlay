@@ -226,7 +226,7 @@ jobs:
             gh release upload "$STATE" "${UP[@]}" --repo "$REPO" --clobber && break
             sleep $((i * 10))
           done
-          N=$(grep -cE '^[0-9]+\.$' output/radio/emission-a-lire.txt || true)
+          N=$(node -e 'console.log(require("./output/radio/emission-plan.json").deroule.filter((x) => x.type === "animateur").length)')
           {
             echo "## 🎙 Tes $N phrases sont prêtes"
             echo

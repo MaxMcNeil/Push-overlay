@@ -194,7 +194,7 @@ async function ia(sys, user, { tours = 4, maxTokens = 8000 } = {}) {
 
 const NOUS = { fr: /\b(nous|notre|nos)\b/i, it: /\b(noi|nostro|nostra|nostri|nostre)\b/i, en: /\b(we|our|ours)\b/i,
   // arabe : « nous » et ses formes courantes à l'antenne (معنا، ننتقل، تابعونا…) — l'animateur reste HORS DU CONTEXTE
-  ar: AR("نحن|معنا|لنا|عندنا|بلادنا|وطننا|شعبنا|حلقتنا|برنامجنا|ننتقل|نستمع|نتابع|نرحب|نذهب|نعود|نستقبل|نسمع|شاركونا|تابعونا|راسلونا|اتصلوا بنا|ابقوا معنا") };
+  ar: AR("نحن|معنا|لنا|عندنا|نناقش|لنناقش|نتحدث|لنتحدث|لنستمع|بلادنا|وطننا|شعبنا|حلقتنا|برنامجنا|ننتقل|نستمع|نتابع|نرحب|نذهب|نعود|نستقبل|نسمع|شاركونا|تابعونا|راسلونا|اتصلوا بنا|ابقوا معنا") };
 
 /** Vérifie et répare le déroulé proposé par l'IA pour un bloc d'auditeurs. { deroule, erreurs[] }. */
 export function valider(j, clips, lang = "fr") {
@@ -448,31 +448,9 @@ async function analyse() {
   console.log(`Prêt : ${n} phrases à lire (${deroule.filter((x) => x.type === "animateur").reduce((s, x) => s + x.texte.split(" ").length, 0)} mots), ${Math.round((Date.now() - T0) / 60000)} min d'écriture.`);
 }
 
-function extraitCourt(plan, x, fin = false) {
-  const c = plan.clips[x.extrait - 1];
-  const ps = c.phrases.slice(x.phrases[0], x.phrases[1] + 1).map((p) => p.texte).join(" ").split(" ");
-  return (fin ? "… " + ps.slice(-14).join(" ") : ps.slice(0, 14).join(" ") + " …");
-}
+/** Ce que tu lis : TES phrases, dans l'ordre, rien d'autre (le scénario complet reste dans emission-plan.json). */
 export function aLire(plan) {
-  const L = [`🎙 ${plan.titre || "Émission"}${plan.nom ? ` — ${plan.nom}` : ""}`, "",
-    "COMMENT ENREGISTRER : lis toutes les phrases ci-dessous, DANS L'ORDRE, en un seul enregistrement.",
-    "Marque une petite pause (1 seconde) entre deux phrases. Une phrase ratée ? Relis-la simplement : la dernière prise est gardée.",
-    "Ne lis PAS les numéros ni les lignes entre crochets. Dépose ensuite ton audio dans la MÊME release et relance « Émission radio ».", ""];
-  const d = plan.deroule;
-  for (let k = 0; k < d.length; k++) {
-    const x = d[k];
-    if (x.type !== "animateur") continue;
-    const avant = d.slice(0, k).reverse().find((y) => y.type === "appel");
-    const apres = d[k + 1]?.type === "appel" ? d[k + 1] : null;
-    L.push(`${x.n}.`);
-    if (avant && d[k - 1]?.type === "appel") L.push(`[ l'auditeur vient de dire : « ${extraitCourt(plan, avant, true)} » ]`);
-    const consigne = [x.mode === "coupe" ? "TU LUI COUPES LA PAROLE" : x.mode === "silence" ? "tu profites de son silence" : "", x.ton ? `ton : ${x.ton}` : ""].filter(Boolean).join(" — ");
-    if (consigne) L.push(`[ ${consigne} ]`);
-    L.push(x.texte);
-    if (apres) L.push(`[ ${apres.nouvel_appel ? "☎ sonnerie, puis l'auditeur" : "l'auditeur reprend"} : « ${extraitCourt(plan, apres)} » ]`);
-    L.push("");
-  }
-  return L.join("\n");
+  return plan.deroule.filter((x) => x.type === "animateur").map((x) => x.texte).join("\n\n") + "\n";
 }
 
 // ------------------------------------------------------------------ sons d'habillage (synthétisés, bas, sans aigus)
