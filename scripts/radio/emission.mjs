@@ -196,6 +196,14 @@ const NOUS = { fr: /\b(nous|notre|nos)\b/i, it: /\b(noi|nostro|nostra|nostri|nos
   // arabe : « nous » et ses formes courantes à l'antenne (معنا، ننتقل، تابعونا…) — l'animateur reste HORS DU CONTEXTE
   ar: AR("نحن|معنا|لنا|عندنا|نناقش|لنناقش|نتحدث|لنتحدث|لنستمع|بلادنا|وطننا|شعبنا|حلقتنا|برنامجنا|ننتقل|نستمع|نتابع|نرحب|نذهب|نعود|نستقبل|نسمع|شاركونا|تابعونا|راسلونا|اتصلوا بنا|ابقوا معنا") };
 
+/** La phrase est-elle bien dans la langue de l'émission ? (arabe : au moins 60 % de lettres arabes ; sinon : presque aucune) */
+export function langueOk(t, lang) {
+  const l = (String(t).match(/\p{L}/gu) || []).length;
+  if (!l) return false;
+  const ar = (String(t).match(/[\u0600-\u06FF\u0750-\u077F]/g) || []).length / l;
+  return lang === "ar" ? ar >= 0.6 : ar < 0.2;
+}
+
 /** Vérifie et répare le déroulé proposé par l'IA pour un bloc d'auditeurs. { deroule, erreurs[] }. */
 export function valider(j, clips, lang = "fr") {
   const erreurs = [];
@@ -211,8 +219,9 @@ export function valider(j, clips, lang = "fr") {
       const defauts = [];
       if (NOUS[lang]?.test(t)) defauts.push("nous");
       if (SALUT_ANIM.test(t)) defauts.push("salutation");
+      if (!langueOk(t, lang)) defauts.push("langue");
       if (t.split(" ").length < 5) { erreurs.push(`phrase trop courte pour être reconnue (5 mots minimum) : « ${t} »`); continue; }
-      defauts.forEach((x) => erreurs.push(`${x === "nous" ? "« nous » interdit" : "salutation interdite"} : « ${t.slice(0, 60)} »`));
+      defauts.forEach((x) => erreurs.push(`${x === "nous" ? "« nous » interdit" : x === "langue" ? `phrase pas en ${LANGS[lang]}` : "salutation interdite"} : « ${t.slice(0, 60)} »`));
       let mode = String(it.mode || "normal").toLowerCase();
       mode = mode.startsWith("coup") ? "coupe" : mode.startsWith("sil") ? "silence" : "normal";
       // couper la parole / profiter d'un silence : seulement AU MILIEU d'un appel (l'auditeur était en train de parler)
@@ -244,24 +253,29 @@ export function valider(j, clips, lang = "fr") {
 /** Répare ce qui reste après les essais, sans jamais bloquer l'émission : phrases avec « nous » / salutation → réécrites
  *  par l'IA (petite demande, n'importe quelle IA), sinon retirées ; auditeurs oubliés → ajoutés (avec leur sonnerie). */
 async function reparer(deroule, clips, lang) {
-  const fautives = deroule.filter((x) => x.type === "animateur" && x.defauts?.length);
-  if (fautives.length) {
-    try {
-      const { j } = await ia("Tu corriges des phrases d'animateur radio. Réponds en JSON valide.",
-        `Réécris chaque phrase en ${LANGS[lang]} en gardant le sens, le ton et la longueur, SANS aucune salutation (bonjour, bonsoir, salut,
+  // par paquets de 12 (une petite demande passe partout), deux passages : ce qui résiste au 1er est retenté
+  for (let passe = 0; passe < 2; passe++) {
+    const fautives = deroule.filter((x) => x.type === "animateur" && x.defauts?.length);
+    for (let k = 0; k < fautives.length; k += 12) {
+      const lot = fautives.slice(k, k + 12);
+      try {
+        const { j } = await ia("Tu corriges des phrases d'animateur radio. Réponds en JSON valide.",
+          `Réécris chaque phrase EN ${LANGS[lang].toUpperCase()} (traduis-la si elle est dans une autre langue ; une phrase marquée (DÉJÀ DITE)
+doit être reformulée autrement) en gardant le sens, le ton et la longueur, SANS aucune salutation (bonjour, bonsoir, salut,
 salam, مساء الخير, السلام عليكم, مرحبا…) et SANS « nous / notre / nos » ni leur équivalent (arabe : نحن، معنا، لنا، ننتقل، نستمع، شاركونا، تابعونا، ابقوا معنا…) : dis « la France »,
 « les Français », « vous », « je », « l'auditeur » (arabe : أنا، أنتم، المستمع).
 Réponds : {"phrases": ["…", "…"]} (même nombre, même ordre).
-${fautives.map((x, i) => `${i + 1}. ${x.texte}`).join("\n")}`, { tours: 3, maxTokens: 3000 });
-      (Array.isArray(j.phrases) ? j.phrases : []).forEach((t, i) => {
-        const x = fautives[i], n = String(t || "").replace(/\s+/g, " ").trim();
-        if (x && n.split(" ").length >= 5 && !SALUT_ANIM.test(n) && !NOUS[lang]?.test(n)) { x.texte = n; delete x.defauts; }
-      });
-    } catch (e) { console.log(`  réécriture des phrases fautives impossible (${String(e.message).slice(0, 100)})`); }
+${lot.map((x, i) => `${i + 1}. ${x.defauts.includes("repetee") ? "(DÉJÀ DITE) " : ""}${x.texte}`).join("\n")}`, { tours: 3, maxTokens: 3000 });
+        (Array.isArray(j.phrases) ? j.phrases : []).forEach((t, i) => {
+          const x = lot[i], n = String(t || "").replace(/\s+/g, " ").trim();
+          if (x && n.split(" ").length >= 5 && !SALUT_ANIM.test(n) && !NOUS[lang]?.test(n) && langueOk(n, lang) && n !== x.texte) { x.texte = n; delete x.defauts; }
+        });
+      } catch (e) { console.log(`  réécriture des phrases fautives impossible (${String(e.message).slice(0, 100)})`); }
+    }
   }
   let out = deroule.filter((x) => !(x.type === "animateur" && x.defauts?.length));
   const retirees = deroule.length - out.length;
-  if (retirees) console.log(`  ${retirees} phrase(s) avec salutation ou « nous » retirée(s) (non corrigeables)`);
+  if (retirees) console.log(`  ${retirees} phrase(s) avec salutation, « nous », mauvaise langue ou répétition retirée(s) (non corrigeables)`);
   out.forEach((x) => delete x.defauts);
   const vus = new Set(out.filter((x) => x.type === "appel").map((x) => x.extrait));
   clips.forEach((c, i) => { if (!vus.has(i + 1)) { out.push({ type: "appel", extrait: i + 1, phrases: [0, c.phrases.length - 1], nouvel_appel: true }); console.log(`  auditeur oublié par l'IA ajouté : ${c.fichier}`); } });
@@ -298,7 +312,9 @@ export function blocs(clips) {
   return out;
 }
 
-const REGLES = (lang, nom) => `RÈGLES DE L'ÉMISSION (en ${LANGS[lang]}) — l'animateur (l'utilisateur, qui lira tes phrases à voix haute) :
+const REGLES = (lang, nom) => `LANGUE : TOUTES les phrases de l'animateur sont en ${LANGS[lang].toUpperCase()}${lang === "ar" ? " (arabe du Golfe compréhensible par tous, comme les auditeurs)" : ""}, sans exception.
+Les exemples entre guillemets ci-dessous sont en français pour t'expliquer : ne les recopie JAMAIS, écris tes propres phrases en ${LANGS[lang]}.
+RÈGLES DE L'ÉMISSION — l'animateur (l'utilisateur, qui lira tes phrases à voix haute) :
 - présente CHAQUE nouvel appel avant de le diffuser (« Un auditeur en ligne… vous êtes à l'antenne, je vous écoute. »), jamais deux fois
   la même formule ;
 - découpe les appels longs (plus de 25 s) en morceaux de 15 à 40 s environ et intervient entre eux de DEUX façons, en les variant :
@@ -352,7 +368,8 @@ SOMMAIRE DE TOUTE L'ÉMISSION (pour tes teasers et transitions) :
 ${sommaire}
 
 ${place}
-Environ ${mots} mots d'animateur pour ce bloc.
+Environ ${mots} mots d'animateur pour ce bloc, TOUS EN ${LANGS[lang].toUpperCase()}. Ne réutilise aucune phrase déjà dite (en particulier
+la formule de présentation : à chaque appel une formule nouvelle).
 
 ${listing}`;
   const sys = `Tu es le producteur d'une émission de radio parlée (talk-show, libre antenne). Tu écris UNIQUEMENT ce que dit l'ANIMATEUR. Réponds en JSON valide.`;
@@ -431,6 +448,24 @@ async function analyse() {
     base += B[k].length;
   }
   if (!deroule.some((x) => x.type === "animateur")) throw new Error("l'IA n'a écrit aucune phrase d'animateur (IA indisponible) : relance plus tard");
+  // contrôle FINAL de toute l'émission : chaque phrase dans la bonne langue, aucune phrase répétée
+  const vues = new Set(), aRevoir = [];
+  for (const x of deroule) {
+    if (x.type !== "animateur") continue;
+    const cle = norm(x.texte).join(" ");
+    const d = [];
+    if (vues.has(cle)) d.push("repetee");
+    if (!langueOk(x.texte, lang)) d.push("langue");
+    if (d.length) { x.defauts = d; aRevoir.push(x); }
+    vues.add(cle);
+  }
+  if (aRevoir.length) {
+    console.log(`Contrôle final : ${aRevoir.length} phrase(s) répétée(s) ou pas en ${LANGS[lang]} → réécrites`);
+    const ok = new Set(await reparer(aRevoir, [], lang));
+    for (let k = deroule.length - 1; k >= 0; k--) if (aRevoir.includes(deroule[k]) && !ok.has(deroule[k])) deroule.splice(k, 1);
+  }
+  const resteFaux = deroule.filter((x) => x.type === "animateur" && !langueOk(x.texte, lang)).length;
+  if (resteFaux) throw new Error(`${resteFaux} phrase(s) toujours pas en ${LANGS[lang]} après correction : relance (rien n'a été écrit dans ta release)`);
   // ordre final des fichiers du plan : auditeurs (numérotés comme dans le déroulé), puis ouverture / fin enregistrées
   const planClips = [...clips, ...(ouv ? [ouv] : []), ...(fin ? [fin] : [])];
   if (ouv) deroule.unshift({ type: "enregistre", extrait: clips.length + 1, role: "ouverture" });
