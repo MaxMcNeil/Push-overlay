@@ -19,8 +19,9 @@ const dormir = (s) => new Promise((r) => setTimeout(r, s * 1000));
 const log = (...a) => console.log(...a);
 
 // ---------------------------------------------------------------- IA patiente (surcharge = attendre, jamais abandonner tôt)
-async function ia(sys, user, { tours = 4, maxTokens = 6000 } = {}) {
-  const prov = providers();
+async function ia(sys, user, { tours = 4, maxTokens = 6000, depart = 0 } = {}) {
+  const p0 = providers();
+  const prov = p0.map((_, i) => p0[(i + depart) % p0.length]);      // « voies » parallèles : chacune commence par un fournisseur différent
   if (!prov.length) throw new Error("aucune clé IA (GEMINI_API_KEY / GROQ_API_KEY)");
   let last = null;
   for (let k = 0; k < tours; k++) {
@@ -203,15 +204,15 @@ function chiffresSurs(texte, source) {
   const ok = new Set(chiffres(source));
   return chiffres(texte).every((n) => ok.has(n) || /^(19|20)\d\d$/.test(n) || n.length < 2);
 }
-async function ecrireDossier(g, rang = 0) {
-  try { return await ecrireDossier0(g, rang); }
+async function ecrireDossier(g, rang = 0, depart = 0) {
+  try { return await ecrireDossier0(g, rang, depart); }
   catch (e) {
     if (String(g.texte || "").length < 3000 || reste() < 8 * 60e3) throw e;
     log(`    nouvel essai avec des sources raccourcies (${String(e.message).slice(0, 80)})`);
-    return ecrireDossier0({ ...g, texte: g.texte.slice(0, Math.round(g.texte.length / 2)) }, rang);
+    return ecrireDossier0({ ...g, texte: g.texte.slice(0, Math.round(g.texte.length / 2)) }, rang, depart + 1);
   }
 }
-async function ecrireDossier0(g, rang = 0) {
+async function ecrireDossier0(g, rang = 0, depart = 0) {
   const n = g.note, rev = g.revendication, rumeur = n.categorie === "RUMEUR";
   const mots_cible = Math.round(Math.max(170, Math.min(520, 120 + g.texte.length / 25)));
   const j = await ia("Tu écris pour un live YouTube d'actualité choc (chaîne « Le Journal du NON »). Réponds en JSON valide.",
@@ -235,7 +236,7 @@ Réponds : {"titre_ecran": "…", "texte": "…", "faits_cles": ["…","…","�
 
 CATÉGORIE : ${n.categorie} — PAYS : ${n.pays || "?"}
 SOURCES (${g.nb_sources}) :
-${g.texte}`, { maxTokens: 3500 });
+${g.texte}`, { maxTokens: 3500, depart });
   let texte = String(j.texte || "").replace(/\s+\n/g, "\n").trim();
   // contrôle : phrases avec « nous », quémande de likes, ou chiffre absent des sources → retirées
   const phr = texte.split(/(?<=[.!?…])\s+/);
@@ -306,13 +307,24 @@ async function main() {
   const retenus = uniques.filter((g) => enFrance(g) || nMonde++ < maxMonde).slice(0, MAX_DOSSIERS + 6);   // quelques réserves si un dossier ne tient pas
   log(`  ${retenus.filter(enFrance).length} sujets France, ${retenus.filter((g) => !enFrance(g)).length} internationaux qui concernent la France`);
   log(`${solides.length} sujets solides (≥ 2 sources ou source officielle), ${retenus.length} assez choc retenus`);
-  const dossiers = [];
-  for (const g of retenus) {
-    if (dossiers.length >= MAX_DOSSIERS || reste() < 8 * 60e3) break;
-    await enrichir(g);
-    try { const d = await ecrireDossier(g, dossiers.length); dossiers.push(d); log(`  ✓ [${d.categorie}] ${d.titre} (${d.texte.split(/\s+/).length} mots, ${g.nb_sources} sources)`); }
-    catch (e) { log(`  ✗ ${g.items[0].titre.slice(0, 80)} : ${e.message}`); }
+  // ÉCRITURE EN PARALLÈLE : WARROOM_VOIES dossiers à la fois (3 par défaut), répartis entre fournisseurs (Gemini / Groq) ;
+  // un modèle saturé est mis en pause pour toutes les voies, qui passent alors au modèle suivant. L'ordre des dossiers est conservé.
+  const VOIES = Math.max(1, Number(process.env.WARROOM_VOIES || 3));
+  const ecrits = new Map();
+  let suivant = 0, ok = 0;
+  async function voie(v) {
+    while (suivant < retenus.length && ok < MAX_DOSSIERS && reste() > 8 * 60e3) {
+      const i = suivant++, g = retenus[i];
+      await enrichir(g);
+      try {
+        const d = await ecrireDossier(g, i, v);
+        if (ok >= MAX_DOSSIERS) break;
+        ok++; ecrits.set(i, d); log(`  ✓ [${d.categorie}] ${d.titre} (${d.texte.split(/\s+/).length} mots, ${g.nb_sources} sources)`);
+      } catch (e) { log(`  ✗ ${g.items[0].titre.slice(0, 80)} : ${e.message}`); }
+    }
   }
+  await Promise.all(Array.from({ length: VOIES }, (_, v) => voie(v)));
+  const dossiers = [...ecrits.entries()].sort((a, b) => a[0] - b[0]).map(([, d]) => d);
   if (!dossiers.length) throw new Error("aucun dossier assez solide aujourd'hui (sources ou IA indisponibles) : relance plus tard");
   const { ordre, ouverture, transitions, cloture } = await habiller(dossiers);
   // minutage (débit de lecture) + prompteur avec repères
