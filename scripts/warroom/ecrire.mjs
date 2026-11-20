@@ -62,8 +62,10 @@ function regrouper(items) {
 // ---------------------------------------------------------------- 2bis) l'IA note le choc (par paquets)
 async function trier(groupes) {
   const notes = new Map();
-  for (let k = 0; k < groupes.length; k += 60) {
-    const lot = groupes.slice(k, k + 60);
+  const file = [];
+  for (let k = 0; k < groupes.length; k += 60) file.push(groupes.slice(k, k + 60));
+  while (file.length) {
+    const lot = file.shift();
     const liste = lot.map((g) => `#${g.id} [${g.nb_sources} source(s)${g.officiel ? ", officiel" : ""}${g.revendication ? ", REVENDICATION non confirmée" : ""}] ${g.items.slice(0, 3).map((x) => x.titre).join(" | ").slice(0, 300)}`).join("\n");
     try {
       const j = await ia("Tu es rédacteur en chef d'une émission d'actualité choc pour un public FRANÇAIS. Réponds en JSON valide.",
@@ -89,7 +91,11 @@ Réponds : {"sujets": [{"id": 12, "choc": 8, "interet_fr": 9, "actuel": true, "c
 
 ${liste}`, { maxTokens: 6000 });
       for (const s of j.sujets || []) if (s && isFinite(s.id)) notes.set(Number(s.id), s);
-    } catch (e) { log(`  tri d'un paquet impossible (${e.message}) : ces sujets sont écartés`); }
+    } catch (e) {
+      // paquet trop long ou IA saturée : coupé en deux et retenté (plus petit = accepté par plus de modèles, moins de quota par appel)
+      if (lot.length > 8 && reste() > 10 * 60e3) { log(`  tri de ${lot.length} sujets impossible (${String(e.message).slice(0, 80)}) : coupé en deux`); file.unshift(lot.slice(0, lot.length >> 1), lot.slice(lot.length >> 1)); }
+      else log(`  tri de ${lot.length} sujets impossible (${e.message}) : ces sujets sont écartés`);
+    }
   }
   // doublons signalés par l'IA : fusionnés dans le sujet le plus fourni
   for (const g of groupes) {
@@ -198,6 +204,14 @@ function chiffresSurs(texte, source) {
   return chiffres(texte).every((n) => ok.has(n) || /^(19|20)\d\d$/.test(n) || n.length < 2);
 }
 async function ecrireDossier(g, rang = 0) {
+  try { return await ecrireDossier0(g, rang); }
+  catch (e) {
+    if (String(g.texte || "").length < 3000 || reste() < 8 * 60e3) throw e;
+    log(`    nouvel essai avec des sources raccourcies (${String(e.message).slice(0, 80)})`);
+    return ecrireDossier0({ ...g, texte: g.texte.slice(0, Math.round(g.texte.length / 2)) }, rang);
+  }
+}
+async function ecrireDossier0(g, rang = 0) {
   const n = g.note, rev = g.revendication, rumeur = n.categorie === "RUMEUR";
   const mots_cible = Math.round(Math.max(170, Math.min(520, 120 + g.texte.length / 25)));
   const j = await ia("Tu écris pour un live YouTube d'actualité choc (chaîne « Le Journal du NON »). Réponds en JSON valide.",
