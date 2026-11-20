@@ -19,7 +19,7 @@ const dormir = (s) => new Promise((r) => setTimeout(r, s * 1000));
 const log = (...a) => console.log(...a);
 
 // ---------------------------------------------------------------- IA patiente (surcharge = attendre, jamais abandonner tôt)
-async function ia(sys, user, { tours = 4, maxTokens = 6000, depart = 0 } = {}) {
+async function ia(sys, user, { tours = 4, maxTokens = 6000, depart = 0, temperature = 0.6 } = {}) {
   const p0 = providers();
   const prov = p0.map((_, i) => p0[(i + depart) % p0.length]);      // « voies » parallèles : chacune commence par un fournisseur différent
   if (!prov.length) throw new Error("aucune clé IA (GEMINI_API_KEY / GROQ_API_KEY)");
@@ -29,7 +29,7 @@ async function ia(sys, user, { tours = 4, maxTokens = 6000, depart = 0 } = {}) {
     for (const [nom, fn] of prov) {
       if (reste() < 90e3) break;
       try {
-        const j = parseJson(await fn(sys, user, { json: true, temperature: 0.6, maxTokens, deadline: Date.now() + Math.min(7 * 60e3, reste() - 60e3) }));
+        const j = parseJson(await fn(sys, user, { json: true, temperature, maxTokens, deadline: Date.now() + Math.min(7 * 60e3, reste() - 60e3) }));
         if (j) return j;
         last = new Error(`${nom} : réponse illisible`);
       } catch (e) { last = e; log(`  ${nom} : ${String(e.message).slice(0, 140)}`); }
@@ -189,16 +189,56 @@ async function enrichir(g) {
   return g;
 }
 
+// ---------------------------------------------------------------- 3bis) garde-fous contre l'invention
+// a) une citation entre guillemets qui ne figure pas dans les sources = phrase retirée (les expressions courtes, ≤ 3 mots, restent)
+const plat = (x) => String(x).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[’'‘`]/g, "'").replace(/[^a-z0-9' ]+/g, " ").replace(/\s+/g, " ").trim();
+function citationsSures(texte, source, quiet = false) {
+  const src = plat(source);
+  const phr = texte.split(/(?<=[.!?…])\s+/);
+  const ok = phr.filter((p) => [...p.matchAll(/[«“"]\s*([^»”"]{3,}?)\s*[»”"]/g)].every((m) => m[1].split(/\s+/).length <= 3 || src.includes(plat(m[1]))));
+  if (ok.length < phr.length && !quiet) log(`    ${phr.length - ok.length} phrase(s) retirée(s) : citation absente des sources`);
+  return ok.join(" ");
+}
+// b) vérification des faits par un AUTRE fournisseur que celui qui a écrit : chaque phrase qui affirme un fait absent des sources
+//    (ou contredit par elles) est corrigée d'après les sources, ou retirée. Si la vérification est impossible, le texte est gardé.
+async function verifierFaits(texte, source, depart) {
+  if (reste() < 5 * 60e3) return texte;
+  let j;
+  try {
+    j = await ia("Tu es vérificateur de faits (fact-checker) pour une émission d'actualité. Réponds en JSON valide.",
+      `Compare le TEXTE aux SOURCES. Liste chaque phrase du texte qui affirme un FAIT (nom, chiffre, date, lieu, citation, événement,
+détail, « révélation ») ABSENT des sources ou CONTREDIT par elles. Les opinions présentées comme telles, les questions, l'humour et
+les punchlines sans fait précis sont acceptés. Pour chaque phrase : "phrase" copiée EXACTEMENT, "correction" = la même phrase rendue
+fidèle aux sources (même ton), ou "" si elle n'a pas de version fidèle.
+Réponds : {"hors_sources": [{"phrase": "…", "correction": "…"}]} ([] si tout est fidèle).
+
+TEXTE :
+${texte}
+
+SOURCES :
+${source}`, { maxTokens: 3000, depart, temperature: 0.1, tours: 2 });
+  } catch (e) { log(`    vérification des faits impossible (${String(e.message).slice(0, 80)}) : texte gardé`); return texte; }
+  let n = 0;
+  for (const c of j.hors_sources || []) {
+    const ph = String(c.phrase || "").trim(); let rp = String(c.correction || "").trim();
+    if (ph.length < 12 || !texte.includes(ph)) continue;
+    if (rp && (NOUS.test(rp) || QUEMANDE.test(rp) || HORS_DOSSIER.test(rp) || !chiffresSurs(rp, source) || citationsSures(rp, source, true) !== rp)) rp = "";
+    texte = texte.replace(ph, rp).replace(/\s{2,}/g, " ").trim(); n++;
+  }
+  if (n) log(`    vérification des faits : ${n} phrase(s) corrigée(s) ou retirée(s)`);
+  return texte;
+}
+
 // ---------------------------------------------------------------- 3bis) écrire un dossier
 const NOUS = /\b(nous|notre|nos)\b/i;
 const HORS_DOSSIER = /\bbienvenue\b|dans les commentaires|en commentaire/i;     // l'accueil est dans l'ouverture seulement ; questions ouvertes, sans consigne
-const ANGLES = [
+const ANGLES = [               // des ANGLES D'ANALYSE (opinion assumée) — jamais un prétexte pour inventer un fait « caché »
   "qui gagne, qui perd",
-  "ce qu'on ne vous dit pas (l'angle mort de l'affaire)",
+  "ton analyse de ce que ça révèle (présentée comme ton avis)",
   "la conséquence concrète pour le public",
-  "le précédent ou le schéma qui se répète",
-  "la question qui fâche que personne ne pose",
-  "le détail qui change tout dans ce dossier",
+  "le schéma qui se répète (seulement s'il est évident, sans inventer de précédent précis)",
+  "la question qui fâche",
+  "le détail le plus frappant DES SOURCES",
 ];
 const QUEMANDE = /\b(likez|liker|partagez|abonnez|abonnez-vous|mettez un pouce|lâchez un like)\b|[ée]crivez\s+\S+\s+(dans le chat\s+)?si\b|tapez\s+\S+\s+si\b/i;
 const chiffres = (s) => (String(s).match(/\d[\d\s.,]*\d|\d/g) || []).map((n) => n.replace(/[\s.,]/g, "")).filter((n) => n.length >= 2);
@@ -228,7 +268,9 @@ Le dossier est lu au milieu du live : pas de « Bienvenue », pas de salut, pas 
 HORS DU CONTEXTE : jamais « nous », « notre », « nos » ; dis « vous », « je ». Ne parle de la France ou des Français QUE si le sujet
 les concerne directement (jamais de rapprochement forcé).
 JAMAIS « likez », « partagez », « abonnez-vous », ni « écrivez X si… / tapez X si… ».
-EXACTITUDE (protection juridique) : n'utilise QUE les faits des sources ci-dessous ; aucun chiffre, nom, date ou citation inventé. Une
+EXACTITUDE (protection juridique) : n'utilise QUE les faits des sources ci-dessous ; aucun chiffre, nom, date, citation ou détail
+inventé, aucune « révélation » que les sources ne contiennent pas. Ton analyse est permise, mais présentée comme ton avis (« je pense »,
+« à mon sens »), jamais comme un fait. Une citation entre guillemets doit figurer MOT POUR MOT dans les sources. Une
 accusation reste une accusation (« selon… », « soupçonné », « présumé »).${rev ? ` C'est une REVENDICATION de cybercriminels sur leur site de
 fuite, NON CONFIRMÉE : dis-le clairement (« revendique », « affirme », « rien ne confirme pour l'instant »).` : ""}${rumeur ? ` C'est une RUMEUR /
 théorie qui circule : raconte ce qui circule et pourquoi ça prend, puis ce qu'on sait vraiment d'après les vérifications.` : ""}
@@ -240,13 +282,15 @@ Réponds : {"titre_ecran": "…", "texte": "…", "faits_cles": ["…","…","�
 
 CATÉGORIE : ${n.categorie} — PAYS : ${n.pays || "?"}
 SOURCES (${g.nb_sources}) :
-${g.texte}`, { maxTokens: 3500, depart });
+${g.texte}`, { maxTokens: 3500, depart, temperature: 0.45 });
   let texte = String(j.texte || "").replace(/\s+\n/g, "\n").trim();
   // contrôle : phrases avec « nous », quémande de likes, ou chiffre absent des sources → retirées
   const phr = texte.split(/(?<=[.!?…])\s+/);
   const bonnes = phr.filter((p) => !NOUS.test(p) && !QUEMANDE.test(p) && !HORS_DOSSIER.test(p) && chiffresSurs(p, g.texte));
   if (bonnes.length < phr.length) log(`    ${phr.length - bonnes.length} phrase(s) retirée(s) (chiffre absent des sources, « nous », salut ou appel au like)`);
   texte = bonnes.join(" ");
+  texte = citationsSures(texte, g.texte);
+  texte = await verifierFaits(texte, g.texte, depart + 1);
   const cle = j.chiffre_cle && j.chiffre_cle.valeur && chiffresSurs(j.chiffre_cle.valeur, g.texte) ? { valeur: String(j.chiffre_cle.valeur).slice(0, 18), libelle: String(j.chiffre_cle.libelle || "").slice(0, 60) } : null;
   const faits = (Array.isArray(j.faits_cles) ? j.faits_cles : []).map((x) => String(x).slice(0, 80)).filter((x) => x && chiffresSurs(x, g.texte)).slice(0, 3);
   if (texte.split(/\s+/).length < 60) throw new Error("dossier trop court après contrôle");
