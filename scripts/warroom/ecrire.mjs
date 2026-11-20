@@ -25,7 +25,7 @@ async function ia(sys, user, { tours = 4, maxTokens = 6000, depart = 0 } = {}) {
   if (!prov.length) throw new Error("aucune clé IA (GEMINI_API_KEY / GROQ_API_KEY)");
   let last = null;
   for (let k = 0; k < tours; k++) {
-    if (k) { const w = [0, 45, 90, 180][k] || 180; if (reste() < (w + 120) * 1e3) break; log(`  IA indisponible : nouvel essai dans ${w} s`); await dormir(w); }
+    if (k) { const w = [0, 45, 90, 180][k] || 180; if (reste() < (w + 120) * 1e3) break; log(`  IA indisponible : nouvel essai dans ${w} s`); await dormir(w * (1 + Math.random() * 0.25)); }
     for (const [nom, fn] of prov) {
       if (reste() < 90e3) break;
       try {

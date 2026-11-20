@@ -9,6 +9,8 @@
 // Les clés n'apparaissent jamais dans les logs (seulement « clé 2/5 »).
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// pause « avec jitter » : +0 à 25 % au hasard, pour que des appels en parallèle ne réessaient pas tous à la même seconde
+const jitter = (ms) => sleep(ms + Math.random() * ms * 0.25);
 const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
 const GROQ_BASE = process.env.GROQ_BASE_URL || "https://api.groq.com";
 
@@ -83,7 +85,7 @@ export async function callGemini(sys, user, ctx = {}) {
     const left = ctx.deadline ? ctx.deadline - Date.now() : Infinity;
     if (ctx._patience || left < 150000 || !/surcharg|trop lent|délai|timeout|aborted|aucun modèle Gemini disponible|50[03]/i.test(e.message)) throw e;
     console.log("  Gemini : tous les modèles surchargés pour l'instant → pause 60 s, puis nouvel essai");
-    await sleep(60000);
+    await jitter(60000);
     for (const [m, t] of health.cool) if (t - Date.now() < 6 * 60 * 1000) health.cool.delete(m);   // seulement les pauses courtes
     return callGemini0(sys, user, { ...ctx, _patience: true });
   }
@@ -131,6 +133,7 @@ async function callGemini0(sys, user, ctx = {}) {
             over++;
             console.log(`  ${tag} : modèle surchargé (${res.status})${over >= 2 ? " → modèle suivant" : " → nouvel essai"}`);
             if (over >= 2) { over = 0; coolDown(m, 4 * 60 * 1000); continue modelLoop; }
+            await jitter(2500);          // courte pause avant le 2e essai (laisser respirer le modèle)
             continue;
           }
           if (res.status === 429) {
@@ -203,7 +206,7 @@ async function callGemini0(sys, user, ctx = {}) {
       }
       if (dead.size >= keys.length) throw lastErr;
       // toutes les clés saturées sur ce modèle : une seule courte pause (limite par minute), puis modèle suivant
-      if (saturated && round === 0) { console.log(`  ${m} : toutes les clés saturées, pause 25 s...`); await sleep(25000); continue; }
+      if (saturated && round === 0) { console.log(`  ${m} : toutes les clés saturées, pause 25 s...`); await jitter(25000); continue; }
       break;
     }
   }
