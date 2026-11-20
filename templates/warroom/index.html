@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<!-- WAR ROOM DU JOUR — écran d'un dossier, en BOUCLE PARFAITE (toutes les animations ont la période P) : OBS le répète aussi
+     longtemps que tu parles ; le passage au dossier suivant est déclenché par ton Prompteur. Vertical 1080×1920 :
+     - fenêtre CAMÉRA (36,326 → 650×640) : ta caméra DroidCam se pose dessus dans OBS ;
+     - rien sous les boutons YouTube (droite, y 950→1650) ni sous le titre YouTube (y > 1650) ni sous le badge LIVE (y < 180). -->
+<style>
+@font-face{font-family:"IT";font-weight:900;src:url(../explainer/fonts/inter-tight-latin-900-normal.woff2),url(../explainer/fonts/inter-tight-latin-ext-900-normal.woff2)}
+@font-face{font-family:"IT";font-weight:800;src:url(../explainer/fonts/inter-tight-latin-800-normal.woff2),url(../explainer/fonts/inter-tight-latin-ext-800-normal.woff2)}
+@font-face{font-family:"IT";font-weight:700;src:url(../explainer/fonts/inter-tight-latin-700-normal.woff2),url(../explainer/fonts/inter-tight-latin-ext-700-normal.woff2)}
+@font-face{font-family:"JB";font-weight:700;src:url(../explainer/fonts/jetbrains-mono-latin-700-normal.woff2),url(../explainer/fonts/jetbrains-mono-latin-ext-700-normal.woff2)}
+@font-face{font-family:"JB";font-weight:500;src:url(../explainer/fonts/jetbrains-mono-latin-500-normal.woff2),url(../explainer/fonts/jetbrains-mono-latin-ext-500-normal.woff2)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1080px;height:1920px;overflow:hidden;background:#04070c}
+#root{position:absolute;inset:0;overflow:hidden;background:#04070c;color:#e6f6ff;--cat:#3fe0d0;--teal:#3fe0d0;--red:#ff3045}
+.grid{position:absolute;inset:0;background-image:linear-gradient(rgba(63,224,208,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(63,224,208,.07) 1px,transparent 1px);background-size:54px 54px}
+.halo{position:absolute;inset:-15%;background:radial-gradient(ellipse at 25% 35%,color-mix(in srgb,var(--cat) 20%,transparent),transparent 55%),radial-gradient(ellipse at 85% 80%,rgba(255,48,69,.10),transparent 50%)}
+.vig{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 40%,transparent 40%,rgba(0,0,0,.85) 100%)}
+.scan{position:absolute;left:0;right:0;height:220px;background:linear-gradient(180deg,transparent,rgba(63,224,208,.06),transparent)}
+.lines{position:absolute;inset:0;opacity:.05;background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.6) 0 1px,transparent 1px 3px)}
+#top{position:absolute;left:36px;right:36px;top:196px;height:100px;display:flex;align-items:center;gap:18px;padding:0 22px;border:2px solid rgba(63,224,208,.55);background:rgba(4,16,22,.85)}
+#top img{width:70px;height:70px;border-radius:50%;object-fit:cover;display:none}
+#top .wr{font:900 46px/1 "IT";letter-spacing:5px}
+#top .ch{font:700 21px/1.15 "JB";letter-spacing:3px;color:var(--teal);opacity:.9}
+#top .live{margin-left:auto;font:900 32px/1 "IT";color:var(--red);letter-spacing:3px;display:flex;align-items:center;gap:10px}
+#top .live i{width:18px;height:18px;border-radius:50%;background:var(--red);box-shadow:0 0 18px var(--red)}
+/* fenêtre caméra : cadre seulement (ta caméra est posée dessus dans OBS) */
+#cam{position:absolute;left:36px;top:326px;width:650px;height:640px;border:2px solid rgba(63,224,208,.45);background:#000}
+#cam .c{position:absolute;width:54px;height:54px;border-color:var(--cat);border-style:solid}
+#cam .c1{left:-6px;top:-6px;border-width:7px 0 0 7px}#cam .c2{right:-6px;top:-6px;border-width:7px 7px 0 0}
+#cam .c3{left:-6px;bottom:-6px;border-width:0 0 7px 7px}#cam .c4{right:-6px;bottom:-6px;border-width:0 7px 7px 0}
+#cam .lbl{position:absolute;left:14px;bottom:14px;padding:6px 12px;background:rgba(0,0,0,.72);font:700 22px/1 "JB";letter-spacing:2px}
+#cam .lbl b{color:var(--red)}
+/* colonne droite (au-dessus de y = 950 : permis) */
+#side{position:absolute;left:712px;top:326px;width:332px;display:flex;flex-direction:column;gap:16px}
+.box{border:2px solid rgba(63,224,208,.4);background:rgba(4,20,26,.82);padding:14px 16px}
+.box h4{font:800 22px/1 "JB";letter-spacing:3px;color:var(--teal);margin-bottom:10px}
+#cat{font:900 34px/1.05 "IT";letter-spacing:2px;color:#04070c;background:var(--cat);padding:12px 14px;text-align:center;box-shadow:0 0 26px var(--cat)}
+#menace .bars{display:flex;gap:6px}
+#menace .bars i{flex:1;height:30px;background:rgba(255,48,69,.15);border:1px solid rgba(255,48,69,.35)}
+#menace .bars i.on{background:var(--red);box-shadow:0 0 12px var(--red)}
+#radar{position:relative;width:210px;height:210px;margin:4px auto 6px;border-radius:50%;border:2px solid rgba(63,224,208,.6);
+  background:radial-gradient(circle,transparent 0 31%,rgba(63,224,208,.35) 31.4% 32%,transparent 32.4% 63%,rgba(63,224,208,.35) 63.4% 64%,transparent 64.4%)}
+#radar .sw{position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 0deg,color-mix(in srgb,var(--cat) 70%,transparent),transparent 70deg,transparent)}
+#radar .x{position:absolute;inset:0;border-radius:50%;background:linear-gradient(90deg,transparent 49.6%,rgba(63,224,208,.35) 49.6% 50.4%,transparent 50.4%),linear-gradient(0deg,transparent 49.6%,rgba(63,224,208,.35) 49.6% 50.4%,transparent 50.4%)}
+#radar .blip{position:absolute;width:20px;height:20px;margin:-10px;border-radius:50%;background:var(--cat);box-shadow:0 0 20px var(--cat)}
+#lieu{font:700 24px/1.2 "JB";letter-spacing:1px;text-transform:uppercase;text-align:center;color:#d8f4ff}
+#num{font:700 24px/1 "JB";letter-spacing:3px;color:var(--teal);text-align:center}
+#num b{font:900 52px/1 "IT";color:#fff;display:block;margin-top:6px;letter-spacing:1px}
+/* zone basse : titre, chiffre, faits — colonne x < 940 */
+#bas{position:absolute;left:36px;width:900px;top:996px;bottom:356px;display:flex;flex-direction:column;gap:14px;overflow:hidden}
+#titre{font:900 66px/1.02 "IT";text-transform:uppercase;letter-spacing:-.3px;text-wrap:balance}
+#titre.l{font-size:54px}#titre.xl{font-size:46px}
+#chiffre{display:flex;align-items:baseline;gap:16px}
+#chiffre .v{font:900 92px/1 "IT";color:var(--cat);white-space:nowrap;text-shadow:0 0 30px color-mix(in srgb,var(--cat) 55%,transparent)}
+#chiffre .l{font:700 26px/1.2 "JB";text-transform:uppercase;color:#cfefff}
+.fait{font:700 33px/1.18 "IT";padding:10px 16px 10px 22px;border-left:6px solid var(--cat);background:rgba(4,20,26,.8)}
+#stamp{align-self:flex-start;font:800 24px/1 "JB";letter-spacing:3px;padding:9px 14px;border:3px solid var(--red);color:var(--red);transform:rotate(-1.5deg)}
+#src{position:absolute;left:36px;width:900px;top:1530px;font:500 21px/1.25 "JB";letter-spacing:1px;color:#8fb8c0;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tick{position:absolute;left:0;right:140px;top:1572px;height:62px;border-top:2px solid var(--red);border-bottom:2px solid var(--red);background:rgba(10,4,6,.92);overflow:hidden}
+#tick .lab{position:absolute;left:0;top:0;bottom:0;z-index:2;display:flex;align-items:center;padding:0 18px;background:var(--red);font:900 28px/1 "IT";letter-spacing:3px;color:#fff}
+#tick .run{position:absolute;top:0;bottom:0;display:flex;align-items:center;white-space:nowrap;font:800 30px/1 "IT";color:#fff}
+#tick .run b{color:var(--red);margin:0 22px}
+/* écrans d'ouverture / de fin */
+#big{position:absolute;left:36px;right:36px;top:1000px;display:none}
+#big .k{font:700 28px/1 "JB";letter-spacing:6px;color:var(--teal)}
+#big .t{font:900 120px/.95 "IT";letter-spacing:2px;margin-top:16px}
+#big .s{font:700 30px/1.35 "JB";letter-spacing:1px;color:#cfefff;margin-top:24px;max-width:900px}
+</style>
+</head>
+<body>
+<div id="root">
+  <div class="halo"></div><div class="grid"></div><div class="scan"></div><div class="vig"></div><div class="lines"></div>
+  <div id="top"><img id="logo"><div><div class="wr">WAR ROOM</div><div class="ch">LE JOURNAL DU NON</div></div><div class="live"><i></i>EN DIRECT</div></div>
+  <div id="cam"><i class="c c1"></i><i class="c c2"></i><i class="c c3"></i><i class="c c4"></i><div class="lbl"><b>●</b> CAM 01 · ANALYSTE</div></div>
+  <div id="side">
+    <div id="num"></div>
+    <div id="cat"></div>
+    <div class="box" id="menace"><h4>NIVEAU DE MENACE</h4><div class="bars"><i></i><i></i><i></i><i></i><i></i></div></div>
+    <div class="box"><h4>LOCALISATION</h4><div id="radar"><div class="x"></div><div class="sw"></div><div class="blip"></div></div><div id="lieu"></div></div>
+  </div>
+  <div id="bas"><div id="titre"></div><div id="chiffre"><span class="v"></span><span class="l"></span></div><div id="faits"></div><div id="stamp"></div></div>
+  <div id="big"><div class="k"></div><div class="t"></div><div class="s"></div></div>
+  <div id="src"></div>
+  <div id="tick"><div class="lab">DOSSIERS</div><div class="run"></div></div>
+</div>
+<script>
+const CAT={CATASTROPHE:"#ff6a00",ACCIDENT:"#ff9f1a",SCANDALE:"#ffd400",CORRUPTION:"#e8c547",POLITIQUE:"#4da3ff","GÉOPOLITIQUE":"#00e0c6",
+  GUERRE:"#ff2d2d","RÉVÉLATION":"#b36bff",CYBER:"#00ff9c","FAIT DIVERS":"#ff4f7a",INSOLITE:"#ff5df0",RUMEUR:"#a9b4c2"};
+const $=(id)=>document.getElementById(id),esc=(s)=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const TAU=Math.PI*2;let P=20,run=null,step=90;
+function hash(s){let h=7;for(const c of String(s))h=(h*31+c.charCodeAt(0))>>>0;return h}
+/* spec = { w, h, fps, duration: P, seg: {type, n, total, categorie, titre, faits, chiffre, gravite, lieu, sources, revendication, rumeur}, ticker, logo } */
+window.init=async function(spec){
+  P=spec.duration||20;const s=spec.seg||{type:"ouverture"},dos=s.type==="dossier",r=$("root");
+  r.style.setProperty("--cat",dos?(CAT[s.categorie]||"#3fe0d0"):"#3fe0d0");
+  if(spec.logo){$("logo").src=spec.logo;$("logo").style.display="block"}
+  $("num").innerHTML=dos?`DOSSIER<b>${String(s.n).padStart(2,"0")} / ${String(s.total).padStart(2,"0")}</b>`:`<b>${String(s.total||0).padStart(2,"0")}</b>DOSSIERS`;
+  $("cat").textContent=dos?s.categorie:(s.type==="ouverture"?"EN ALERTE":"FIN");
+  document.querySelectorAll("#menace .bars i").forEach((b,k)=>b.className=k<(dos?s.gravite:5)?"on":"");
+  $("lieu").textContent=dos?(s.lieu||"MONDE"):"MONDE";
+  const h=hash(s.titre||s.type),a=(h%360)*Math.PI/180,d=.25+((h>>9)%60)/100*.4,bl=document.querySelector("#radar .blip");bl.style.left=(50+Math.cos(a)*d*50)+"%";bl.style.top=(50+Math.sin(a)*d*50)+"%";
+  $("bas").style.display=dos?"flex":"none";$("big").style.display=dos?"none":"block";
+  if(dos){const T=$("titre");T.textContent=s.titre;T.className=s.titre.length>60?"xl":s.titre.length>38?"l":"";
+    $("chiffre").style.display=s.chiffre?"flex":"none";if(s.chiffre){$("chiffre").querySelector(".v").textContent=s.chiffre.valeur;$("chiffre").querySelector(".l").textContent=s.chiffre.libelle}
+    $("faits").innerHTML=(s.faits||[]).map(f=>`<div class="fait">${esc(f)}</div>`).join("");$("faits").style.cssText="display:flex;flex-direction:column;gap:12px";
+    const st=s.revendication?"REVENDICATION NON CONFIRMÉE":s.rumeur?"CE QUI CIRCULE · VÉRIFIÉ":"";$("stamp").style.display=st?"":"none";$("stamp").textContent=st;
+    $("src").textContent=(s.sources||[]).length?"SOURCES : "+s.sources.map(x=>x.nom).slice(0,4).join(" · "):"";
+    /* trop de texte : on réduit jusqu'à ce que tout tienne (jamais de débordement) */
+    await document.fonts.ready;const B=$("bas");let k=1;while(B.scrollHeight>B.clientHeight+1&&k>.6){k-=.04;B.style.zoom=k}
+  }else{const ouv=s.type==="ouverture";$("big").querySelector(".k").textContent=ouv?"TRANSMISSION ÉTABLIE":"FIN DE TRANSMISSION";
+    $("big").querySelector(".t").innerHTML=ouv?"WAR ROOM":"RESTEZ EN ALERTE";
+    $("big").querySelector(".s").textContent=ouv?(s.resume||""):"LE JOURNAL DU NON";$("src").textContent=""}
+  run=document.querySelector("#tick .run");const items=(spec.ticker||[]).map(esc);
+  run.innerHTML=[...items,...items,...items,...items].map(x=>`<span>${x}</span><b>◆</b>`).join("");
+  await document.fonts.ready;
+  /* bandeau : vitesse ajustée pour qu'un nombre ENTIER de tours tienne dans P (boucle sans saut) */
+  const W=(run.scrollWidth/4)||1;const tours=Math.max(1,Math.round(90*P/W));step=tours*W/P;run.dataset.w=W;run.style.left=document.querySelector("#tick .lab").offsetWidth+"px";
+  await seek(0);return{P,scenes:[]}};
+window.seek=function(t){
+  t=((t%P)+P)%P;const f=t/P;   /* f : phase de la boucle (0 → 1), toutes les animations y reviennent exactement */
+  document.querySelector(".scan").style.top=(f*2200-220)+"px";
+  document.querySelector(".halo").style.transform=`translate(${Math.sin(TAU*f)*30}px,${Math.cos(TAU*f)*24}px)`;
+  document.querySelector("#radar .sw").style.transform=`rotate(${f*360*4}deg)`;                     /* 4 tours par boucle */
+  document.querySelector("#radar .blip").style.opacity=(.3+.7*Math.pow(Math.max(0,Math.cos(TAU*f*4)),6)).toFixed(3);
+  document.querySelector("#top .live i").style.opacity=Math.sin(TAU*f*P/1.2)>0?1:.25;               /* clignote ~ toutes les 1,2 s */
+  document.querySelectorAll("#cam .c").forEach(c=>c.style.opacity=(.6+.4*Math.sin(TAU*f*5)).toFixed(3));
+  $("cat").style.boxShadow=`0 0 ${18+14*Math.sin(TAU*f*5)}px var(--cat)`;
+  document.querySelectorAll("#menace .bars i.on").forEach((b,k)=>b.style.opacity=(.65+.35*Math.sin(TAU*f*10-k*.6)).toFixed(3));
+  if(run){const W=+run.dataset.w||1;run.style.transform=`translate3d(${-((f*P*step)%W)}px,0,0)`}
+  return 1};
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<!-- Transition « ALERTE » (fond TRANSPARENT) : jouée par OBS au-dessus de l'écran à chaque changement de dossier (1,2 s). -->
+<style>
+@font-face{font-family:"IT";font-weight:900;src:url(../explainer/fonts/inter-tight-latin-900-normal.woff2)}
+@font-face{font-family:"JB";font-weight:700;src:url(../explainer/fonts/jetbrains-mono-latin-700-normal.woff2)}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1080px;height:1920px;overflow:hidden;background:transparent}
+#f{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 50%,rgba(255,48,69,.55),rgba(255,48,69,.15) 60%,rgba(0,0,0,0) 85%)}
+.bar{position:absolute;left:0;right:0;height:14px;background:rgba(255,48,69,.9)}
+#t{position:absolute;left:0;right:0;top:860px;text-align:center;font:900 150px/1 "IT";letter-spacing:16px;color:#fff;text-shadow:0 0 50px #ff3045}
+#s{position:absolute;left:0;right:0;top:1030px;text-align:center;font:700 34px/1 "JB";letter-spacing:10px;color:#ffd0d5}
+</style></head><body>
+<div id="f"></div><div class="bar" id="b1"></div><div class="bar" id="b2"></div><div class="bar" id="b3"></div><div id="t">ALERTE</div><div id="s">NOUVEAU DOSSIER</div>
+<script>
+const $=(i)=>document.getElementById(i),c=(x)=>Math.max(0,Math.min(1,x));let D=1.2;
+window.init=async function(spec){D=spec.duration||1.2;await document.fonts.ready;seek(0);return{scenes:[]}};
+window.seek=function(t){const p=t/D,inn=c(p/.15),out=1-c((p-.6)/.4),a=inn*out;
+  $("f").style.opacity=(a*(.7+.3*Math.sin(t*60))).toFixed(3);
+  $("t").style.opacity=a;$("s").style.opacity=a*.9;$("t").style.transform=`scale(${1.25-.25*inn}) translateX(${(Math.sin(t*90)*10*(1-inn+.2)).toFixed(1)}px)`;
+  [["b1",.2],["b2",.5],["b3",.8]].forEach(([id,k])=>{const y=((t*1900*(1+k))%1920);$(id).style.top=y+"px";$(id).style.opacity=a*.8});return 1};
+</script></body></html>

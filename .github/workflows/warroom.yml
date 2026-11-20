@@ -1,0 +1,102 @@
+name: War Room du jour
+
+# Lancement À LA MAIN uniquement (aucun déclenchement automatique).
+# 1) ratisse l'actu mondiale des dernières 24 h (presse, cyber, catastrophes, rumeurs), garde le plus choc et le plus solide
+# 2) écrit le script du live (prompteur avec repères « ▶ DOSSIER n »)
+# 3) fabrique les écrans OBS : une boucle animée par dossier + la transition « ALERTE » (fond transparent)
+# 4) publie tout sur une release « out-warroom-… » (jamais lue par les autres workflows)
+on:
+  push:            # ESSAI TEMPORAIRE (branche warroom uniquement) — retiré avant main
+    branches: [warroom]
+  workflow_dispatch:
+    inputs:
+      seuil:
+        description: "Niveau de choc minimum d'un sujet (0 à 10)"
+        type: choice
+        options: ["6", "5", "7", "8"]
+        default: "6"
+      max_dossiers:
+        description: "Nombre maximum de dossiers"
+        type: choice
+        options: ["25", "15", "35", "50"]
+        default: "25"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: warroom
+  cancel-in-progress: false
+
+env:
+  GEMINI_API_KEY: ${{ secrets.EXPLAINER_GEMINI_API_KEY || secrets.GEMINI_API_KEY }}
+  GEMINI_API_KEYS: ${{ secrets.EXPLAINER_GEMINI_API_KEY == '' && secrets.GEMINI_API_KEYS || '' }}
+  GEMINI_API_KEYS_PLUS: ${{ secrets.EXPLAINER_GEMINI_API_KEY == '' && secrets.GEMINI_API_KEYS_PLUS || '' }}
+  GROQ_API_KEY: ${{ secrets.EXPLAINER_GROQ_API_KEY || secrets.GROQ_API_KEY }}
+  GROQ_API_KEYS: ${{ secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS || '' }}
+  GROQ_API_KEYS_PLUS: ${{ secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS_PLUS || '' }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  WARROOM_SEUIL: ${{ inputs.seuil || '6' }}
+  WARROOM_MAX: ${{ inputs.max_dossiers || '25' }}
+  WARROOM_BUDGET_MIN: "75"
+
+jobs:
+  warroom:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Outils (ffmpeg…) — avec cache
+        uses: ./.github/actions/setup-media
+
+      - name: Chrome (préinstallé ; installé seulement s'il manque)
+        run: |
+          for c in /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium /usr/bin/chromium-browser; do [ -x "$c" ] && { echo "Chrome : $c"; exit 0; }; done
+          P=$(npx --yes @puppeteer/browsers install chrome@stable --path "$HOME/chrome" | awk '{print $2}' | tail -1)
+          [ -x "$P" ] || { echo "::error::Impossible d'installer Chrome"; exit 1; }
+          echo "CHROME_PATH=$P" >> "$GITHUB_ENV"
+
+      - name: Collecte de l'actu + écriture du script
+        timeout-minutes: 85
+        run: node scripts/warroom/ecrire.mjs
+
+      - name: Écrans OBS (boucles par dossier + transition ALERTE)
+        timeout-minutes: 55
+        run: |
+          node scripts/warroom/clips.mjs \
+            || { echo "::warning::rendu échoué : nouvel essai avec un seul Chrome"; EXPLAINER_WORKERS=1 node scripts/warroom/clips.mjs; }
+
+      - name: Paquet à télécharger sur le PC
+        run: |
+          set -euo pipefail
+          D=output/warroom
+          mkdir -p pub
+          cp "$D/prompteur.txt" pub/prompteur.txt
+          cp "$D/sources.md" pub/sources.md
+          (cd "$D/ecrans" && zip -q -0 "$GITHUB_WORKSPACE/pub/WarRoom-ecrans.zip" *.mp4 *.webm)
+          ls -la pub
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: warroom
+          path: pub/*
+          retention-days: 3
+
+      - name: Publication (release out-warroom-…)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_NAME" = "main" ]; then TAG="out-warroom-$(TZ=Europe/Rome date +%Y%m%d-%H%M)"; else TAG="out-warroom-essai"; fi
+          gh release delete "$TAG" --repo "$REPO" -y --cleanup-tag 2>/dev/null || true
+          N=$(grep -c '^▶ DOSSIER' pub/prompteur.txt || true)
+          gh release create "$TAG" --repo "$REPO" --target "$GITHUB_SHA" --title "War Room — $(TZ=Europe/Rome date '+%d/%m/%Y %H:%M')" \
+            --notes "$N dossiers. Télécharge **prompteur.txt** (à charger dans l'appli Prompteur) et **WarRoom-ecrans.zip** (à dézipper dans le dossier War Room du PC). Sources : sources.md." \
+            pub/prompteur.txt pub/sources.md pub/WarRoom-ecrans.zip
+          echo "Publié : https://github.com/$REPO/releases/tag/$TAG"

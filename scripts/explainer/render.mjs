@@ -11,7 +11,7 @@ import { pathToFileURL } from "url";
 
 const SPEC = process.argv[2] || "content/explainer.json";
 const OUT = process.argv[3] || "output/explainer-video.mp4";
-const TPL = path.resolve("templates/explainer/index.html");
+const TPL = path.resolve(process.env.EXPLAINER_TEMPLATE || "templates/explainer/index.html");   // autre gabarit possible (War Room)
 const WORKERS = Math.max(1, Math.min(Number(process.env.EXPLAINER_WORKERS) || os.cpus().length, 6));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
