@@ -135,6 +135,48 @@ export function aligner(lignes, words) {
   return out;
 }
 
+/** Tu n'as pas lu mot pour mot (dialecte, autres mots…) : peu importe. Les phrases RECONNUES servent de repères ; chaque phrase
+ *  non reconnue reçoit, DANS L'ORDRE, le passage de ta voix situé entre les deux repères qui l'entourent, découpé aux pauses
+ *  selon la longueur prévue de chaque phrase. Rien de ce que tu as enregistré n'est perdu, aucune phrase n'est sautée. */
+export function placerParPosition(lignes, words, al) {
+  const out = al.slice();
+  const fin = (k) => (k >= 0 ? out[k].i1 : -1);
+  let k = 0;
+  while (k < out.length) {
+    if (out[k]) { k++; continue; }
+    let m = k;
+    while (m + 1 < out.length && !out[m + 1]) m++;
+    const prev = k - 1, next = m + 1 < out.length ? m + 1 : -1;
+    const w0 = fin(prev) + 1, w1 = next >= 0 ? out[next].i0 - 1 : words.length - 1;
+    const n = m - k + 1;
+    if (w1 - w0 + 1 >= n) {
+      // découpe proportionnelle à la longueur prévue, recalée sur la plus longue pause voisine
+      const poids = lignes.slice(k, m + 1).map((l) => Math.max(1, norm(l).length));
+      const total = poids.reduce((a, b) => a + b, 0), nb = w1 - w0 + 1;
+      const coupes = [];
+      let cum = 0;
+      for (let j = 0; j < n - 1; j++) {
+        cum += poids[j];
+        const cible = w0 + Math.round((nb * cum) / total) - 1;
+        const lo = Math.max((coupes[j - 1] ?? w0 - 1) + 1, cible - Math.max(3, Math.round(nb / n / 2)));
+        const hi = Math.min(w1 - (n - 1 - j), cible + Math.max(3, Math.round(nb / n / 2)));
+        let best = Math.max(lo, Math.min(hi, cible)), bg = -1;
+        for (let q = lo; q <= hi; q++) { const g = words[q + 1] ? words[q + 1].t0 - words[q].t1 : 0; if (g > bg) { bg = g; best = q; } }
+        coupes.push(best);
+      }
+      let a0 = w0;
+      for (let j = 0; j < n; j++) {
+        const b0 = j < n - 1 ? coupes[j] : w1;
+        out[k + j] = { i0: a0, i1: b0, t0: words[a0].t0, t1: words[b0].t1, score: 0, prises: 1, position: true,
+          avant: a0 > 0 ? words[a0 - 1].t1 : 0, apres: b0 + 1 < words.length ? words[b0 + 1].t0 : Infinity };
+        a0 = b0 + 1;
+      }
+    }
+    k = m + 1;
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------ SALUTATIONS : jamais à l'antenne (ni toi, ni les auditeurs)
 const SALUT = new Set(norm("bonjour bonsoir salut coucou hello hi hey salam salamalaykoum salamalekoum slm ciao buongiorno buonasera salve hola " +
   "هلا مرحبا اهلا السلام سلام مساء صباح مساكم صباحكم يسعد").join(" ").split(" "));
@@ -542,11 +584,12 @@ async function montage() {
   const rv = await transcrire(voix, dv);
   delete process.env.ASR_LANGUAGE;
   const anim = plan.deroule.filter((x) => x.type === "animateur");
-  const al = aligner(anim.map((x) => x.texte), rv.words);
-  const manquent = [];
-  anim.forEach((x, k) => { x.al = al[k]; if (!al[k]) manquent.push(x.n); });
-  console.log(`Tes phrases retrouvées : ${anim.length - manquent.length}/${anim.length}${manquent.length ? ` (introuvables : n° ${manquent.join(", ")} — sautées)` : ""}`);
-  if (anim.length - manquent.length < Math.ceil(anim.length / 2)) throw new Error(`seulement ${anim.length - manquent.length} phrases sur ${anim.length} retrouvées dans ta voix : as-tu lu le bon texte (emission-a-lire.txt de cette release) ?`);
+  if (!rv.words.length) throw new Error("aucune parole reconnue dans ta voix (fichier vide ou muet ?)");
+  const exact = aligner(anim.map((x) => x.texte), rv.words);
+  const al = placerParPosition(anim.map((x) => x.texte), rv.words, exact);
+  const manquent = [], placees = [];
+  anim.forEach((x, k) => { x.al = al[k]; if (!al[k]) manquent.push(x.n); else if (al[k].position) placees.push(x.n); });
+  console.log(`Tes phrases : ${anim.length - manquent.length - placees.length} reconnues mot pour mot, ${placees.length} placées par position (dites avec tes mots)${manquent.length ? `, ${manquent.length} sans voix (n° ${manquent.join(", ")})` : ""}`);
   const vtrait = path.join(TMP, "voix-traitee.wav");
   voixAnimateur(voix, vtrait);
   // pièces dans l'ordre
@@ -637,9 +680,10 @@ async function montage() {
   writeFileSync(path.join(OUT, "voix-transcript.json"), JSON.stringify({ lang: plan.langue || "fr", duration: r2(duree(mp3)), words: mots, source: "emission-radio" }));
   const auditeurs = plan.clips.filter((c) => (c.role || "auditeur") === "auditeur").length;
   const rapport = [`# 🎙 ${plan.titre || "Émission"}`, "", `Durée : ${(duree(mp3) / 60).toFixed(1)} min — ${auditeurs} auditeur(s), ${anim.length - manquent.length}/${anim.length} phrases de toi.`,
-    ...(manquent.length ? ["", `⚠ Phrases introuvables dans ta voix (sautées) : n° ${manquent.join(", ")}.`] : []),
+    ...(placees.length ? ["", `Phrases dites avec tes mots (placées dans l'ordre) : n° ${placees.join(", ")}.`] : []),
+    ...(manquent.length ? ["", `⚠ Aucun passage de ta voix pour : n° ${manquent.join(", ")}.`] : []),
     "", "| n° | trouvée | prises | début dans ta voix |", "|---|---|---|---|",
-    ...anim.map((x) => `| ${x.n} | ${x.al ? `oui (${Math.round(x.al.score * 100)} %)` : "**non**"} | ${x.al ? x.al.prises : "–"} | ${x.al ? x.al.t0.toFixed(1) + " s" : "–"} |`)];
+    ...anim.map((x) => `| ${x.n} | ${x.al ? (x.al.position ? "oui (tes mots)" : `oui (${Math.round(x.al.score * 100)} %)`) : "**non**"} | ${x.al ? x.al.prises : "–"} | ${x.al ? x.al.t0.toFixed(1) + " s" : "–"} |`)];
   writeFileSync(path.join(OUT, "rapport.md"), rapport.join("\n") + "\n");
   console.log(rapport.slice(0, 4).join("\n"));
 }
