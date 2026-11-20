@@ -122,9 +122,11 @@ async function fusionner(cands) {
   let groupes = null;
   try {
     const j = await ia("Tu es rédacteur en chef. Réponds en JSON valide.",
-      `Voici les sujets retenus pour le live. Regroupe ceux qui parlent du MÊME événement, ou de sa suite directe le même jour
-(même attaque / même vague de frappes et ses répercussions immédiates, même fuite, même procès, même catastrophe). Deux événements
-différents du même conflit (ex. frappes sur Kyiv d'un côté, report d'une décision à Washington de l'autre) restent séparés.
+      `Voici les sujets retenus pour le live. Le public ne doit JAMAIS entendre deux fois la même histoire : regroupe tous ceux qui
+relèvent du MÊME SUJET du jour — même loi ou même vote (à toutes ses étapes), même affaire ou procès, même fuite de données, même
+catastrophe, et pour une guerre ou une crise : même pays visé / même front (ex. tous les sujets « frappes contre l'Iran »,
+« menaces de l'Iran », « report des frappes » = UN groupe ; tous les sujets « missiles / objet tombé en Pologne » = UN groupe).
+Restent séparés : des sujets vraiment distincts (ex. une attaque houthie sur Riyad et le dossier Iran-États-Unis).
 Réponds : {"groupes": [[0, 7], [3, 12, 15]]} (seulement les groupes de 2 sujets ou plus ; [] s'il n'y a aucun doublon).
 
 ${liste}`, { maxTokens: 1500 });
@@ -217,6 +219,8 @@ async function ecrireDossier0(g, rang = 0, depart = 0) {
   const mots_cible = Math.round(Math.max(170, Math.min(520, 120 + g.texte.length / 25)));
   const j = await ia("Tu écris pour un live YouTube d'actualité choc (chaîne « Le Journal du NON »). Réponds en JSON valide.",
     `Écris le DOSSIER ci-dessous pour le présentateur, qui le lira au prompteur.
+HUMOUR NOIR : jamais aux dépens des victimes (violences sexuelles, enfants, morts, sinistrés, malades) ; il vise les puissants,
+les institutions, l'absurde. Aucune image sexuelle ou gore. Français impeccable : aucun mot inventé ou approximatif.
 STYLE : expert géopolitique et analyste, choc, alarmiste mais factuel, humour noir en contrepoint (une touche, pas plus) ; oral,
 phrases courtes ; mini-hook d'ouverture, les faits, UN angle de décryptage — ici : « ${ANGLES[rang % ANGLES.length]} » (n'utilise pas
 d'autre formule toute faite), une punchline, puis UNE question ouverte au public.
@@ -252,6 +256,37 @@ ${g.texte}`, { maxTokens: 3500, depart });
     pays: n.pays || "", faits, chiffre: cle, texte, teaser: String(j.accroche_teaser || "").slice(0, 120), revendication: !!rev, rumeur,
     sources: [...new Map(g.items.filter((x) => x.source).map((x) => [x.source, { nom: x.source, url: x.url || "" }])).values()].slice(0, 6),
   };
+}
+
+// ---------------------------------------------------------------- 3ter) relecture d'ensemble (comme un rédacteur en chef)
+// Lit TOUS les dossiers ensemble : phrase incohérente ou mot qui n'existe pas, humour aux dépens d'une victime, image sexuelle ou
+// gore, affirmation non sourcée, contradiction entre deux dossiers. Seules les phrases citées EXACTEMENT sont remplacées (ou
+// retirées) ; une correction illisible ou qui ajoute un chiffre absent des sources est ignorée. Jamais bloquant.
+async function relire(dossiers) {
+  if (reste() < 6 * 60e3) return;
+  const corps = dossiers.map((d, i) => `### ${i + 1}. ${d.titre}\n${d.texte}`).join("\n\n");
+  let j;
+  try {
+    j = await ia("Tu es rédacteur en chef et juriste d'une émission d'actualité française. Réponds en JSON valide.",
+      `Relis ce script de live. Signale UNIQUEMENT les phrases à corriger :
+- incohérente, mal construite, ou contenant un mot qui n'existe pas en français ;
+- humour ou image aux dépens d'une victime (violences sexuelles, enfants, morts, sinistrés), image sexuelle ou gore ;
+- affirmation présentée comme certaine sans source (au lieu de « selon… », « soupçonné », « présumé ») ;
+- contradiction avec un autre dossier du script.
+Pour chacune : "dossier" (numéro), "phrase" (copiée EXACTEMENT, mot pour mot), "remplacement" (phrase corrigée dans le même style,
+sans ajouter aucun fait ni chiffre ; "" pour la supprimer).
+Réponds : {"corrections": [{"dossier": 3, "phrase": "…", "remplacement": "…"}]} ([] si tout est bon).
+
+${corps}`, { maxTokens: 5000 });
+  } catch (e) { log(`  relecture d'ensemble impossible (${e.message}) : script gardé tel quel`); return; }
+  let n = 0;
+  for (const c of j.corrections || []) {
+    const d = dossiers[Number(c.dossier) - 1], ph = String(c.phrase || "").trim(), rp = String(c.remplacement || "").trim();
+    if (!d || ph.length < 12 || !d.texte.includes(ph)) continue;
+    if (rp && (NOUS.test(rp) || QUEMANDE.test(rp) || HORS_DOSSIER.test(rp) || !chiffres(rp).every((x) => chiffres(d.texte).includes(x)))) continue;
+    d.texte = d.texte.replace(ph, rp).replace(/\s{2,}/g, " ").trim(); n++;
+  }
+  log(`  relecture d'ensemble : ${n} phrase(s) corrigée(s)`);
 }
 
 // ---------------------------------------------------------------- 4) ordre, ouverture, transitions, clôture
@@ -326,6 +361,7 @@ async function main() {
   await Promise.all(Array.from({ length: VOIES }, (_, v) => voie(v)));
   const dossiers = [...ecrits.entries()].sort((a, b) => a[0] - b[0]).map(([, d]) => d);
   if (!dossiers.length) throw new Error("aucun dossier assez solide aujourd'hui (sources ou IA indisponibles) : relance plus tard");
+  await relire(dossiers);
   const { ordre, ouverture, transitions, cloture } = await habiller(dossiers);
   // minutage (débit de lecture) + prompteur avec repères
   let t = 0;
