@@ -29,12 +29,15 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GEMINI_API_KEY: ${{ secrets.EXPLAINER_GEMINI_API_KEY || secrets.GEMINI_API_KEY }}
-  GEMINI_API_KEYS: ${{ secrets.EXPLAINER_GEMINI_API_KEY == '' && secrets.GEMINI_API_KEYS || '' }}
-  GEMINI_API_KEYS_PLUS: ${{ secrets.EXPLAINER_GEMINI_API_KEY == '' && secrets.GEMINI_API_KEYS_PLUS || '' }}
-  GROQ_API_KEY: ${{ secrets.EXPLAINER_GROQ_API_KEY || secrets.GROQ_API_KEY }}
-  GROQ_API_KEYS: ${{ secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS || '' }}
-  GROQ_API_KEYS_PLUS: ${{ secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS_PLUS || '' }}
+  # CLÉS DÉDIÉES à la War Room (facultatives) : secrets WARROOM_GEMINI_API_KEY et WARROOM_GROQ_API_KEY (une ou plusieurs clés,
+  # séparées par des virgules). Si une clé dédiée existe, c'est la SEULE utilisée ici pour ce fournisseur : les quotas de Faceless,
+  # Build Video et des Shorts ne sont jamais entamés. Sans clé dédiée : les clés de Faceless, sinon celles du dépôt.
+  GEMINI_API_KEY: ${{ secrets.WARROOM_GEMINI_API_KEY || secrets.EXPLAINER_GEMINI_API_KEY || secrets.GEMINI_API_KEY }}
+  GEMINI_API_KEYS: ${{ secrets.WARROOM_GEMINI_API_KEY == '' && secrets.EXPLAINER_GEMINI_API_KEY == '' && secrets.GEMINI_API_KEYS || '' }}
+  GEMINI_API_KEYS_PLUS: ${{ secrets.WARROOM_GEMINI_API_KEY == '' && secrets.EXPLAINER_GEMINI_API_KEY == '' && secrets.GEMINI_API_KEYS_PLUS || '' }}
+  GROQ_API_KEY: ${{ secrets.WARROOM_GROQ_API_KEY || secrets.EXPLAINER_GROQ_API_KEY || secrets.GROQ_API_KEY }}
+  GROQ_API_KEYS: ${{ secrets.WARROOM_GROQ_API_KEY == '' && secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS || '' }}
+  GROQ_API_KEYS_PLUS: ${{ secrets.WARROOM_GROQ_API_KEY == '' && secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS_PLUS || '' }}
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   WARROOM_SEUIL: ${{ inputs.seuil || '6' }}
   WARROOM_MAX: ${{ inputs.max_dossiers || '25' }}
