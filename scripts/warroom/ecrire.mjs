@@ -189,6 +189,10 @@ async function enrichir(g) {
   return g;
 }
 
+// étiquettes de plan que certains modèles écrivent dans le texte (« Mini-hook : », « Punchline : », « Question ouverte : »…) : retirées
+const ETIQ = /(^|[.!?…]\s+)(?:mini[\s‑-]?hook|hook|accroche|punchline|chute|question ouverte|question au public|d[ée]cryptage|analyse|angle|les faits|faits|conclusion)\s*:\s*/gi;
+const sansEtiquettes = (t) => String(t).replace(ETIQ, "$1").replace(/(^|[.!?…]\s+)(\p{Ll})/gu, (m, a, c) => a + c.toUpperCase());
+
 // ---------------------------------------------------------------- 3bis) garde-fous contre l'invention
 // a) une citation entre guillemets qui ne figure pas dans les sources = phrase retirée (les expressions courtes, ≤ 3 mots, restent)
 const plat = (x) => String(x).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[’'‘`]/g, "'").replace(/[^a-z0-9' ]+/g, " ").replace(/\s+/g, " ").trim();
@@ -207,7 +211,8 @@ async function verifierFaits(texte, source, depart) {
   try {
     j = await ia("Tu es vérificateur de faits (fact-checker) pour une émission d'actualité. Réponds en JSON valide.",
       `Compare le TEXTE aux SOURCES. Liste chaque phrase du texte qui affirme un FAIT (nom, chiffre, date, lieu, citation, événement,
-détail, « révélation ») ABSENT des sources ou CONTREDIT par elles. Les opinions présentées comme telles, les questions, l'humour et
+détail, « révélation ») ABSENT des sources ou CONTREDIT par elles, et chaque phrase qui présente comme coupable une personne non
+condamnée, ou qui dédouble une même affaire. Les opinions présentées comme telles, les questions, l'humour et
 les punchlines sans fait précis sont acceptés. Pour chaque phrase : "phrase" copiée EXACTEMENT, "correction" = la même phrase rendue
 fidèle aux sources (même ton), ou "" si elle n'a pas de version fidèle.
 Réponds : {"hors_sources": [{"phrase": "…", "correction": "…"}]} ([] si tout est fidèle).
@@ -270,7 +275,9 @@ les concerne directement (jamais de rapprochement forcé).
 JAMAIS « likez », « partagez », « abonnez-vous », ni « écrivez X si… / tapez X si… ».
 EXACTITUDE (protection juridique) : n'utilise QUE les faits des sources ci-dessous ; aucun chiffre, nom, date, citation ou détail
 inventé, aucune « révélation » que les sources ne contiennent pas. Ton analyse est permise, mais présentée comme ton avis (« je pense »,
-« à mon sens »), jamais comme un fait. Une citation entre guillemets doit figurer MOT POUR MOT dans les sources. Une
+« à mon sens »), jamais comme un fait. Une citation entre guillemets doit figurer MOT POUR MOT dans les sources.
+Une personne non condamnée n'est JAMAIS « meurtrier », « coupable », « violeur » : « accusé », « poursuivi », « soupçonné ».
+Si les sources désignent la même affaire ou la même personne de plusieurs façons, c'est UNE seule affaire (ne la dédouble pas). Une
 accusation reste une accusation (« selon… », « soupçonné », « présumé »).${rev ? ` C'est une REVENDICATION de cybercriminels sur leur site de
 fuite, NON CONFIRMÉE : dis-le clairement (« revendique », « affirme », « rien ne confirme pour l'instant »).` : ""}${rumeur ? ` C'est une RUMEUR /
 théorie qui circule : raconte ce qui circule et pourquoi ça prend, puis ce qu'on sait vraiment d'après les vérifications.` : ""}
@@ -283,7 +290,7 @@ Réponds : {"titre_ecran": "…", "texte": "…", "faits_cles": ["…","…","�
 CATÉGORIE : ${n.categorie} — PAYS : ${n.pays || "?"}
 SOURCES (${g.nb_sources}) :
 ${g.texte}`, { maxTokens: 3500, depart, temperature: 0.45 });
-  let texte = String(j.texte || "").replace(/\s+\n/g, "\n").trim();
+  let texte = sansEtiquettes(String(j.texte || "").replace(/\s+\n/g, "\n").trim());
   // contrôle : phrases avec « nous », quémande de likes, ou chiffre absent des sources → retirées
   const phr = texte.split(/(?<=[.!?…])\s+/);
   const bonnes = phr.filter((p) => !NOUS.test(p) && !QUEMANDE.test(p) && !HORS_DOSSIER.test(p) && chiffresSurs(p, g.texte));
@@ -319,7 +326,8 @@ async function relire(dossiers) {
 - contradiction avec un autre dossier du script.
 Pour chacune : "dossier" (numéro), "phrase" (copiée EXACTEMENT, mot pour mot), "remplacement" (phrase corrigée dans le même style,
 sans ajouter aucun fait ni chiffre ; "" pour la supprimer).
-Réponds : {"corrections": [{"dossier": 3, "phrase": "…", "remplacement": "…"}]} ([] si tout est bon).
+Signale aussi les DOSSIERS qui racontent la même histoire (même attaque, même affaire, même loi) : "doublons" = paires de numéros.
+Réponds : {"corrections": [{"dossier": 3, "phrase": "…", "remplacement": "…"}], "doublons": [[1, 10]]} ([] si rien).
 
 ${corps}`, { maxTokens: 5000 });
   } catch (e) { log(`  relecture d'ensemble impossible (${e.message}) : script gardé tel quel`); return; }
@@ -330,6 +338,18 @@ ${corps}`, { maxTokens: 5000 });
     if (rp && (NOUS.test(rp) || QUEMANDE.test(rp) || HORS_DOSSIER.test(rp) || !chiffres(rp).every((x) => chiffres(d.texte).includes(x)))) continue;
     d.texte = d.texte.replace(ph, rp).replace(/\s{2,}/g, " ").trim(); n++;
   }
+  // doublons repérés : on garde le dossier le plus sourcé (puis le plus long), l'autre est retiré du live
+  const retirer = new Set();
+  for (const p of j.doublons || []) {
+    const [a, b] = (Array.isArray(p) ? p : []).map((x) => Number(x) - 1);
+    if (!dossiers[a] || !dossiers[b] || a === b || retirer.has(a) || retirer.has(b)) continue;
+    const poids = (d) => d.sources.length * 1000 + d.texte.length;
+    const perdant = poids(dossiers[a]) >= poids(dossiers[b]) ? b : a;
+    const gagnant = perdant === a ? b : a;
+    dossiers[gagnant].sources = [...new Map([...dossiers[gagnant].sources, ...dossiers[perdant].sources].map((x) => [x.nom, x])).values()].slice(0, 8);
+    retirer.add(perdant);
+  }
+  for (const i of [...retirer].sort((x, y) => y - x)) { log(`  doublon retiré : ${dossiers[i].titre}`); dossiers.splice(i, 1); }
   log(`  relecture d'ensemble : ${n} phrase(s) corrigée(s)`);
 }
 
