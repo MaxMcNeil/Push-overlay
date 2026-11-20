@@ -20,6 +20,12 @@ try {
   mkdirSync("content", { recursive: true });
   writeFileSync("content/transcript.json", JSON.stringify({ lang: j.lang || "fr", duration: d, words }, null, 1));
   writeFileSync("content/script.txt", words.map((x) => x.w).join(" ").replace(/\s+([,.;:!?؟،])/g, "$1") + "\n");
+  // émission radio : qui parle quand → habillage « radio » de la vidéo (micro, téléphone, sonnerie)
+  if (Array.isArray(j.segments) && j.segments.length) {
+    const segments = j.segments.filter((x) => x && isFinite(x.t0) && isFinite(x.t1) && x.t1 > x.t0 && x.qui);
+    writeFileSync("content/radio.json", JSON.stringify({ lang: j.lang || "fr", segments }));
+    console.log(`Émission radio : ${segments.length} passages (animateur, auditeurs, sonneries) → habillage radio`);
+  }
   console.log(`Transcription jointe reprise : ${words.length} mots, langue ${j.lang}, ${(d / 60).toFixed(1)} min — rien à re-transcrire.`);
   process.exit(0);
 } catch (e) {

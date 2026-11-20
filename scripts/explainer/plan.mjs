@@ -997,8 +997,27 @@ async function main() {
   if (maxrateK < 5000 * scale) notes.push(`vidéo longue : débit plafonné à ${(maxrateK / 1000).toFixed(1)} Mb/s pour rester sous 2 Go par fichier${base > 1080 ? " — en 1080 l'image sera plus nette à ce débit" : ""}`);
   // bandeau défilant (format horizontal) : les idées fortes de la vidéo, dans l'ordre, comme une chaîne d'information
   const ticker = [...new Set(scenes.filter((x) => !x.big && x.type !== "outro").map((x) => cutWords(x.data.title || x.data.label || x.data.quote || "", 9).replace(/[.…]+$/, "")).filter((x) => wc(x) >= 2))].slice(0, 60);
+  // ÉMISSION RADIO (voix venue de « Émission radio ») : qui parle quand + volume de la voix (20 fois par seconde) → un micro
+  // « ON AIR » qui pulse sur ta voix, un téléphone sur les auditeurs, la sonnerie qui clignote. Aucun appel d'IA.
+  let radio = null;
+  try {
+    if (existsSync("content/radio.json")) {
+      const r = JSON.parse(readFileSync("content/radio.json", "utf8"));
+      const ve = venv || voiceEnvelope(process.env.EXPLAINER_VOICE_FILE || "input/voice.wav");
+      if (ve && ve.env.length && Array.isArray(r.segments) && r.segments.length) {
+        const step = 0.05, n = Math.ceil(duration / step), ref = Math.max(1e-4, (ve.speech || 0.05) * 1.6);
+        let env = "";
+        for (let k = 0; k < n; k++) { let m = 0; for (let q = k * 5; q < k * 5 + 5 && q < ve.env.length; q++) m = Math.max(m, ve.env[q]); env += Math.round(Math.min(1, m / ref) * 35).toString(36); }
+        const LAB = { ar: ["على الهواء", "مستمع على الخط", "اتصال وارد"], fr: ["EN DIRECT", "AUDITEUR EN LIGNE", "APPEL ENTRANT"],
+          en: ["ON AIR", "CALLER ON THE LINE", "INCOMING CALL"], it: ["IN DIRETTA", "ASCOLTATORE IN LINEA", "CHIAMATA IN ARRIVO"] };
+        radio = { step, env, labels: LAB[lang] || LAB.fr,
+          segments: r.segments.map((x) => ({ t0: +Number(x.t0).toFixed(2), t1: +Number(x.t1).toFixed(2), q: String(x.qui)[0], n: x.n || 0 })) };
+        notes.push(`émission radio : habillage « en direct » (micro sur ta voix, téléphone sur ${new Set(r.segments.filter((x) => x.qui === "auditeur").map((x) => x.n)).size} auditeurs, sonneries)`);
+      }
+    }
+  } catch (e) { console.log(`  habillage radio impossible (${e.message}) : habillage normal`); radio = null; }
   const spec = { w, h, fps: 30, maxrateK, ticker, tickerLabel: pick(L.kicker, lang), grain: total <= 20 * 60, duration: Math.round(total * 30) / 30, voice: duration, voiceEnd: total0, cuts, lang, dir: RTL(lang) ? "rtl" : "ltr", seed: hash(full), themeCode: th.code, theme: th.theme,
-    logo, logoAlpha: logo ? hasAlpha(logo) : false, channel: ch.nom || "", crf: base >= 2160 ? 21 : 19, scenes };
+    logo, logoAlpha: logo ? hasAlpha(logo) : false, channel: ch.nom || "", crf: base >= 2160 ? 21 : 19, scenes, ...(radio ? { radio } : {}) };
   mkdirSync(path.dirname(OUT), { recursive: true });
   for (const f of ["vertical", "horizontal"]) { const p = OUT.replace(/\.json$/, `-${f}.json`); if (existsSync(p)) rmSync(p); }
   // chaque format a son propre écran de fin (durée différente) : même plan, seule la dernière scène change

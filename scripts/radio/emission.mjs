@@ -596,14 +596,20 @@ async function montage() {
   const pieces = [], mots = [];
   let k = 0, t = 0;
   // chaque pièce ajoutée avance l'horloge de l'émission ; ses mots (connus) sont recalés : la vidéo n'a rien à re-transcrire
-  const add = (f, gap = 0.35, ws = []) => {
+  // qui parle quand (pour la vidéo : micro qui pulse sur ta voix, téléphone sur les auditeurs, sonnerie qui clignote)
+  const segs = [];
+  const qui = (q, d, n = 0) => { if (d > 0.05) segs.push({ t0: r2(t), t1: r2(t + d), qui: q, ...(n ? { n } : {}) }); };
+  const numAppel = new Map();
+  const numero = (e) => { if (!numAppel.has(e)) numAppel.set(e, numAppel.size + 1); return numAppel.get(e); };
+  const add = (f, gap = 0.35, ws = [], q = null, n = 0) => {
+    if (q) qui(q, duree(f), n);
     for (const w of ws) mots.push({ t0: r2(t + w[0]), t1: r2(t + w[1]), w: w[2] });
     pieces.push(f); t += duree(f);
     if (gap > 0) { pieces.push(silence(path.join(TMP, `sil-${k++}.wav`), gap)); t += gap; }
   };
   const motsDe = (liste, a, b, decal = 0) => liste.filter((w) => w[0] >= a - 0.01 && w[1] <= b + 0.01).map((w) => [w[0] - a + decal, w[1] - a + decal, w[2]]);
   const motsVoix = rv.words.map((w) => [w.t0, w.t1, w.w]);
-  add(jingle(path.join(TMP, "jingle-debut.wav")), 0.25);
+  add(jingle(path.join(TMP, "jingle-debut.wav")), 0.25, [], "jingle");
   const d = plan.deroule;
   const animPiece = (x) => {
     // marges sans jamais mordre sur le mot d'avant / d'après (autre phrase, prise ratée)
@@ -617,14 +623,14 @@ async function montage() {
     if (x.type === "animateur") {
       if (!x.al || x.fait) continue;
       const f = animPiece(x);
-      add(f, x.mode === "silence" ? 0.15 : 0.3, motsDe(motsVoix, ...x.bornes));
+      add(f, x.mode === "silence" ? 0.15 : 0.3, motsDe(motsVoix, ...x.bornes), "animateur");
     } else if (x.type === "enregistre") {
       // ouverture / fin que TU as préparées (nom « start / intro / générique… ») : diffusées telles quelles, musique comprise
       const c = plan.clips[x.extrait - 1];
       const src = existsSync(path.join(IN, "clips", c.fichier)) ? path.join(IN, "clips", c.fichier) : source(c.fichier);
       const f = path.join(TMP, `enregistre-${i}.wav`);
       sh(["-i", src, "-vn", "-af", `aresample=${SR},aformat=channel_layouts=mono,loudnorm=I=-16:TP=-1.5:LRA=11`, "-ar", String(SR), "-ac", "1", "-c:a", "pcm_s16le", f]);
-      add(f, 0.4, (c.mots || []).map((w) => [w[0], w[1], w[2]]));
+      add(f, 0.4, (c.mots || []).map((w) => [w[0], w[1], w[2]]), "ouverture");
     } else {
       const c = plan.clips[x.extrait - 1];
       const src = source(c.fichier);
@@ -641,7 +647,7 @@ async function montage() {
         }
         if (k > p0.i0) { console.log(`  auditeur ${x.extrait} : salutation retirée (« ${c.mots.slice(p0.i0, k).map((w) => w[2]).join(" ")} »)`); avant = c.mots[k - 1][1]; p0 = { ...p0, t0: c.mots[k][0] }; }
       }
-      if (x.nouvel_appel) add(sonnerie(path.join(TMP, `sonnerie-${i}.wav`)), 0.15);
+      if (x.nouvel_appel) add(sonnerie(path.join(TMP, `sonnerie-${i}.wav`)), 0.15, [], "sonnerie", numero(x.extrait));
       const apres = x.phrases[1] + 1 < c.phrases.length ? c.phrases[x.phrases[1] + 1].t0 : c.duree;
       const b0 = Math.max(p0.t0 - 0.08, Math.min(p0.t0, avant + 0.03));
       const b1 = Math.min(p1.t1 + 0.25, Math.max(p1.t1, apres - 0.03));
@@ -660,11 +666,12 @@ async function montage() {
           `[1:a]adelay=${Math.round(st * 1000)}:all=1[b];[a][b]amix=inputs=2:duration=longest:normalize=0[o]`,
           "-map", "[o]", "-ar", String(SR), "-ac", "1", "-c:a", "pcm_s16le", mix]);
         suivant.fait = true;
+        qui("auditeur", st, numero(x.extrait)); segs.push({ t0: r2(t + st), t1: r2(t + duree(mix)), qui: "animateur" });
         add(mix, 0.12, [...motsDe(c.mots || [], b0, b1), ...motsDe(motsVoix, ...suivant.bornes, st)]);   // l'auditeur enchaîne tout de suite
-      } else add(fin, suivant?.type === "animateur" && suivant.mode === "silence" ? 0.18 : 0.3, motsDe(c.mots || [], b0, b1));
+      } else add(fin, suivant?.type === "animateur" && suivant.mode === "silence" ? 0.18 : 0.3, motsDe(c.mots || [], b0, b1), "auditeur", numero(x.extrait));
     }
   }
-  add(jingle(path.join(TMP, "jingle-fin.wav"), true), 0);
+  add(jingle(path.join(TMP, "jingle-fin.wav"), true), 0, [], "jingle");
   const liste = path.join(TMP, "liste.txt");
   writeFileSync(liste, pieces.map((p) => `file '${path.resolve(p)}'`).join("\n"));
   const brut = path.join(TMP, "emission-brut.wav");
@@ -677,7 +684,7 @@ async function montage() {
   const mp3 = path.join(OUT, "emission.mp3");
   sh(["-i", brut, "-af", `${ln},aresample=44100`, "-ac", "1", "-c:a", "libmp3lame", "-b:a", "160k", mp3]);
   mots.sort((x, y) => x.t0 - y.t0);
-  writeFileSync(path.join(OUT, "voix-transcript.json"), JSON.stringify({ lang: plan.langue || "fr", duration: r2(duree(mp3)), words: mots, source: "emission-radio" }));
+  writeFileSync(path.join(OUT, "voix-transcript.json"), JSON.stringify({ lang: plan.langue || "fr", duration: r2(duree(mp3)), words: mots, segments: segs, source: "emission-radio" }));
   const auditeurs = plan.clips.filter((c) => (c.role || "auditeur") === "auditeur").length;
   const rapport = [`# 🎙 ${plan.titre || "Émission"}`, "", `Durée : ${(duree(mp3) / 60).toFixed(1)} min — ${auditeurs} auditeur(s), ${anim.length - manquent.length}/${anim.length} phrases de toi.`,
     ...(placees.length ? ["", `Phrases dites avec tes mots (placées dans l'ordre) : n° ${placees.join(", ")}.`] : []),
