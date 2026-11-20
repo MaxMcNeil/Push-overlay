@@ -64,13 +64,23 @@ async function googleNews() {
   return out;
 }
 
+// GDELT répond parfois en texte (limite de débit, requête refusée) : le motif est écrit dans le journal, et un essai de plus
+async function getGdelt(url, o) {
+  for (let k = 0; k < 2; k++) {
+    const t = await get(url, { ...o, json: false });
+    if (t == null) { console.log("  GDELT : pas de réponse"); continue; }
+    try { return JSON.parse(t); } catch { console.log(`  GDELT : ${t.slice(0, 160).replace(/\s+/g, " ")}`); await dormir(8000); }
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------- presse mondiale : GDELT (ton très négatif = choc)
 async function gdelt() {
   const out = [];
   const qs = ["(killed OR dead OR massacre OR disaster OR explosion)", "(scandal OR corruption OR leaked OR exposed OR arrested)",
     "(cyberattack OR hackers OR ransomware OR breach)", "(missile OR airstrike OR invasion OR coup)"];
   for (const q of qs) {
-    const j = await get(`https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(q + " tone<-6 sourcelang:english")}&mode=artlist&maxrecords=60&timespan=24h&sort=hybridrel&format=json`, { json: true, timeout: 40000 });
+    const j = await getGdelt(`https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(q + " tone<-6 sourcelang:english")}&mode=artlist&maxrecords=60&timespan=24h&sort=hybridrel&format=json`, { json: true, timeout: 40000 });
     for (const a of j?.articles || []) {
       const d = String(a.seendate || "").replace(/^(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d)Z$/, "$1-$2-$3T$4:$5:$6Z");
       if (!a.title || !recent(d)) continue;
@@ -122,10 +132,10 @@ async function catastrophes() {
   const out = [];
   const q = await get("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson", { json: true });
   for (const f of q?.features || []) {
-    const p = f.properties || {}; if (!(p.mag >= 6 || p.alert === "orange" || p.alert === "red" || p.tsunami)) continue;
+    const p = f.properties || {}; if (!(p.mag >= 6 || p.alert === "orange" || p.alert === "red")) continue;   // (le champ « tsunami » de l'USGS n'est PAS une alerte : ignoré)
     const [lon, lat] = f.geometry?.coordinates || [];
-    out.push({ titre: `Séisme de magnitude ${p.mag} — ${p.place}${p.tsunami ? " (alerte tsunami)" : ""}`, url: p.url, source: "USGS (institut géologique américain)",
-      date: new Date(p.time).toISOString(), resume: `Magnitude ${p.mag}, profondeur ${Math.round(f.geometry?.coordinates?.[2] || 0)} km. Alerte : ${p.alert || "aucune"}.`,
+    out.push({ titre: `Séisme de magnitude ${Math.round(p.mag * 10) / 10} — ${p.place}`, url: p.url, source: "USGS (institut géologique américain)",
+      date: new Date(p.time).toISOString(), resume: `Magnitude ${Math.round(p.mag * 10) / 10}, profondeur ${Math.round(f.geometry?.coordinates?.[2] || 0)} km. Niveau d'alerte PAGER (victimes et dégâts estimés) : ${p.alert || "non publié"}.`,
       origine: "usgs", theme: "catastrophe", officiel: true, lat, lon, chiffre: p.mag });
   }
   const g = await get("https://www.gdacs.org/xml/rss_24h.xml");

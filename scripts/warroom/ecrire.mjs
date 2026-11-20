@@ -72,9 +72,16 @@ async function trier(groupes) {
   guerre, escalade, fuite, révélation, piratage, fait divers grave, insolite et grave, rumeur/complot qui fait le buzz). 0 = banal, sport,
   people sans gravité, promotion, publicité, météo ordinaire, bourse ordinaire.
 - "categorie" : CATASTROPHE, ACCIDENT, SCANDALE, CORRUPTION, POLITIQUE, GÉOPOLITIQUE, GUERRE, RÉVÉLATION, CYBER, FAIT DIVERS, INSOLITE ou RUMEUR.
+  Échelle MONDIALE : un accident ou un fait divers local avec une seule victime vaut 4 au plus (sauf circonstances inouïes) ;
+  une guerre qui s'étend, une catastrophe meurtrière, un scandale d'État, une fuite massive valent 8 à 10.
+- "actuel" : true si c'est un FAIT NOUVEAU des dernières 48 h ; false si c'est un récit du passé, un portrait, une rétrospective,
+  un anniversaire, un documentaire, une série, un livre, une analyse sans fait nouveau.
+- "categorie" : CATASTROPHE, ACCIDENT, SCANDALE, CORRUPTION, POLITIQUE, GÉOPOLITIQUE, GUERRE, RÉVÉLATION, CYBER, FAIT DIVERS, INSOLITE ou RUMEUR.
+- "evenement" : l'événement en 3 à 8 mots, nommé de façon CANONIQUE (ex. « missile houthi sur gratte-ciel de Riyad »), pour repérer
+  les doublons : deux sujets sur le même événement doivent recevoir la même formulation.
 - "doublon_de" : numéro d'un AUTRE sujet de la liste qui parle du même événement, sinon 0.
 - "pays" : pays principal concerné (en français), "ville" si connue.
-Réponds : {"sujets": [{"id": 12, "choc": 8, "categorie": "SCANDALE", "doublon_de": 0, "pays": "France", "ville": ""}, …]}
+Réponds : {"sujets": [{"id": 12, "choc": 8, "actuel": true, "categorie": "SCANDALE", "evenement": "…", "doublon_de": 0, "pays": "France", "ville": ""}, …]}
 
 ${liste}`, { maxTokens: 6000 });
       for (const s of j.sujets || []) if (s && isFinite(s.id)) notes.set(Number(s.id), s);
@@ -87,6 +94,55 @@ ${liste}`, { maxTokens: 6000 });
     if (cible) { cible.items.push(...g.items); cible.nb_sources = new Set(cible.items.map((x) => (x.source || "").toLowerCase())).size; cible.officiel ||= g.officiel; g.fusionne = true; }
   }
   return groupes.filter((g) => !g.fusionne).map((g) => ({ ...g, note: notes.get(g.id) })).filter((g) => g.note);
+}
+
+// ---------------------------------------------------------------- 2ter) un seul dossier par événement (sur toute la liste)
+// Les paquets de tri ne se voient pas entre eux : la même frappe peut sortir 3 fois. L'IA regroupe la liste finale ; un même
+// événement ou sa suite directe du jour (ex. frappes sur Kyiv + projectile tombé en Pologne) = UN dossier, toutes sources réunies.
+function fusionnerDans(cible, g) {
+  cible.items.push(...g.items);
+  cible.nb_sources = new Set(cible.items.map((x) => (x.source || "").toLowerCase().replace(/^www\./, ""))).size;
+  cible.officiel ||= g.officiel; cible.revendication &&= g.revendication;
+  if (Number(g.note.choc) > Number(cible.note.choc)) cible.note = { ...cible.note, choc: g.note.choc };
+  g.fusionne = true;
+}
+async function fusionner(cands) {
+  const liste = cands.map((g, i) => `#${i} [${g.note.pays || "?"}] ${g.note.evenement || ""} :: ${g.items.slice(0, 3).map((x) => x.titre).join(" | ").slice(0, 260)}`).join("\n");
+  let groupes = null;
+  try {
+    const j = await ia("Tu es rédacteur en chef. Réponds en JSON valide.",
+      `Voici les sujets retenus pour le live. Regroupe ceux qui parlent du MÊME événement, ou de sa suite directe le même jour
+(même attaque / même vague de frappes et ses répercussions immédiates, même fuite, même procès, même catastrophe). Deux événements
+différents du même conflit (ex. frappes sur Kyiv d'un côté, report d'une décision à Washington de l'autre) restent séparés.
+Réponds : {"groupes": [[0, 7], [3, 12, 15]]} (seulement les groupes de 2 sujets ou plus ; [] s'il n'y a aucun doublon).
+
+${liste}`, { maxTokens: 1500 });
+    groupes = Array.isArray(j.groupes) ? j.groupes : null;
+  } catch (e) { log(`  regroupement par l'IA impossible (${e.message}) : regroupement par mots-clés`); }
+  if (!groupes) {        // repli : même pays et événement formulé presque pareil
+    groupes = [];
+    const vus = new Set();
+    cands.forEach((a, i) => {
+      if (vus.has(i)) return;
+      const ma = new Set(mots(a.note.evenement || a.items[0].titre)), g = [i];
+      cands.forEach((b, k) => {
+        if (k <= i || vus.has(k) || (a.note.pays || "") !== (b.note.pays || "")) return;
+        const mb = new Set(mots(b.note.evenement || b.items[0].titre));
+        let inter = 0; for (const w of ma) if (mb.has(w)) inter++;
+        if (inter / Math.max(2, Math.min(ma.size, mb.size)) >= 0.5) { g.push(k); vus.add(k); }
+      });
+      if (g.length > 1) groupes.push(g);
+    });
+  }
+  let n = 0;
+  for (const grp of groupes) {
+    const gs = [...new Set((grp || []).map(Number))].filter((i) => cands[i] && !cands[i].fusionne).map((i) => cands[i]);
+    if (gs.length < 2) continue;
+    gs.sort((a, b) => b.nb_sources - a.nb_sources || Number(b.note.choc) - Number(a.note.choc));
+    for (const g of gs.slice(1)) { fusionnerDans(gs[0], g); n++; }
+  }
+  log(`  ${n} doublon(s) fusionné(s) : ${cands.length - n} événements distincts`);
+  return cands.filter((g) => !g.fusionne);
 }
 
 // ---------------------------------------------------------------- 3) lire les vrais articles
@@ -122,20 +178,32 @@ async function enrichir(g) {
 
 // ---------------------------------------------------------------- 3bis) écrire un dossier
 const NOUS = /\b(nous|notre|nos)\b/i;
+const HORS_DOSSIER = /\bbienvenue\b|dans les commentaires|en commentaire/i;     // l'accueil est dans l'ouverture seulement ; questions ouvertes, sans consigne
+const ANGLES = [
+  "qui gagne, qui perd",
+  "ce qu'on ne vous dit pas (l'angle mort de l'affaire)",
+  "la conséquence concrète pour le public",
+  "le précédent ou le schéma qui se répète",
+  "la question qui fâche que personne ne pose",
+  "le détail qui change tout dans ce dossier",
+];
 const QUEMANDE = /\b(likez|liker|partagez|abonnez|abonnez-vous|mettez un pouce|lâchez un like)\b|[ée]crivez\s+\S+\s+(dans le chat\s+)?si\b|tapez\s+\S+\s+si\b/i;
 const chiffres = (s) => (String(s).match(/\d[\d\s.,]*\d|\d/g) || []).map((n) => n.replace(/[\s.,]/g, "")).filter((n) => n.length >= 2);
 function chiffresSurs(texte, source) {
   const ok = new Set(chiffres(source));
   return chiffres(texte).every((n) => ok.has(n) || /^(19|20)\d\d$/.test(n) || n.length < 2);
 }
-async function ecrireDossier(g) {
+async function ecrireDossier(g, rang = 0) {
   const n = g.note, rev = g.revendication, rumeur = n.categorie === "RUMEUR";
   const mots_cible = Math.round(Math.max(170, Math.min(520, 120 + g.texte.length / 25)));
   const j = await ia("Tu écris pour un live YouTube d'actualité choc (chaîne « Le Journal du NON »). Réponds en JSON valide.",
     `Écris le DOSSIER ci-dessous pour le présentateur, qui le lira au prompteur.
-STYLE : expert géopolitique et analyste, choc, alarmiste mais factuel, humour noir en contrepoint ; oral, phrases courtes ; mini-hook
-d'ouverture, les faits, le décryptage (qui gagne, qui perd, ce qu'on ne vous dit pas), une punchline, puis UNE question ouverte au public.
-HORS DU CONTEXTE : jamais « nous », « notre », « nos » ; dis « la France », « les Français », « vous », « je ».
+STYLE : expert géopolitique et analyste, choc, alarmiste mais factuel, humour noir en contrepoint (une touche, pas plus) ; oral,
+phrases courtes ; mini-hook d'ouverture, les faits, UN angle de décryptage — ici : « ${ANGLES[rang % ANGLES.length]} » (n'utilise pas
+d'autre formule toute faite), une punchline, puis UNE question ouverte au public.
+Le dossier est lu au milieu du live : pas de « Bienvenue », pas de salut, pas de « dans les commentaires ».
+HORS DU CONTEXTE : jamais « nous », « notre », « nos » ; dis « vous », « je ». Ne parle de la France ou des Français QUE si le sujet
+les concerne directement (jamais de rapprochement forcé).
 JAMAIS « likez », « partagez », « abonnez-vous », ni « écrivez X si… / tapez X si… ».
 EXACTITUDE (protection juridique) : n'utilise QUE les faits des sources ci-dessous ; aucun chiffre, nom, date ou citation inventé. Une
 accusation reste une accusation (« selon… », « soupçonné », « présumé »).${rev ? ` C'est une REVENDICATION de cybercriminels sur leur site de
@@ -153,8 +221,8 @@ ${g.texte}`, { maxTokens: 3500 });
   let texte = String(j.texte || "").replace(/\s+\n/g, "\n").trim();
   // contrôle : phrases avec « nous », quémande de likes, ou chiffre absent des sources → retirées
   const phr = texte.split(/(?<=[.!?…])\s+/);
-  const bonnes = phr.filter((p) => !NOUS.test(p) && !QUEMANDE.test(p) && chiffresSurs(p, g.texte));
-  if (bonnes.length < phr.length) log(`    ${phr.length - bonnes.length} phrase(s) retirée(s) (chiffre absent des sources, « nous » ou appel au like)`);
+  const bonnes = phr.filter((p) => !NOUS.test(p) && !QUEMANDE.test(p) && !HORS_DOSSIER.test(p) && chiffresSurs(p, g.texte));
+  if (bonnes.length < phr.length) log(`    ${phr.length - bonnes.length} phrase(s) retirée(s) (chiffre absent des sources, « nous », salut ou appel au like)`);
   texte = bonnes.join(" ");
   const cle = j.chiffre_cle && j.chiffre_cle.valeur && chiffresSurs(j.chiffre_cle.valeur, g.texte) ? { valeur: String(j.chiffre_cle.valeur).slice(0, 18), libelle: String(j.chiffre_cle.libelle || "").slice(0, 60) } : null;
   const faits = (Array.isArray(j.faits_cles) ? j.faits_cles : []).map((x) => String(x).slice(0, 80)).filter((x) => x && chiffresSurs(x, g.texte)).slice(0, 3);
@@ -180,15 +248,17 @@ async function habiller(dossiers) {
   puis la phrase d'accueil exacte « Bienvenue dans le Journal du NON, et la réponse est Non. », puis une question ouverte au public ;
 - "transitions" : pour chaque dossier à partir du 2e, UNE phrase (10 à 25 mots) qui fait le lien avec le précédent et accroche ;
 - "cloture" (60 à 110 mots) : la bombe est passée, synthèse percutante, question ouverte au public, rendez-vous au prochain live SANS date.
-Règles : jamais « nous / notre / nos », jamais « likez / partagez / abonnez-vous », jamais « écrivez X si… ». Rien d'inventé.
+Règles : jamais « nous / notre / nos », jamais « likez / partagez / abonnez-vous », jamais « écrivez X si… », jamais « dans les
+commentaires ». Ne parle de la France que si un dossier la concerne. Rien d'inventé.
 Réponds : {"ouverture": "…", "transitions": ["…", …], "cloture": "…"}
 
 ${ordre.map((d, i) => `${i + 1}. [${d.categorie}] ${d.titre} — ${d.teaser || d.faits[0] || ""}`).join("\n")}`, { maxTokens: 3000 });
   } catch (e) { log(`  ouverture/transitions impossibles (${e.message}) : repli sobre`); }
-  const propre = (s) => String(s || "").split(/(?<=[.!?…])\s+/).filter((p) => !NOUS.test(p) && !QUEMANDE.test(p)).join(" ").trim();
+  const propre = (s, accueil = false) => String(s || "").split(/(?<=[.!?…])\s+/)
+    .filter((p) => !NOUS.test(p) && !QUEMANDE.test(p) && !/dans les commentaires|en commentaire/i.test(p) && (accueil || !/\bbienvenue\b/i.test(p))).join(" ").trim();
   return {
     ordre,
-    ouverture: propre(hab.ouverture) || "Bienvenue dans le Journal du NON, et la réponse est Non. L'actualité du jour ne va pas vous rassurer.",
+    ouverture: propre(hab.ouverture, true) || "Bienvenue dans le Journal du NON, et la réponse est Non. L'actualité du jour ne va pas vous rassurer.",
     transitions: ordre.map((_, i) => (i ? propre((hab.transitions || [])[i - 1]) : "")),
     cloture: propre(hab.cloture) || "Voilà pour ce tour de la War Room. Et vous, quel dossier vous inquiète le plus ce soir ?",
   };
@@ -204,15 +274,16 @@ async function main() {
   log(`${groupes.length} événements distincts`);
   const notes = await trier(groupes);
   const solides = notes.filter((g) => g.nb_sources >= 2 || g.officiel || g.revendication);
-  const retenus = solides.filter((g) => Number(g.note.choc) >= Number(process.env.WARROOM_SEUIL || 6))
+  const candidats = solides.filter((g) => g.note.actuel !== false && Number(g.note.choc) >= Number(process.env.WARROOM_SEUIL || 6))
     .sort((a, b) => (Number(b.note.choc) + (b.officiel ? 0.5 : 0) + Math.min(1.5, b.nb_sources * 0.25)) - (Number(a.note.choc) + (a.officiel ? 0.5 : 0) + Math.min(1.5, a.nb_sources * 0.25)))
-    .slice(0, MAX_DOSSIERS + 6);                   // quelques réserves si un dossier ne tient pas après contrôle
+    .slice(0, MAX_DOSSIERS + 20);
+  const retenus = (await fusionner(candidats)).slice(0, MAX_DOSSIERS + 6);   // quelques réserves si un dossier ne tient pas après contrôle
   log(`${solides.length} sujets solides (≥ 2 sources ou source officielle), ${retenus.length} assez choc retenus`);
   const dossiers = [];
   for (const g of retenus) {
     if (dossiers.length >= MAX_DOSSIERS || reste() < 8 * 60e3) break;
     await enrichir(g);
-    try { const d = await ecrireDossier(g); dossiers.push(d); log(`  ✓ [${d.categorie}] ${d.titre} (${d.texte.split(/\s+/).length} mots, ${g.nb_sources} sources)`); }
+    try { const d = await ecrireDossier(g, dossiers.length); dossiers.push(d); log(`  ✓ [${d.categorie}] ${d.titre} (${d.texte.split(/\s+/).length} mots, ${g.nb_sources} sources)`); }
     catch (e) { log(`  ✗ ${g.items[0].titre.slice(0, 80)} : ${e.message}`); }
   }
   if (!dossiers.length) throw new Error("aucun dossier assez solide aujourd'hui (sources ou IA indisponibles) : relance plus tard");
