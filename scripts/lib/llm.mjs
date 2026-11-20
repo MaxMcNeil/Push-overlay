@@ -76,6 +76,20 @@ export async function geminiKeyOk(key) {
 
 /** Gemini : renvoie le texte. ctx.audio = part inlineData facultative ; ctx.parts = autres parts (images) facultatives. */
 export async function callGemini(sys, user, ctx = {}) {
+  try { return await callGemini0(sys, user, ctx); }
+  catch (e) {
+    // TOUS les modèles surchargés ou trop lents chez Google (passager) : une pause, puis un dernier tour — au lieu de
+    // basculer tout de suite sur une IA moins bonne ou sur le repli sans IA. Jamais pour un quota du jour ni une clé morte.
+    const left = ctx.deadline ? ctx.deadline - Date.now() : Infinity;
+    if (ctx._patience || left < 150000 || !/surcharg|trop lent|délai|timeout|aborted|aucun modèle Gemini disponible|50[03]/i.test(e.message)) throw e;
+    console.log("  Gemini : tous les modèles surchargés pour l'instant → pause 60 s, puis nouvel essai");
+    await sleep(60000);
+    for (const [m, t] of health.cool) if (t - Date.now() < 6 * 60 * 1000) health.cool.delete(m);   // seulement les pauses courtes
+    return callGemini0(sys, user, { ...ctx, _patience: true });
+  }
+}
+
+async function callGemini0(sys, user, ctx = {}) {
   const keys = rotate(geminiKeys());
   if (!keys.length) throw new Error("aucune clé Gemini");
   const models = await geminiModels(keys[0]);
@@ -211,18 +225,35 @@ async function groqModels(key) {
   } catch {}
   const ranked = [];
   for (const re of GROQ_PREF) for (const id of ids) if (re.test(id) && !ranked.includes(id)) ranked.push(id);
-  groqModelCache = (ranked.length ? ranked : ids).slice(0, 3);
+  groqModelCache = (ranked.length ? ranked : ids).slice(0, 6);
+  // un modèle qui accepte les GROS textes (offre gratuite, jetons/minute élevés) est toujours gardé en réserve
+  for (const id of ids) if (/llama-4-scout|llama-3\.3-70b/.test(id) && !groqModelCache.includes(id)) groqModelCache.push(id);
   if (!groqModelCache.length) groqModelCache = ["openai/gpt-oss-120b", "llama-3.3-70b-versatile"];
   console.log(`  Groq : modèles disponibles retenus = ${groqModelCache.join(", ")}`);
   return groqModelCache;
 }
 
+// Capacité d'une requête (offre gratuite = jetons PAR MINUTE, réponse comprise). Valeurs de départ prudentes, puis APPRISES :
+// un refus 413 dit « Limit 8000, Requested 9500 » → la vraie limite est retenue pour la suite du run.
+const GROQ_CAP0 = [[/llama-4-scout/, 30000], [/llama-3\.3-70b/, 12000], [/kimi-k2/, 10000], [/gpt-oss/, 8000], [/./, 6000]];
+const groqCap = new Map();
+const capOf = (m) => groqCap.get(m) || GROQ_CAP0.find(([re]) => re.test(m))[1];
+// estimation des jetons : ~3,5 caractères par jeton en écriture latine, ~2 en arabe
+const jetons = (t) => { const s = String(t || ""), ar = (s.match(/[\u0600-\u06FF]/g) || []).length; return Math.ceil((s.length - ar) / 3.5 + ar / 2); };
+
 export async function callGroq(sys, user, ctx = {}) {
   const keys = rotate(groqKeys());
   if (!keys.length) throw new Error("aucune clé Groq");
   const models = await groqModels(rotate(groqKeys())[0] || "");
-  let mi = 0, noEffort = false, jsonOff = ctx.json === false;
-  let model = models[0];
+  let noEffort = false, jsonOff = ctx.json === false;
+  const besoin = jetons(sys) + jetons(user) + 300;
+  const veut = Math.min(ctx.maxTokens || 4096, Number(process.env.GROQ_MAX_TOKENS || 4096));
+  // choix INTELLIGENT : le meilleur modèle dont la capacité contient la demande (au moins 1 000 jetons de réponse)
+  const tient = (m) => capOf(m) - besoin >= Math.min(veut, 1000);
+  const large = (m) => capOf(m) - besoin >= veut;             // assez de place pour une réponse COMPLÈTE
+  const ordre = [...new Set([...models.filter(large), ...models.filter(tient), ...models])];
+  let mi = 0, model = ordre[0];
+  const maxTok = () => Math.max(512, Math.min(veut, capOf(model) - besoin));
   let lastErr = new Error("Groq indisponible");
   for (let round = 0; round < 3; round++) {
     let wait = 0;
@@ -232,7 +263,7 @@ export async function callGroq(sys, user, ctx = {}) {
         headers: { "content-type": "application/json", authorization: `Bearer ${keys[ki]}` },
         body: JSON.stringify({
           // l'offre gratuite compte max_tokens dans la limite par minute (≈ 12 000) : on plafonne la réponse
-          model, temperature: ctx.temperature ?? 0.6, max_tokens: Math.min(ctx.maxTokens || 4096, Number(process.env.GROQ_MAX_TOKENS || 4096)),
+          model, temperature: ctx.temperature ?? 0.6, max_tokens: maxTok(),
           ...(/gpt-oss/.test(model) && !noEffort ? { reasoning_effort: "low" } : {}), // réflexion courte : la réponse garde sa place
           ...(jsonOff ? {} : { response_format: { type: "json_object" } }),
           messages: [{ role: "system", content: sys }, { role: "user", content: user }],
@@ -245,7 +276,17 @@ export async function callGroq(sys, user, ctx = {}) {
         console.log(`  Groq (clé ${ki + 1}/${keys.length}) : limite atteinte → clé suivante`);
         continue;
       }
-      if (res.status === 413) throw new Error("Groq : texte trop long pour l'offre gratuite (413)");
+      if (res.status === 413) {
+        // trop gros pour CE modèle : on retient sa vraie limite et on passe au modèle suivant qui peut le contenir
+        const t = await res.text().catch(() => "");
+        const lim = Number((t.match(/Limit\s*(\d+)/i) || [])[1]);
+        if (lim) groqCap.set(model, lim);
+        const suivants = ordre.slice(mi + 1).filter(tient);
+        lastErr = new Error(`Groq ${model} : texte trop long pour l'offre gratuite (413)`);
+        if (!suivants.length) throw new Error(`Groq : texte trop long pour tous les modèles gratuits (${besoin} jetons) — à découper`);
+        mi = ordre.indexOf(suivants[0]); model = suivants[0];
+        console.log(`  Groq : texte trop long → modèle plus large : ${model}`); ki--; continue;
+      }
       if (!res.ok) {
         const full = await res.text(), body = full.slice(0, 180);
         // mode JSON strict de Groq : réponse un peu hors format refusée. Le texte produit est dans « failed_generation » :
@@ -257,8 +298,8 @@ export async function callGroq(sys, user, ctx = {}) {
         }
         lastErr = new Error(`Groq ${model} : HTTP ${res.status} ${body}`); console.log(`  ${lastErr.message}`);
         if (res.status === 400 && /reasoning_effort/i.test(body) && !noEffort) { noEffort = true; ki--; continue; }
-        if ((res.status === 404 || res.status === 400) && /model|decommission|not exist|not found/i.test(body) && mi < models.length - 1) {
-          model = models[++mi]; console.log(`  Groq : modèle suivant → ${model}`); ki--; // même clé, autre modèle
+        if ((res.status === 404 || res.status === 400) && /model|decommission|not exist|not found/i.test(body) && mi < ordre.length - 1) {
+          model = ordre[++mi]; console.log(`  Groq : modèle suivant → ${model}`); ki--; // même clé, autre modèle
         }
         continue;
       }
