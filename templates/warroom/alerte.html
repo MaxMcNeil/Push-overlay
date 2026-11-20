@@ -15,7 +15,7 @@ html,body{width:1080px;height:1920px;overflow:hidden;background:transparent}
 <script>
 const $=(i)=>document.getElementById(i),c=(x)=>Math.max(0,Math.min(1,x));let D=1.2;
 window.init=async function(spec){D=spec.duration||1.2;await document.fonts.ready;seek(0);return{scenes:[]}};
-window.seek=function(t){const p=t/D,inn=c(p/.15),out=1-c((p-.6)/.4),a=inn*out;
+window.seek=function(t){const p=t/D,inn=c(p/.15),out=1-c((p-.55)/.35),a=inn*out;
   $("f").style.opacity=(a*(.7+.3*Math.sin(t*60))).toFixed(3);
   $("t").style.opacity=a;$("s").style.opacity=a*.9;$("t").style.transform=`scale(${1.25-.25*inn}) translateX(${(Math.sin(t*90)*10*(1-inn+.2)).toFixed(1)}px)`;
   [["b1",.2],["b2",.5],["b3",.8]].forEach(([id,k])=>{const y=((t*1900*(1+k))%1920);$(id).style.top=y+"px";$(id).style.opacity=a*.8});return 1};
