@@ -66,7 +66,7 @@ async function trier(groupes) {
     const lot = groupes.slice(k, k + 60);
     const liste = lot.map((g) => `#${g.id} [${g.nb_sources} source(s)${g.officiel ? ", officiel" : ""}${g.revendication ? ", REVENDICATION non confirmée" : ""}] ${g.items.slice(0, 3).map((x) => x.titre).join(" | ").slice(0, 300)}`).join("\n");
     try {
-      const j = await ia("Tu es rédacteur en chef d'une émission d'actualité choc. Réponds en JSON valide.",
+      const j = await ia("Tu es rédacteur en chef d'une émission d'actualité choc pour un public FRANÇAIS. Réponds en JSON valide.",
         `Pour chaque sujet ci-dessous (actualité des dernières 24 h), donne :
 - "choc" : 0 à 10 = à quel point il CHOQUE, INDIGNE ou INQUIÈTE le grand public (catastrophe, morts, scandale, corruption, accident grave,
   guerre, escalade, fuite, révélation, piratage, fait divers grave, insolite et grave, rumeur/complot qui fait le buzz). 0 = banal, sport,
@@ -74,6 +74,10 @@ async function trier(groupes) {
 - "categorie" : CATASTROPHE, ACCIDENT, SCANDALE, CORRUPTION, POLITIQUE, GÉOPOLITIQUE, GUERRE, RÉVÉLATION, CYBER, FAIT DIVERS, INSOLITE ou RUMEUR.
   Échelle MONDIALE : un accident ou un fait divers local avec une seule victime vaut 4 au plus (sauf circonstances inouïes) ;
   une guerre qui s'étend, une catastrophe meurtrière, un scandale d'État, une fuite massive valent 8 à 10.
+- "interet_fr" : 0 à 10 = à quel point un Français moyen s'y intéresse et en parlerait. Tout ce qui se passe EN FRANCE ou touche
+  directement les Français (victimes françaises, argent, prix, énergie, sécurité, Europe, guerre aux portes de l'Europe, grandes
+  puissances, menace mondiale, buzz mondial) = 7 à 10. Un événement lointain sans lien avec la France (petit pays, politique locale
+  étrangère, fait divers à l'étranger) = 0 à 3, même s'il est grave, SAUF s'il est d'une ampleur exceptionnelle.
 - "actuel" : true si c'est un FAIT NOUVEAU des dernières 48 h ; false si c'est un récit du passé, un portrait, une rétrospective,
   un anniversaire, un documentaire, une série, un livre, une analyse sans fait nouveau.
 - "categorie" : CATASTROPHE, ACCIDENT, SCANDALE, CORRUPTION, POLITIQUE, GÉOPOLITIQUE, GUERRE, RÉVÉLATION, CYBER, FAIT DIVERS, INSOLITE ou RUMEUR.
@@ -81,7 +85,7 @@ async function trier(groupes) {
   les doublons : deux sujets sur le même événement doivent recevoir la même formulation.
 - "doublon_de" : numéro d'un AUTRE sujet de la liste qui parle du même événement, sinon 0.
 - "pays" : pays principal concerné (en français), "ville" si connue.
-Réponds : {"sujets": [{"id": 12, "choc": 8, "actuel": true, "categorie": "SCANDALE", "evenement": "…", "doublon_de": 0, "pays": "France", "ville": ""}, …]}
+Réponds : {"sujets": [{"id": 12, "choc": 8, "interet_fr": 9, "actuel": true, "categorie": "SCANDALE", "evenement": "…", "doublon_de": 0, "pays": "France", "ville": ""}, …]}
 
 ${liste}`, { maxTokens: 6000 });
       for (const s of j.sujets || []) if (s && isFinite(s.id)) notes.set(Number(s.id), s);
@@ -274,10 +278,19 @@ async function main() {
   log(`${groupes.length} événements distincts`);
   const notes = await trier(groupes);
   const solides = notes.filter((g) => g.nb_sources >= 2 || g.officiel || g.revendication);
-  const candidats = solides.filter((g) => g.note.actuel !== false && Number(g.note.choc) >= Number(process.env.WARROOM_SEUIL || 6))
-    .sort((a, b) => (Number(b.note.choc) + (b.officiel ? 0.5 : 0) + Math.min(1.5, b.nb_sources * 0.25)) - (Number(a.note.choc) + (a.officiel ? 0.5 : 0) + Math.min(1.5, a.nb_sources * 0.25)))
-    .slice(0, MAX_DOSSIERS + 20);
-  const retenus = (await fusionner(candidats)).slice(0, MAX_DOSSIERS + 6);   // quelques réserves si un dossier ne tient pas après contrôle
+  // AUDIENCE FRANÇAISE : la France d'abord ; l'international seulement s'il mérite vraiment l'attention des Français (≥ 7/10),
+  // et jamais plus de 40 % des dossiers
+  const enFrance = (g) => /^france$/i.test(String(g.note.pays || "").trim());
+  const interet = (g) => (enFrance(g) ? 10 : Number(g.note.interet_fr) || 0);
+  const score = (g) => Number(g.note.choc) + 0.6 * interet(g) + (g.officiel ? 0.5 : 0) + Math.min(1.5, g.nb_sources * 0.25);
+  const candidats = solides.filter((g) => g.note.actuel !== false && Number(g.note.choc) >= Number(process.env.WARROOM_SEUIL || 6) && interet(g) >= 7)
+    .sort((a, b) => score(b) - score(a))
+    .slice(0, MAX_DOSSIERS + 25);
+  const uniques = await fusionner(candidats);
+  const maxMonde = Math.max(2, Math.floor((MAX_DOSSIERS + 6) * 0.4));
+  let nMonde = 0;
+  const retenus = uniques.filter((g) => enFrance(g) || nMonde++ < maxMonde).slice(0, MAX_DOSSIERS + 6);   // quelques réserves si un dossier ne tient pas
+  log(`  ${retenus.filter(enFrance).length} sujets France, ${retenus.filter((g) => !enFrance(g)).length} internationaux qui concernent la France`);
   log(`${solides.length} sujets solides (≥ 2 sources ou source officielle), ${retenus.length} assez choc retenus`);
   const dossiers = [];
   for (const g of retenus) {

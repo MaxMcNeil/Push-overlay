@@ -31,25 +31,32 @@ const txt = (s) => String(s || "").replace(/<!\[CDATA\[|\]\]>/g, "").replace(/<[
 const tag = (x, t) => (x.match(new RegExp(`<${t}[^>]*>([\\s\\S]*?)</${t}>`, "i")) || [])[1] || "";
 
 // ---------------------------------------------------------------- presse : Google News (par thème, fr + en)
+// AUDIENCE FRANÇAISE : d'abord l'actu de France (édition France de Google News), puis le grand international qui la concerne.
+// Les requêtes en anglais ne servent qu'aux très gros événements mondiaux (le tri écarte ensuite ce qui n'intéresse pas la France).
 const THEMES = {
-  catastrophe: ["catastrophe morts", "séisme OR inondation OR ouragan victimes", "deadly disaster", "earthquake OR flood OR wildfire dead"],
-  accident: ["accident grave morts", "crash avion OR train déraillement", "deadly crash", "explosion killed"],
-  scandale: ["scandale corruption", "mis en examen détournement", "corruption scandal arrested", "bribery investigation minister"],
-  politique: ["crise politique gouvernement", "manifestations violentes", "government crisis protests", "coup d'état OR putsch"],
-  geopolitique: ["frappe militaire escalade", "missile attaque", "military strike escalation", "sanctions war threat"],
-  revelations: ["révélations documents fuite", "enquête révèle", "leaked documents reveal", "whistleblower exposes"],
-  cyber: ["cyberattaque piratage", "fuite de données massive", "hackers breach data leak", "ransomware attack"],
-  faitsdivers: ["fait divers meurtre", "attaque au couteau OR fusillade", "mass shooting", "serial killer arrested"],
-  insolite: ["insolite incroyable", "bizarre shocking incident"],
-  rumeurs: ["théorie du complot rumeur virale", "fausse information virale démentie", "conspiracy theory viral claim", "fact check viral claim false"],
+  france: ["", "polémique gouvernement", "scandale ministre", "Assemblée nationale scandale", "perquisition OR garde à vue personnalité",
+    "mis en examen OR condamné élu", "émeutes OR violences urbaines", "colère agriculteurs OR grève OR blocage", "hausse des prix colère OR facture",
+    "fermeture usine licenciements", "narcotrafic OR règlement de comptes", "agression OR attaque au couteau", "féminicide OR meurtre",
+    "drame enfant OR bébé", "hôpital urgences drame", "police bavure OR policiers attaqués", "prison évasion OR détenus",
+    "immigration polémique", "insécurité quartier", "Marseille OR Paris OR Lyon drame"],
+  catastrophe: ["catastrophe morts", "séisme OR inondation OR tempête victimes", "incendie meurtrier"],
+  accident: ["accident grave morts", "crash avion OR déraillement OR naufrage", "explosion morts"],
+  scandale: ["scandale corruption", "mis en examen détournement", "fraude milliards", "affaire révélations Mediapart OR Canard enchaîné"],
+  geopolitique: ["frappe militaire escalade", "missile attaque OTAN", "guerre Ukraine Russie", "Iran Israël escalade", "menace nucléaire"],
+  revelations: ["révélations documents fuite", "enquête révèle", "lanceur d'alerte"],
+  cyber: ["cyberattaque France", "fuite de données clients France", "piratage données santé OR mairie OR hôpital", "rançongiciel"],
+  insolite: ["insolite incroyable"],
+  rumeurs: ["rumeur virale démentie", "théorie du complot", "fausse information réseaux sociaux"],
+  monde: ["deadly disaster", "military strike escalation", "leaked documents reveal", "ransomware attack", "mass shooting"],
 };
 async function googleNews() {
   const out = [];
   for (const [theme, qs] of Object.entries(THEMES)) {
     for (const q of qs) {
-      const fr = /[éèàçù]|\b(le|la|les|de|du|des|ou)\b|morts|crise|scandale|fuite|enquête|rumeur/i.test(q);
+      const fr = theme !== "monde";
       const hl = fr ? "hl=fr&gl=FR&ceid=FR:fr" : "hl=en-US&gl=US&ceid=US:en";
-      const x = await get(`https://news.google.com/rss/search?q=${encodeURIComponent(q + " when:1d")}&${hl}`);
+      const x = await get(q ? `https://news.google.com/rss/search?q=${encodeURIComponent(q + " when:1d")}&${hl}`
+        : `https://news.google.com/rss/headlines/section/topic/NATION?${hl}`);          // « France » : la une nationale
       if (!x) continue;
       for (const it of x.split("<item>").slice(1, 16)) {
         const date = tag(it, "pubDate"), titre = txt(tag(it, "title")), source = txt(tag(it, "source"));
