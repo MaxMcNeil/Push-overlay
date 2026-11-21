@@ -539,7 +539,9 @@ ${g.texte}`, { maxTokens: 3000, depart, temperature: 0.3 });
   const couvert = (s, ref) => { const r = new Set(motsDe(ref)); const m = motsDe(s); return m.length > 0 && m.filter((w) => r.has(w)).length >= Math.ceil(m.length * 0.8); };
   const faits = (Array.isArray(j.faits_cles) ? j.faits_cles : []).map((x) => LATIN(String(x)).slice(0, 80)).filter((x) => x && chiffresSurs(x, g.texte) && couvert(x, texte)).slice(0, 3);
   const ref = `${texte} ${g.items.map((x) => x.titre).join(" ")}`;
-  const titreOk = j.titre_ecran && (() => { const m = motsDe(j.titre_ecran), r = new Set(motsDe(ref)); return m.length > 0 && m.filter((w) => r.has(w)).length >= Math.ceil(m.length * 0.5); })();
+  // un titre d'écran n'accuse JAMAIS (présomption d'innocence) : « taupe », « coupable », « meurtrier »… → titre réel de l'article
+  const ACCUSE = /\b(taupe|tra[îi]tre|coupable|meurtri[eè]re?|assassin|violeur|p[ée]dophile|escroc|menteur|menteuse|corrompue?|voleur|voleuse|criminel(le)?|mafieux|complice)s?\b/i;
+  const titreOk = j.titre_ecran && !ACCUSE.test(j.titre_ecran) && (() => { const m = motsDe(j.titre_ecran), r = new Set(motsDe(ref)); return m.length > 0 && m.filter((w) => r.has(w)).length >= Math.ceil(m.length * 0.5); })();
   const fr = g.items.find((x) => x.langue === "fr" || /[éèàùçêâîô]|\b(le|la|les|des|du|une|est|dans|pour)\b/i.test(x.titre));
   const titreArticle = () => {           // titre réel de l'article, rendu lisible : sans « DIRECT. », sans nom du média, coupé sur un mot
     let s = (fr || g.items[0]).titre.replace(/\s+[-–—|]\s+[^-–—|]{2,40}$/, "").replace(/^\s*(DIRECT|VIDÉO|VIDEO|INFO [^.:]{1,25}|EXCLUSIF|PHOTOS?|ENQUÊTE|TÉMOIGNAGE)\s*[.:]\s*/i, "");
@@ -552,7 +554,7 @@ ${g.texte}`, { maxTokens: 3000, depart, temperature: 0.3 });
   return {
     aVerifier: !v.ok, _src: g.texte, _victimes: victimes, _seule: seule,
     categorie: n.categorie, choc: Number(n.choc) || 0, gravite: Math.max(1, Math.min(5, Number(j.gravite) || Math.round((Number(n.choc) || 5) / 2))),
-    titre: LATIN(String((titreOk && j.titre_ecran) || (fr ? titreArticle() : j.titre_ecran) || titreArticle())).slice(0, 70), lieu: String(j.lieu || [n.ville, n.pays].filter(Boolean).join(", ")).slice(0, 60),
+    titre: LATIN(String((titreOk && j.titre_ecran) || (fr ? titreArticle() : (!ACCUSE.test(j.titre_ecran || "") && j.titre_ecran)) || titreArticle())).slice(0, 70), lieu: String(j.lieu || [n.ville, n.pays].filter(Boolean).join(", ")).slice(0, 60),
     pays: n.pays || "", faits, chiffre: cle, texte, teaser: String(j.accroche_teaser || "").slice(0, 120), revendication: !!rev, rumeur,
     sources: [...new Map([...g.items.filter((x) => x.source).map((x) => [x.source, { nom: x.source, url: x.url || "" }]), ...(g.autres || []).filter((x) => texte.includes(x.nom)).map((x) => [x.nom, x])]).values()].slice(0, 8),
   };
