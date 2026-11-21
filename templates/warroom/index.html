@@ -60,6 +60,7 @@ html,body{width:1080px;height:1920px;overflow:hidden;background:#04070c}
 #stamp{align-self:flex-start;font:800 24px/1 "JB";letter-spacing:3px;padding:9px 14px;border:3px solid var(--red);color:var(--red);transform:rotate(-1.5deg)}
 #src{position:absolute;left:36px;width:900px;top:1530px;font:500 21px/1.25 "JB";letter-spacing:1px;color:#8fb8c0;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #tick{position:absolute;left:0;right:140px;top:1572px;height:62px;border-top:2px solid var(--red);border-bottom:2px solid var(--red);background:rgba(10,4,6,.92);overflow:hidden}
+#tick{-webkit-mask-image:linear-gradient(to right,#000 0,#000 calc(100% - 160px),transparent 100%);mask-image:linear-gradient(to right,#000 0,#000 calc(100% - 160px),transparent 100%)}
 #tick .lab{position:absolute;left:0;top:0;bottom:0;z-index:2;display:flex;align-items:center;padding:0 18px;background:var(--red);font:900 28px/1 "IT";letter-spacing:3px;color:#fff}
 #tick .run{position:absolute;top:0;bottom:0;display:flex;align-items:center;white-space:nowrap;font:800 30px/1 "IT";color:#fff}
 #tick .run b{color:var(--red);margin:0 22px}

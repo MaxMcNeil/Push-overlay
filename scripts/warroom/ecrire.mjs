@@ -216,7 +216,8 @@ async function verifierFaits(texte, source, depart, victimes = false) {
 détail, « révélation ») ABSENT des sources ou CONTREDIT par elles, chaque phrase qui présente comme coupable une personne non
 condamnée, ou qui dédouble une même affaire.${victimes ? `
 CE DOSSIER A DES VICTIMES (morts, blessés, enfants, violences sexuelles, sinistrés) : liste AUSSI chaque phrase d'humour, d'ironie,
-de sarcasme ou de moquerie liée au drame ou aux victimes (correction "").` : ""} Les opinions présentées comme telles, les questions, l'humour et
+de sarcasme ou de moquerie liée au drame ou aux victimes (correction ""), et chaque description explicite d'actes sexuels
+(correction = la même information avec les seuls mots du droit : « viol », « agression sexuelle »).` : ""} Les opinions présentées comme telles, les questions, l'humour et
 les punchlines sans fait précis sont acceptés. Pour chaque phrase : "phrase" copiée EXACTEMENT, "correction" = la même phrase rendue
 fidèle aux sources (même ton), ou "" si elle n'a pas de version fidèle.
 Réponds : {"hors_sources": [{"phrase": "…", "correction": "…"}]} ([] si tout est fidèle).
@@ -240,7 +241,7 @@ ${source}`, { maxTokens: 3000, depart, temperature: 0.1, tours: 2 });
 
 // ---------------------------------------------------------------- 3bis) écrire un dossier
 const NOUS = /\b(nous|notre|nos)\b/i;
-const HORS_DOSSIER = /\bbienvenue\b|dans les commentaires|en commentaire/i;     // l'accueil est dans l'ouverture seulement ; questions ouvertes, sans consigne
+const HORS_DOSSIER = /\bbienvenue\b|dans les commentaires|en commentaire|\b(aucune|sans|pas d')\s*(ironie|humour)\b|\bpas de (blague|second degré)\b/i;   // consignes recopiées par l'IA : jamais lues à l'antenne     // l'accueil est dans l'ouverture seulement ; questions ouvertes, sans consigne
 const ANGLES = [               // des ANGLES D'ANALYSE (opinion assumée) — jamais un prétexte pour inventer un fait « caché »
   "qui gagne, qui perd",
   "ton analyse de ce que ça révèle (présentée comme ton avis)",
@@ -270,7 +271,8 @@ async function ecrireDossier0(g, rang = 0, depart = 0) {
     `Écris le DOSSIER ci-dessous pour le présentateur, qui le lira au prompteur.
 HUMOUR NOIR : jamais aux dépens des victimes (violences sexuelles, enfants, morts, sinistrés, malades) ; il vise les puissants,
 les institutions, l'absurde. Si le dossier compte des morts, des blessés, des enfants victimes ou des violences sexuelles : AUCUN
-humour, aucune ironie, aucun sarcasme dans tout le dossier — ton grave et factuel. Aucune image sexuelle ou gore. Français impeccable : aucun mot inventé ou approximatif.
+humour, aucune ironie, aucun sarcasme dans tout le dossier — ton grave et factuel. Aucune image sexuelle ou gore : les violences sexuelles se disent avec les mots du droit (« viol », « agression sexuelle »), jamais
+la description des actes. Français impeccable : aucun mot inventé ou approximatif.
 STYLE : expert géopolitique et analyste, choc, alarmiste mais factuel, humour noir en contrepoint (une touche, pas plus) ; oral,
 phrases courtes ; mini-hook d'ouverture, les faits, UN angle de décryptage — ici : « ${ANGLES[rang % ANGLES.length]} » (n'utilise pas
 d'autre formule toute faite), une punchline, puis UNE question ouverte au public.
@@ -288,7 +290,8 @@ fuite, NON CONFIRMÉE : dis-le clairement (« revendique », « affirme », « r
 théorie qui circule : raconte ce qui circule et pourquoi ça prend, puis ce qu'on sait vraiment d'après les vérifications.` : ""}
 LONGUEUR : environ ${mots_cible} mots.
 ÉCRAN (affiché derrière le présentateur) : titre en 3 à 7 mots ; 3 faits clés de 4 à 10 mots chacun, dans l'ordre où tu en parles ;
-un chiffre clé SEULEMENT s'il est dans les sources ; gravité 1 à 5.
+un chiffre clé SEULEMENT s'il est dans les sources ET mesure la gravité (morts, blessés, victimes, montant, peine,
+nombre de personnes touchées) — jamais un âge, une date ou un numéro ; sinon null ; gravité 1 à 5.
 Réponds : {"titre_ecran": "…", "texte": "…", "faits_cles": ["…","…","…"], "chiffre_cle": {"valeur": "…", "libelle": "…"} ou null,
 "gravite": 4, "lieu": "Ville, Pays", "accroche_teaser": "une phrase de 12 mots max pour annoncer ce dossier plus tôt dans le live"}
 
