@@ -256,7 +256,7 @@ function nomsConnus(phrase, source) {
 // victimes = le dossier touche des morts, blessés, enfants, violences sexuelles ou sinistrés : aucun humour toléré.
 // verifierPhrases renvoie null si la vérification n'a pas pu se faire (IA saturée), sinon
 //   { sorties: [phrase gardée | phrase recadrée | null], faits, avis, retirees, corrigees, refusees: [phrases retirées] }.
-const MARQUE_AVIS = /^(à mon (sens|avis)|je (pense|crois|trouve|me demande|constate|vous laisse)|selon moi|pour moi|franchement|il me semble|j'ai l'impression)/i;
+const MARQUE_AVIS = /^(le non du jour|à mon (sens|avis)|je (pense|crois|trouve|me demande|constate|vous laisse|dis non)|ce qui me révolte|selon moi|pour moi|franchement|il me semble|j'ai l'impression)/i;
 async function verifierPhrases(phr, source, depart, victimes = false) {
   if (!phr.length) return { sorties: [], faits: 0, avis: 0, retirees: 0, corrigees: 0, refusees: [] };
   if (reste() < 5 * 60e3) return null;
@@ -403,7 +403,12 @@ humour, aucune ironie, aucun sarcasme dans tout le dossier — ton grave et fact
 la description des actes. Français impeccable : aucun mot inventé ou approximatif.
 STYLE : expert géopolitique et analyste, choc, alarmiste mais factuel, humour noir en contrepoint (une touche, pas plus) ; oral,
 phrases courtes ; mini-hook d'ouverture, les faits, UN angle de décryptage — ici : « ${ANGLES[rang % ANGLES.length]} » (n'utilise pas
-d'autre formule toute faite), une punchline, puis UNE question ouverte au public.
+d'autre formule toute faite), une punchline, puis « LE NON DU JOUR », puis UNE question ouverte au public.
+« LE NON DU JOUR » (signature de la chaîne, OBLIGATOIRE, juste avant la question finale) : une phrase qui commence EXACTEMENT par
+« Le NON du jour : je dis NON à » (ou « Le NON du jour : ce qui me révolte ») suivie de 1 à 2 phrases d'indignation assumée, à la
+première personne. Elle vise les puissants, les institutions, l'hypocrisie, l'absurde ou l'impuissance publique ; JAMAIS les
+victimes, JAMAIS une personne non condamnée présentée comme coupable ; elle s'appuie sur un fait déjà dit dans le dossier et
+n'en ajoute AUCUN. Dossier avec victimes : la colère vise le système (« comment est-ce encore possible ? »), jamais une personne.
 Le dossier est lu au milieu du live : pas de « Bienvenue », pas de salut, pas de « dans les commentaires ».
 HORS DU CONTEXTE : jamais « nous », « notre », « nos » ; dis « vous », « je ». Ne parle de la France ou des Français QUE si le sujet
 les concerne directement (jamais de rapprochement forcé).
@@ -457,7 +462,8 @@ noir sur blanc dans les sources (mêmes lieux, mêmes chiffres, mêmes qualifica
 Le texte doit se comprendre seul : présente les faits avant de les commenter. Au moins 3 faits sourcés si les sources le permettent, plus de faits que d'avis.${seule ? `
 SOURCE UNIQUE (${listeNoms(seule)}) : chaque fait est attribué à cette source, au conditionnel.` : ""}
 Mêmes règles qu'avant : jamais « nous / notre / nos », jamais « likez / partagez / abonnez-vous », pas de « Bienvenue »,
-${victimes ? "AUCUN humour (dossier avec victimes), " : "humour noir jamais aux dépens des victimes, "}une question ouverte au public à la fin.
+${victimes ? "AUCUN humour (dossier avec victimes), " : "humour noir jamais aux dépens des victimes, "}« Le NON du jour : je dis NON à … » (indignation
+assumée, sans aucun fait nouveau, jamais contre une victime ni contre une personne non condamnée) puis une question ouverte au public à la fin.
 Environ ${Math.max(110, Math.min(260, 40 + 30 * Math.max(3, v.faits + 2)))} mots.
 Réponds : {"texte": "…"}
 
