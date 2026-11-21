@@ -205,14 +205,18 @@ function citationsSures(texte, source, quiet = false) {
 }
 // b) vérification des faits par un AUTRE fournisseur que celui qui a écrit : chaque phrase qui affirme un fait absent des sources
 //    (ou contredit par elles) est corrigée d'après les sources, ou retirée. Si la vérification est impossible, le texte est gardé.
-async function verifierFaits(texte, source, depart) {
-  if (reste() < 5 * 60e3) return texte;
+// victimes = le dossier touche des morts, blessés, enfants, violences sexuelles ou sinistrés : aucun humour toléré.
+// Renvoie { texte, ok } : ok = false si la vérification n'a pas pu se faire (elle sera retentée à la fin, sinon le dossier est retiré).
+async function verifierFaits(texte, source, depart, victimes = false) {
+  if (reste() < 5 * 60e3) return { texte, ok: false };
   let j;
   try {
     j = await ia("Tu es vérificateur de faits (fact-checker) pour une émission d'actualité. Réponds en JSON valide.",
       `Compare le TEXTE aux SOURCES. Liste chaque phrase du texte qui affirme un FAIT (nom, chiffre, date, lieu, citation, événement,
-détail, « révélation ») ABSENT des sources ou CONTREDIT par elles, et chaque phrase qui présente comme coupable une personne non
-condamnée, ou qui dédouble une même affaire. Les opinions présentées comme telles, les questions, l'humour et
+détail, « révélation ») ABSENT des sources ou CONTREDIT par elles, chaque phrase qui présente comme coupable une personne non
+condamnée, ou qui dédouble une même affaire.${victimes ? `
+CE DOSSIER A DES VICTIMES (morts, blessés, enfants, violences sexuelles, sinistrés) : liste AUSSI chaque phrase d'humour, d'ironie,
+de sarcasme ou de moquerie liée au drame ou aux victimes (correction "").` : ""} Les opinions présentées comme telles, les questions, l'humour et
 les punchlines sans fait précis sont acceptés. Pour chaque phrase : "phrase" copiée EXACTEMENT, "correction" = la même phrase rendue
 fidèle aux sources (même ton), ou "" si elle n'a pas de version fidèle.
 Réponds : {"hors_sources": [{"phrase": "…", "correction": "…"}]} ([] si tout est fidèle).
@@ -222,7 +226,7 @@ ${texte}
 
 SOURCES :
 ${source}`, { maxTokens: 3000, depart, temperature: 0.1, tours: 2 });
-  } catch (e) { log(`    vérification des faits impossible (${String(e.message).slice(0, 80)}) : texte gardé`); return texte; }
+  } catch (e) { log(`    vérification des faits impossible pour l'instant (${String(e.message).slice(0, 80)}) : nouvel essai à la fin`); return { texte, ok: false }; }
   let n = 0;
   for (const c of j.hors_sources || []) {
     const ph = String(c.phrase || "").trim(); let rp = String(c.correction || "").trim();
@@ -231,7 +235,7 @@ ${source}`, { maxTokens: 3000, depart, temperature: 0.1, tours: 2 });
     texte = texte.replace(ph, rp).replace(/\s{2,}/g, " ").trim(); n++;
   }
   if (n) log(`    vérification des faits : ${n} phrase(s) corrigée(s) ou retirée(s)`);
-  return texte;
+  return { texte, ok: true };
 }
 
 // ---------------------------------------------------------------- 3bis) écrire un dossier
@@ -265,7 +269,8 @@ async function ecrireDossier0(g, rang = 0, depart = 0) {
   const j = await ia("Tu écris pour un live YouTube d'actualité choc (chaîne « Le Journal du NON »). Réponds en JSON valide.",
     `Écris le DOSSIER ci-dessous pour le présentateur, qui le lira au prompteur.
 HUMOUR NOIR : jamais aux dépens des victimes (violences sexuelles, enfants, morts, sinistrés, malades) ; il vise les puissants,
-les institutions, l'absurde. Aucune image sexuelle ou gore. Français impeccable : aucun mot inventé ou approximatif.
+les institutions, l'absurde. Si le dossier compte des morts, des blessés, des enfants victimes ou des violences sexuelles : AUCUN
+humour, aucune ironie, aucun sarcasme dans tout le dossier — ton grave et factuel. Aucune image sexuelle ou gore. Français impeccable : aucun mot inventé ou approximatif.
 STYLE : expert géopolitique et analyste, choc, alarmiste mais factuel, humour noir en contrepoint (une touche, pas plus) ; oral,
 phrases courtes ; mini-hook d'ouverture, les faits, UN angle de décryptage — ici : « ${ANGLES[rang % ANGLES.length]} » (n'utilise pas
 d'autre formule toute faite), une punchline, puis UNE question ouverte au public.
@@ -297,11 +302,15 @@ ${g.texte}`, { maxTokens: 3500, depart, temperature: 0.45 });
   if (bonnes.length < phr.length) log(`    ${phr.length - bonnes.length} phrase(s) retirée(s) (chiffre absent des sources, « nous », salut ou appel au like)`);
   texte = bonnes.join(" ");
   texte = citationsSures(texte, g.texte);
-  texte = await verifierFaits(texte, g.texte, depart + 1);
+  const victimes = ["FAIT DIVERS", "ACCIDENT", "CATASTROPHE"].includes(n.categorie)
+    || /\b(morts?|tu[ée]e?s?|décéd|bless|victime|enfant|bébé|fillette|garçonnet|mineur|viol|agression sexuelle|sinistr|évacu)/i.test(g.texte.slice(0, 3000));
+  const v = await verifierFaits(texte, g.texte, depart + 1, victimes);
+  texte = v.texte;
   const cle = j.chiffre_cle && j.chiffre_cle.valeur && chiffresSurs(j.chiffre_cle.valeur, g.texte) ? { valeur: String(j.chiffre_cle.valeur).slice(0, 18), libelle: String(j.chiffre_cle.libelle || "").slice(0, 60) } : null;
   const faits = (Array.isArray(j.faits_cles) ? j.faits_cles : []).map((x) => String(x).slice(0, 80)).filter((x) => x && chiffresSurs(x, g.texte)).slice(0, 3);
   if (texte.split(/\s+/).length < 60) throw new Error("dossier trop court après contrôle");
   return {
+    aVerifier: !v.ok, _src: g.texte, _victimes: victimes,
     categorie: n.categorie, choc: Number(n.choc) || 0, gravite: Math.max(1, Math.min(5, Number(j.gravite) || Math.round((Number(n.choc) || 5) / 2))),
     titre: String(j.titre_ecran || g.items[0].titre).slice(0, 70), lieu: String(j.lieu || [n.ville, n.pays].filter(Boolean).join(", ")).slice(0, 60),
     pays: n.pays || "", faits, chiffre: cle, texte, teaser: String(j.accroche_teaser || "").slice(0, 120), revendication: !!rev, rumeur,
@@ -423,7 +432,13 @@ async function main() {
     }
   }
   await Promise.all(Array.from({ length: VOIES }, (_, v) => voie(v)));
-  const dossiers = [...ecrits.entries()].sort((a, b) => a[0] - b[0]).map(([, d]) => d);
+  let dossiers = [...ecrits.entries()].sort((a, b) => a[0] - b[0]).map(([, d]) => d);
+  // vérification des faits manquée (IA saturée) : nouvel essai, un par un ; toujours impossible → dossier retiré (jamais de texte non vérifié)
+  for (const d of dossiers.filter((x) => x.aVerifier)) {
+    const v = await verifierFaits(d.texte, d._src, 0, d._victimes);
+    if (v.ok) { d.texte = v.texte; d.aVerifier = false; } else log(`  ✗ ${d.titre} : faits non vérifiables (IA indisponible) → dossier retiré`);
+  }
+  dossiers = dossiers.filter((d) => !d.aVerifier && d.texte.split(/\s+/).length >= 50);
   if (!dossiers.length) throw new Error("aucun dossier assez solide aujourd'hui (sources ou IA indisponibles) : relance plus tard");
   await relire(dossiers);
   const { ordre, ouverture, transitions, cloture } = await habiller(dossiers);
@@ -434,7 +449,7 @@ async function main() {
   ordre.forEach((d, i) => {
     const tx = [transitions[i], d.texte].filter(Boolean).join(" ");
     const t0 = t; t += duree(tx);
-    segs.push({ type: "dossier", n: i + 1, t0, t1: t, ...d, texte: undefined });
+    segs.push({ type: "dossier", n: i + 1, t0, t1: t, ...d, texte: undefined, _src: undefined, _victimes: undefined, aVerifier: undefined });
     P.push(`▶ DOSSIER ${i + 1}/${ordre.length} · ${d.categorie} · ${mmss(t0)}`, `« ${d.titre} »`, "", tx, "");
   });
   segs.push({ type: "cloture", t0: t, t1: (t += duree(cloture)) });
