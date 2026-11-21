@@ -8,7 +8,7 @@
 // Sorties (output/warroom) : prompteur.txt, warroom.json (pour l'écran), sources.md, journal des choix.
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { providers, parseJson } from "../lib/llm.mjs";
-import { collecter } from "./collect.mjs";
+import { collecter, deshtml } from "./collect.mjs";
 
 const OUT = "output/warroom";
 const WPM = Number(process.env.WARROOM_WPM || 145);
@@ -160,7 +160,7 @@ ${liste}`, { maxTokens: 1500 });
 
 // ---------------------------------------------------------------- 3) lire les vrais articles
 function texteArticle(html) {
-  const ps = [...String(html).matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)].map((m) => m[1].replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#39;|&rsquo;/g, "'").replace(/&quot;|&[lr]dquo;/g, '"').replace(/\s+/g, " ").trim())
+  const ps = [...String(html).matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)].map((m) => m[1].replace(/<[^>]+>/g, " ")).map((t) => deshtml(deshtml(t)).replace(/\s+/g, " ").trim())
     .filter((p) => p.length > 60 && !/cookie|abonn|subscribe|newsletter|javascript|tous droits|all rights reserved/i.test(p));
   return ps.join("\n").slice(0, 5000);
 }
@@ -189,8 +189,9 @@ async function enrichir(g) {
   if (CONTRE_CATS.includes(g.note?.categorie)) {
     const autres = autresPour(g, POOL_AUTRES);
     if (autres.length) g.texte += `\n\nAUTRES LECTURES (presse étrangère et indépendante — à citer avec leur nom) :\n` + autres.map((x) => `• ${x.source} : ${x.titre}${x.resume ? ` — ${x.resume}` : ""}`).join("\n");
-    g.precedents = precedentsPour(g);
-    if (g.precedents.length < 2) { try { g.precedents.push(...await precedentsDyn(g, 2 - g.precedents.length)); } catch (e) { log(`    précédents hors catalogue impossibles (${String(e.message).slice(0, 80)})`); } }
+    const jugee = /condamn|verdict|jugement|prison ferme|cour d.assises|tribunal|relax|acquitt/.test(plat(g.items.map((x) => `${x.titre} ${x.resume || ""}`).join(" ")));
+    g.precedents = jugee ? [] : precedentsPour(g);       // affaire déjà jugée / fait divers : jamais de parallèle historique plaqué
+    if (!jugee && g.precedents.length < 2 && ["GÉOPOLITIQUE", "GUERRE", "CYBER", "POLITIQUE", "CORRUPTION", "RÉVÉLATION"].includes(g.note?.categorie)) { try { g.precedents.push(...await precedentsDyn(g, 2 - g.precedents.length)); } catch (e) { log(`    précédents hors catalogue impossibles (${String(e.message).slice(0, 80)})`); } }
     if (g.precedents.length) g.texte += `\n\nPRÉCÉDENTS HISTORIQUES AVÉRÉS RETENUS POUR CE DOSSIER :\n` + g.precedents.map((f) => `• ${f.fait} (Ce précédent illustre : ${f.type}.)`).join("\n");
     g.autres = autres.map((x) => ({ nom: x.source, url: x.url || "" }));
   }
@@ -264,7 +265,8 @@ Mécanisme proposé : ${c.mecanisme}
 
 1) "fait" : le précédent en 1 à 2 phrases françaises (45 mots max), avec sa DATE, écrit UNIQUEMENT avec ce que dit l'extrait (aucun chiffre, nom ni date qui n'y figure).
 2) "pertinent" : true seulement si le dossier présente VRAIMENT le même mécanisme, sans accuser qui que ce soit.
-3) "force" : 1 (parallèle discutable), 2 (bon), 3 (évident, tout le monde le ferait).
+3) "force" : 1 (parallèle discutable), 2 (bon), 3 (évident : le MÊME mécanisme, qu'un historien validerait sans hésiter). Dans le doute, 1.
+   Refuse (pertinent=false) tout parallèle qui assimile des personnes actuelles à un coupable historique, ou qui compare une simple affaire judiciaire ou un fait divers à un grand scandale d'État.
 4) "type" : ce que le précédent illustre, en une phrase.
 5) "repere" : 1 à 3 mots-clés (minuscules) par lesquels un texte le nommerait (ex. un nom de lieu ou de personne de l'extrait).
 Réponds : {"fait": "…", "pertinent": true, "force": 2, "type": "…", "repere": ["…"]}`, { maxTokens: 500, depart: 1, temperature: 0.1, tours: 2 });
@@ -272,7 +274,7 @@ Réponds : {"fait": "…", "pertinent": true, "force": 2, "type": "…", "repere
     const fait = LATIN(String(j.fait || "").trim()), ext = plat(w.extrait), extN = chiffres(w.extrait);
     const noms = (fait.replace(/^\s*\S+/, "").match(/\b\p{Lu}[\p{L}’'-]{2,}/gu) || []).flatMap((m) => plat(m).split(" ")).filter((x) => x && !MAJ_COURANTS.has(x));
     const repere = (Array.isArray(j.repere) ? j.repere : []).map((x) => plat(x)).filter((x) => x.length >= 3 && (ext.includes(x) || plat(fait).includes(x))).slice(0, 3);
-    const sain = j.pertinent === true && Number(j.force) >= 2 && fait.length >= 40 && /\b(1[5-9]|20)\d\d\b/.test(fait) && repere.length
+    const sain = j.pertinent === true && Number(j.force) >= 3 && fait.length >= 40 && /\b(1[5-9]|20)\d\d\b/.test(fait) && repere.length
       && chiffres(fait).every((x) => extN.includes(x)) && noms.every((x) => ext.includes(x)) && !NOUS.test(fait);
     log(`    précédent hors catalogue « ${w.titre} » : ${sain ? "retenu" : "écarté"}${sain ? "" : j.pertinent === false ? " (parallèle non pertinent)" : " (non vérifiable dans la page)"}`);
     if (sain) out.push({ nom: w.titre, repere, mots: [], forts: [], type: String(j.type || c.mecanisme || "").trim(), fait: `${fait} (Source : Wikipédia, article « ${w.titre} ».)`, obligatoire: Number(j.force) >= 3, dynamique: true });
@@ -534,7 +536,7 @@ dérangeante est permise si elle est présentée comme TA question ou comme ce q
 pas que c'est vrai, je dis que la question se pose »), jamais comme un fait établi ; ` : `L'ANGLE qui dérange — « ${ANGLES[rang % ANGLES.length]} » — vu depuis le public, pas depuis les institutions ; `}puis « LE NON DU JOUR », puis UNE question ouverte qui pique.
 « LE NON DU JOUR » (signature de la chaîne, OBLIGATOIRE, juste avant la question finale) : commence EXACTEMENT par « Le NON du jour :
 NON à » (ou « Le NON du jour : ce qui me révolte ») — une charge courte, percutante, jamais une formule molle ; elle vise les puissants,
-les institutions, l'hypocrisie, le deux poids deux mesures ; JAMAIS les victimes, JAMAIS une personne non condamnée présentée comme
+les institutions, l'hypocrisie, le deux poids deux mesures — MAIS ancrée dans UN FAIT PRÉCIS du dossier (un délai, un écart entre réquisitions et peine, une décision, une contradiction) ; sans fait précis à dénoncer (accident, fait divers en cours d'enquête), vise le sujet lui-même (« NON à la banalisation de… ») sans accuser aucune institution ni les forces de l'ordre ; JAMAIS les victimes, JAMAIS une personne non condamnée présentée comme
 coupable ; aucun fait nouveau. Dossier avec victimes : la colère vise le système (« qui a vu ? qui n'a rien fait ? »), jamais une personne.
 Le dossier est lu au milieu du live : pas de « Bienvenue », pas de salut, pas de « dans les commentaires ».
 HORS DU CONTEXTE : jamais « nous », « notre », « nos » ; dis « vous », « je ». Ne parle de la France ou des Français QUE si le sujet
@@ -652,7 +654,7 @@ async function controlerPrecedents(texte, g, depart, victimes) {
     try {
       const j = await ia("Tu es rédacteur en chef et historien. Réponds en JSON valide.",
         `Dans ce dossier d'actualité, l'auteur compare la situation au précédent « ${f.nom} » (${f.type}).
-Le parallèle est-il PERTINENT (même mécanisme : ${f.type}) ou plaqué à contresens ? Réponds {"pertinent": true|false, "raison": "…"}.
+Le parallèle est-il PERTINENT : EXACTEMENT le même mécanisme (${f.type}), pas un simple point commun de thème, de pays ou de gravité ? Dans le doute : false. Réponds {"pertinent": true|false, "raison": "…"}.
 
 DOSSIER :
 ${texte}`, { maxTokens: 400, depart: depart + 1, temperature: 0.1, tours: 1 });
@@ -693,6 +695,7 @@ async function relire(dossiers, { doublons = true } = {}) {
       `Relis ce script de live. Signale UNIQUEMENT les phrases à corriger :
 - incohérente, mal construite, ou contenant un mot qui n'existe pas en français ;
 - humour ou image aux dépens d'une victime (violences sexuelles, enfants, morts, sinistrés), image sexuelle ou gore ;
+- reproche à une institution, à la police ou à la justice NON étayé par un fait du dossier, ou contredit par lui (ex. « inertie » alors que des suspects sont interpellés) : "remplacement" = la même charge reformulée sur le fait établi, ou "" ;
 - affirmation présentée comme certaine sans source (au lieu de « selon… », « soupçonné », « présumé ») ;
 - contradiction avec un autre dossier du script ;
 - le MÊME fait raconté dans deux dossiers différents (ex. la même menace, la même frappe) : garde-le dans le dossier dont c'est le

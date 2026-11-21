@@ -28,8 +28,14 @@ async function get(url, { json = false, timeout = 25000, essais = 2 } = {}) {
   return null;
 }
 const recent = (d, h = 26) => { const t = Date.parse(d); return isFinite(t) && Date.now() - t < h * 3600e3 && t < Date.now() + 3600e3; };
-const txt = (s) => String(s || "").replace(/<!\[CDATA\[|\]\]>/g, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
-  .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
+const ENT = { nbsp: " ", amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“", hellip: "…", ndash: "–", mdash: "—", laquo: "«", raquo: "»" };
+
+for (const [b, l] of Object.entries({ a: "àâä", e: "èéêë", i: "îï", o: "ôö", u: "ùûü", c: "ç" })) { const g = { a: ["agrave", "acirc", "auml"], e: ["egrave", "eacute", "ecirc", "euml"], i: ["icirc", "iuml"], o: ["ocirc", "ouml"], u: ["ugrave", "ucirc", "uuml"], c: ["ccedil"] }[b]; [...l].forEach((ch, k) => { ENT[g[k]] = ch; ENT[g[k][0].toUpperCase() + g[k].slice(1)] = ch.toUpperCase(); }); }
+ENT.oelig = "œ"; ENT.OElig = "Œ"; ENT.euro = "€"; ENT.deg = "°";
+export const deshtml = (s) => String(s || "").replace(/&#x([0-9a-f]+);/gi, (m, h) => String.fromCodePoint(parseInt(h, 16))).replace(/&#(\d+);/g, (m, d) => String.fromCodePoint(Number(d)))
+  .replace(/&([a-z]+);/gi, (m, n) => ENT[n] ?? ENT[n.toLowerCase()] ?? m);
+const txt = (s) => deshtml(deshtml(String(s || "").replace(/<!\[CDATA\[|\]\]>/g, "").replace(/<[^>]+>/g, " ")))
+  .replace(/\s+/g, " ").trim();
 const tag = (x, t) => (x.match(new RegExp(`<${t}[^>]*>([\\s\\S]*?)</${t}>`, "i")) || [])[1] || "";
 
 // ---------------------------------------------------------------- presse : Google News (par thème, fr + en)
