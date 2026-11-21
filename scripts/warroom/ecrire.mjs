@@ -189,7 +189,8 @@ async function enrichir(g) {
   if (CONTRE_CATS.includes(g.note?.categorie)) {
     const autres = autresPour(g, POOL_AUTRES);
     if (autres.length) g.texte += `\n\nAUTRES LECTURES (presse étrangère et indépendante — à citer avec leur nom) :\n` + autres.map((x) => `• ${x.source} : ${x.titre}${x.resume ? ` — ${x.resume}` : ""}`).join("\n");
-    g.texte += `\n\n${PRECEDENTS}`;
+    g.precedents = precedentsPour(g);
+    if (g.precedents.length) g.texte += `\n\nPRÉCÉDENTS HISTORIQUES AVÉRÉS RETENUS POUR CE DOSSIER :\n` + g.precedents.map((f) => `• ${f.fait} (Ce précédent illustre : ${f.type}.)`).join("\n");
     g.autres = autres.map((x) => ({ nom: x.source, url: x.url || "" }));
   }
   return g;
@@ -200,18 +201,32 @@ async function enrichir(g) {
 // ils sont ajoutés aux sources du dossier, donc la vérification des faits les accepte.
 let POOL_AUTRES = [];
 const CONTRE_CATS = ["GÉOPOLITIQUE", "GUERRE", "POLITIQUE", "SCANDALE", "CORRUPTION", "CYBER", "RÉVÉLATION"];
-const PRECEDENTS = `PRÉCÉDENTS HISTORIQUES AVÉRÉS (faits reconnus, utilisables seulement s'ils ressemblent vraiment au dossier) :
-• Irak, 2003 : le 5 février 2003, Colin Powell brandit une fiole à l'ONU pour prouver que l'Irak possède des armes de destruction massive ; aucune arme de destruction massive n'a été trouvée, ce que le rapport du Groupe d'inspection en Irak a confirmé en 2004.
-• Golfe du Tonkin, 1964 : la seconde attaque nord-vietnamienne du 4 août 1964, qui a servi à justifier l'engagement américain au Vietnam, n'a jamais eu lieu, selon des documents de la NSA déclassifiés en 2005.
-• Koweït, 1990 : le témoignage de « Nayirah » sur des bébés arrachés à leurs couveuses par des soldats irakiens, qui a pesé sur l'entrée en guerre, venait de la fille de l'ambassadeur du Koweït aux États-Unis, dans une campagne de l'agence Hill & Knowlton.
-• Nord Stream, 2022-2024 : après le sabotage des gazoducs en septembre 2022, Moscou a d'abord été accusée ; en 2024, la justice allemande a émis un mandat d'arrêt contre un ressortissant ukrainien.
-• Przewodów, novembre 2022 : un missile tombé en Pologne, qui a tué deux personnes, a d'abord été attribué à la Russie ; l'enquête a conclu à un missile de la défense antiaérienne ukrainienne.
-• Yémen, 2019 : une note classée défense révélée par le média Disclose montrait que des armes françaises étaient déployées dans la guerre au Yémen.
-• Rainbow Warrior, 1985 : le navire de Greenpeace a été coulé en Nouvelle-Zélande par des agents des services secrets français, ce que le gouvernement a d'abord nié.
-• Affaire Cahuzac, 2012-2013 : le ministre du Budget a nié « les yeux dans les yeux » détenir un compte à l'étranger, avant d'avouer.
-• Sang contaminé, années 1980 : des produits sanguins contaminés par le VIH ont été distribués en France alors que le risque était connu.
-• Mediator : ce médicament des laboratoires Servier, resté sur le marché jusqu'en 2009, a été lié à des centaines de morts ; le laboratoire a été condamné.
-• Surveillance de masse, 2013 : les révélations d'Edward Snowden ont montré l'ampleur de la surveillance des communications par la NSA, y compris de dirigeants européens.`;
+// Catalogue des précédents (scripts/warroom/precedents.md, modifiable sans toucher au code). Le PROGRAMME choisit les fiches qui
+// collent au dossier ; l'IA ne reçoit que celles-là (0, 1 ou 2), donc elle ne peut ni oublier la bonne ni plaquer une fiche hors sujet.
+let _cat = null;
+const catalogue = () => _cat || (_cat = (() => {
+  try {
+    const src = readFileSync(new URL("./precedents.md", import.meta.url), "utf8");
+    return src.split(/^## /m).slice(1).map((bloc) => {
+      const [nom, ...l] = bloc.split("\n");
+      const champ = (k) => (l.find((x) => x.startsWith(k + ":")) || "").slice(k.length + 1).trim();
+      const liste = (k) => champ(k).split(",").map((x) => plat(x)).filter(Boolean);
+      return { nom: nom.trim(), repere: liste("repere"), mots: liste("mots"), forts: liste("forts"), type: champ("type"), fait: champ("fait") };
+    }).filter((f) => f.fait && f.repere.length && f.mots.length);
+  } catch (e) { console.log(`::warning::catalogue des précédents illisible (${e.message}) : contre-lecture sans précédent`); return []; }
+})());
+const contient = (txt, mot) => (" " + txt + " ").includes(" " + mot + " ");
+// score d'une fiche pour un dossier : nombre de « mots » trouvés, à condition qu'au moins un mot « fort » (le thème précis) y soit
+function precedentsPour(g) {
+  const txt = plat(`${g.items.map((x) => `${x.titre} ${x.resume || ""}`).join(" ")} ${String(g.texte || "").slice(0, 4000)}`);
+  return catalogue().map((f) => {
+    const forts = f.forts.filter((m) => contient(txt, m)).length;
+    const mots = f.mots.filter((m) => contient(txt, m)).length;
+    return { f, score: forts ? mots + forts : 0 };
+  }).filter((x) => x.score >= 3).sort((a, b) => b.score - a.score).slice(0, 2)
+    .map((x) => ({ ...x.f, obligatoire: x.score >= 5 }));
+}
+const cite = (texte, f) => f.repere.some((r) => contient(plat(texte), r));
 const ALIAS = { pologne: "poland polish", iran: "iranian tehran", "israël": "israel israeli", israel: "israeli", russie: "russia russian moscow", moscou: "moscow kremlin",
   ukraine: "ukrainian kyiv kiev", "états-unis": "us usa washington american", chine: "china chinese beijing", "yémen": "yemen houthi houthis", houthis: "houthi yemen",
   liban: "lebanon hezbollah", syrie: "syria syrian", gaza: "gaza palestinian hamas", "arabie": "saudi riyadh", danemark: "denmark danish copenhagen",
@@ -450,7 +465,7 @@ les puissants, phrases courtes qui claquent, rythme oral, interpellation directe
 tiède d'une dépêche ni la version des chaînes d'info répétée telle quelle. Structure : accroche choc, les faits (sourcés), puis
 ${contre ? `LA CONTRE-LECTURE (obligatoire ici) : « voilà la version qu'on vous sert partout… maintenant, à qui profite ? » — ce que disent
 les AUTRES LECTURES listées dans les sources (presse étrangère, indépendante, l'autre camp), CITÉES PAR LEUR NOM (« selon Al Jazeera… »),
-et/ou un PRÉCÉDENT HISTORIQUE AVÉRÉ de la liste fournie s'il ressemble vraiment (mensonge d'État, emballement démenti) ; une hypothèse
+et/ou ${g.precedents?.length ? `le PRÉCÉDENT HISTORIQUE retenu dans les sources (${g.precedents.map((f) => f.nom).join(" ; ")}) — en expliquant en une phrase le parallèle${g.precedents.some((f) => f.obligatoire) ? ` (OBLIGATOIRE ici : ${g.precedents.filter((f) => f.obligatoire).map((f) => f.nom).join(" ; ")})` : ""} ; AUCUN autre précédent historique` : "AUCUN précédent historique (aucun ne colle à ce dossier : n'en cite pas)"} ; une hypothèse
 dérangeante est permise si elle est présentée comme TA question ou comme ce qui circule (« et si… ? », « coïncidence ? », « je ne dis
 pas que c'est vrai, je dis que la question se pose »), jamais comme un fait établi ; ` : `L'ANGLE qui dérange — « ${ANGLES[rang % ANGLES.length]} » — vu depuis le public, pas depuis les institutions ; `}puis « LE NON DU JOUR », puis UNE question ouverte qui pique.
 « LE NON DU JOUR » (signature de la chaîne, OBLIGATOIRE, juste avant la question finale) : commence EXACTEMENT par « Le NON du jour :
@@ -529,6 +544,7 @@ ${g.texte}`, { maxTokens: 3000, depart, temperature: 0.3 });
     } catch (e) { log(`    réécriture impossible (${String(e.message).slice(0, 80)})`); }
   }
   texte = sansRedites(v.texte);
+  if (contre && v.ok) texte = await controlerPrecedents(texte, g, depart, victimes);
   if (maigre(v)) throw new Error(`trop peu de faits prouvés (${v.faits} fait(s), ${v.avis} avis) : dossier retiré`);
   // source unique : la précision est dite à l'antenne, mot pour mot, quoi qu'ait écrit l'IA
   if (seule && v.ok) texte = `Précision importante : cette information n'est rapportée que par ${listeNoms(seule)}, aucune autre rédaction ne la confirme à ce stade. ${texte}`;
@@ -558,6 +574,46 @@ ${g.texte}`, { maxTokens: 3000, depart, temperature: 0.3 });
     pays: n.pays || "", faits, chiffre: cle, texte, teaser: String(j.accroche_teaser || "").slice(0, 120), revendication: !!rev, rumeur,
     sources: [...new Map([...g.items.filter((x) => x.source).map((x) => [x.source, { nom: x.source, url: x.url || "" }]), ...(g.autres || []).filter((x) => texte.includes(x.nom)).map((x) => [x.nom, x])]).values()].slice(0, 8),
   };
+}
+
+// Contrôle des précédents après écriture :
+//  a) un précédent du catalogue cité alors qu'il n'a PAS été retenu pour ce dossier → ses phrases sont retirées (aucune IA) ;
+//  b) un précédent retenu est jugé par une AUTRE IA que l'autrice : parallèle valable ou non ; non → ses phrases sont retirées ;
+//  c) un précédent OBLIGATOIRE oublié → 1 à 2 phrases ajoutées (revérifiées) juste avant « Le NON du jour ».
+async function controlerPrecedents(texte, g, depart, victimes) {
+  const retenus = g.precedents || [];
+  const sans = (tx, f) => phrases(tx).filter((p) => !cite(p, f)).join(" ");
+  for (const f of catalogue()) if (!retenus.some((r) => r.nom === f.nom) && cite(texte, f)) { texte = sans(texte, f); log(`    précédent hors sujet retiré : ${f.nom}`); }
+  for (const f of retenus.filter((r) => cite(texte, r))) {
+    try {
+      const j = await ia("Tu es rédacteur en chef et historien. Réponds en JSON valide.",
+        `Dans ce dossier d'actualité, l'auteur compare la situation au précédent « ${f.nom} » (${f.type}).
+Le parallèle est-il PERTINENT (même mécanisme : ${f.type}) ou plaqué à contresens ? Réponds {"pertinent": true|false, "raison": "…"}.
+
+DOSSIER :
+${texte}`, { maxTokens: 400, depart: depart + 1, temperature: 0.1, tours: 1 });
+      if (j.pertinent === false) { texte = sans(texte, f); log(`    précédent jugé hors sujet, retiré : ${f.nom} (${String(j.raison || "").slice(0, 80)})`); }
+    } catch {}
+  }
+  for (const f of retenus.filter((r) => r.obligatoire && !cite(texte, r))) {
+    try {
+      const j = await ia("Tu écris pour un live YouTube d'actualité (« Le Journal du NON »), ton indigné et direct. Réponds en JSON valide.",
+        `Écris 1 à 2 phrases (35 mots max) qui rappellent ce précédent et posent le parallèle avec le dossier, sous forme de question
+ou de rappel (« Souvenez-vous… »), sans aucun fait nouveau sur le dossier, jamais « nous ».
+PRÉCÉDENT : ${f.fait}
+DOSSIER : ${texte.slice(0, 1500)}
+Réponds : {"phrases": "…"}`, { maxTokens: 300, depart, temperature: 0.4, tours: 1 });
+      const ajout = LATIN(String(j.phrases || "").trim());
+      const st = ajout && cite(ajout, f) ? await verifierPhrases(phrases(ajout), g.texte, depart + 1, victimes) : null;
+      const ok = st ? st.sorties.filter(Boolean).join(" ") : "";
+      if (ok && cite(ok, f) && !NOUS.test(ok)) {
+        const ps = phrases(texte), k = ps.findIndex((p) => /^le non du jour/i.test(p));
+        ps.splice(k >= 0 ? k : Math.max(0, ps.length - 1), 0, ok);
+        texte = ps.join(" "); log(`    précédent obligatoire ajouté : ${f.nom}`);
+      }
+    } catch {}
+  }
+  return texte;
 }
 
 // ---------------------------------------------------------------- 3ter) relecture d'ensemble (comme un rédacteur en chef)
