@@ -27,7 +27,7 @@ async function get(url, { json = false, timeout = 25000, essais = 2 } = {}) {
   }
   return null;
 }
-const recent = (d) => { const t = Date.parse(d); return isFinite(t) && Date.now() - t < H24 && t < Date.now() + 3600e3; };
+const recent = (d, h = 26) => { const t = Date.parse(d); return isFinite(t) && Date.now() - t < h * 3600e3 && t < Date.now() + 3600e3; };
 const txt = (s) => String(s || "").replace(/<!\[CDATA\[|\]\]>/g, "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
   .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
 const tag = (x, t) => (x.match(new RegExp(`<${t}[^>]*>([\\s\\S]*?)</${t}>`, "i")) || [])[1] || "";
@@ -128,6 +128,47 @@ async function presseFr() {
   return out;
 }
 
+// ---------------------------------------------------------------- AUTRES LECTURES : presse étrangère et indépendante
+// Ces flux ne créent pas de dossiers : ils servent de « contre-lecture » (ce que disent d'autres camps, d'autres pays, d'autres
+// rédactions) pour les dossiers retenus, toujours cités avec leur nom. Un flux injoignable est simplement ignoré.
+const AUTRES = [
+  ["Al Jazeera", "https://www.aljazeera.com/xml/rss/all.xml"],
+  ["Middle East Eye", "https://www.middleeasteye.net/rss"],
+  ["Responsible Statecraft", "https://responsiblestatecraft.org/feed/"],
+  ["Consortium News", "https://consortiumnews.com/feed/"],
+  ["The Grayzone", "https://thegrayzone.com/feed/"],
+  ["The Intercept", "https://theintercept.com/feed/?rss"],
+  ["Mondafrique", "https://mondafrique.com/feed/"],
+  ["Les Crises", "https://www.les-crises.fr/feed/"],
+  ["Blast", "https://www.blast-info.fr/feed"],
+  ["Le Monde diplomatique", "https://www.monde-diplomatique.fr/rss/"],
+  ["Anadolu (FR)", "https://www.aa.com.tr/fr/rss/default?cat=actualite"],
+  ["Press TV (Iran)", "https://www.presstv.ir/rss.xml"],
+  ["TASS (Russie)", "https://tass.com/rss/v2.xml"],
+  ["Global Times (Chine)", "https://www.globaltimes.cn/rss/outbrain.xml"],
+  ["Haaretz", "https://www.haaretz.com/srv/haaretz-latest-headlines"],
+];
+export async function autresLectures() {
+  const out = [], ok = [];
+  await Promise.all(AUTRES.map(async ([nom, url]) => {
+    const x = await get(url, { timeout: 20000 });
+    if (!x) return;
+    const items = x.includes("<item") ? x.split(/<item[\s>]/).slice(1) : x.split(/<entry[\s>]/).slice(1);
+    let n = 0;
+    for (const it of items.slice(0, 80)) {
+      const titre = txt(tag(it, "title")), date = tag(it, "pubDate") || tag(it, "dc:date") || tag(it, "updated") || tag(it, "published");
+      const lien = txt(tag(it, "link")) || ((it.match(/<link[^>]*href="([^"]+)"/) || [])[1] || "");
+      if (!titre || (date && !recent(date, 72))) continue;
+      out.push({ titre, url: lien, source: nom, resume: txt(tag(it, "description")).slice(0, 500), origine: "autre-lecture" });
+      n++;
+    }
+    if (n) ok.push(nom);
+  }));
+  etat.autres_lectures = out.length;
+  console.log(`  autres lectures (presse étrangère / indépendante) : ${out.length} articles de ${ok.length} sources`);
+  return out;
+}
+
 // ---------------------------------------------------------------- presse mondiale : GDELT (ton très négatif = choc)
 async function gdelt() {
   const out = [];
@@ -207,6 +248,8 @@ async function catastrophes() {
 
 export async function collecter() {
   mkdirSync(OUT, { recursive: true });
+  const contre = await autresLectures().catch(() => []);
+  writeFileSync(`${OUT}/autres.json`, JSON.stringify(contre, null, 1));
   const parts = await Promise.all([presseFr(), googleNews(), gdelt(), cyber(), catastrophes()].map((p) => p.catch((e) => { console.log(`  source en panne : ${e.message}`); return []; })));
   const tout = parts.flat();
   // doublons exacts (même lien ou même titre)
@@ -214,7 +257,7 @@ export async function collecter() {
   for (const x of tout) { const k = (x.url || "") + "|" + x.titre.toLowerCase().slice(0, 90); if (vus.has(k)) continue; vus.add(k); uniq.push(x); }
   writeFileSync(`${OUT}/brut.json`, JSON.stringify(uniq, null, 1));
   console.log(`Collecte : ${uniq.length} éléments des dernières 24 h — ` + Object.entries(etat).map(([k, v]) => `${k} ${v}`).join(", "));
-  return { items: uniq, etat };
+  return { items: uniq, etat, contre };
 }
 
 if (process.argv[1] && process.argv[1].endsWith("collect.mjs")) await collecter();

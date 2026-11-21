@@ -186,7 +186,50 @@ async function enrichir(g) {
   const textes = (await Promise.all(urls.map(lire))).filter(Boolean);
   g.texte = [g.items.map((x) => `• ${x.titre}${x.resume ? ` — ${x.resume}` : ""} (${x.source})`).join("\n"), ...textes].join("\n\n").slice(0, 9000);
   g.nb_sources = new Set(g.items.map((x) => (x.source || "").toLowerCase().replace(/^www\./, ""))).size;
+  if (CONTRE_CATS.includes(g.note?.categorie)) {
+    const autres = autresPour(g, POOL_AUTRES);
+    if (autres.length) g.texte += `\n\nAUTRES LECTURES (presse étrangère et indépendante — à citer avec leur nom) :\n` + autres.map((x) => `• ${x.source} : ${x.titre}${x.resume ? ` — ${x.resume}` : ""}`).join("\n");
+    g.texte += `\n\n${PRECEDENTS}`;
+    g.autres = autres.map((x) => ({ nom: x.source, url: x.url || "" }));
+  }
   return g;
+}
+
+// ---------------------------------------------------------------- 3a) CONTRE-LECTURE
+// Catégories où la contre-lecture est obligatoire ; précédents historiques AVÉRÉS (documentés, reconnus) que le texte peut citer :
+// ils sont ajoutés aux sources du dossier, donc la vérification des faits les accepte.
+let POOL_AUTRES = [];
+const CONTRE_CATS = ["GÉOPOLITIQUE", "GUERRE", "POLITIQUE", "SCANDALE", "CORRUPTION", "CYBER", "RÉVÉLATION"];
+const PRECEDENTS = `PRÉCÉDENTS HISTORIQUES AVÉRÉS (faits reconnus, utilisables seulement s'ils ressemblent vraiment au dossier) :
+• Irak, 2003 : le 5 février 2003, Colin Powell brandit une fiole à l'ONU pour prouver que l'Irak possède des armes de destruction massive ; aucune arme de destruction massive n'a été trouvée, ce que le rapport du Groupe d'inspection en Irak a confirmé en 2004.
+• Golfe du Tonkin, 1964 : la seconde attaque nord-vietnamienne du 4 août 1964, qui a servi à justifier l'engagement américain au Vietnam, n'a jamais eu lieu, selon des documents de la NSA déclassifiés en 2005.
+• Koweït, 1990 : le témoignage de « Nayirah » sur des bébés arrachés à leurs couveuses par des soldats irakiens, qui a pesé sur l'entrée en guerre, venait de la fille de l'ambassadeur du Koweït aux États-Unis, dans une campagne de l'agence Hill & Knowlton.
+• Nord Stream, 2022-2024 : après le sabotage des gazoducs en septembre 2022, Moscou a d'abord été accusée ; en 2024, la justice allemande a émis un mandat d'arrêt contre un ressortissant ukrainien.
+• Przewodów, novembre 2022 : un missile tombé en Pologne, qui a tué deux personnes, a d'abord été attribué à la Russie ; l'enquête a conclu à un missile de la défense antiaérienne ukrainienne.
+• Yémen, 2019 : une note classée défense révélée par le média Disclose montrait que des armes françaises étaient déployées dans la guerre au Yémen.
+• Rainbow Warrior, 1985 : le navire de Greenpeace a été coulé en Nouvelle-Zélande par des agents des services secrets français, ce que le gouvernement a d'abord nié.
+• Affaire Cahuzac, 2012-2013 : le ministre du Budget a nié « les yeux dans les yeux » détenir un compte à l'étranger, avant d'avouer.
+• Sang contaminé, années 1980 : des produits sanguins contaminés par le VIH ont été distribués en France alors que le risque était connu.
+• Mediator : ce médicament des laboratoires Servier, resté sur le marché jusqu'en 2009, a été lié à des centaines de morts ; le laboratoire a été condamné.
+• Surveillance de masse, 2013 : les révélations d'Edward Snowden ont montré l'ampleur de la surveillance des communications par la NSA, y compris de dirigeants européens.`;
+const ALIAS = { pologne: "poland polish", iran: "iranian tehran", "israël": "israel israeli", israel: "israeli", russie: "russia russian moscow", moscou: "moscow kremlin",
+  ukraine: "ukrainian kyiv kiev", "états-unis": "us usa washington american", chine: "china chinese beijing", "yémen": "yemen houthi houthis", houthis: "houthi yemen",
+  liban: "lebanon hezbollah", syrie: "syria syrian", gaza: "gaza palestinian hamas", "arabie": "saudi riyadh", danemark: "denmark danish copenhagen",
+  allemagne: "germany german berlin", otan: "nato", turquie: "turkey turkish ankara", inde: "india indian", "corée": "korea korean", venezuela: "venezuelan",
+  poutine: "putin", netanyahou: "netanyahu", "zelensky": "zelenskyy zelensky", trump: "trump", macron: "macron", xi: "xi jinping", "égypte": "egypt", irak: "iraq iraqi",
+  afghanistan: "afghan taliban", soudan: "sudan", "mali": "mali", niger: "niger", "algérie": "algeria", maroc: "morocco", "tunisie": "tunisia" };
+function autresPour(g, pool) {
+  if (!pool?.length) return [];
+  const titres = g.items.map((x) => `${x.titre} ${x.resume || ""}`).join(" ");
+  const noms = new Set((titres.match(/(?<!\p{L})\p{Lu}[\p{L}'’-]{1,}/gu) || []).map((m) => plat(m)).filter((w) => w.length >= 2 && !MAJ_COURANTS.has(w)));
+  const cles = new Set();
+  for (const w of noms) { cles.add(w); for (const [k, v] of Object.entries(ALIAS)) if (plat(k) === w) v.split(" ").forEach((x) => cles.add(x)); }
+  if (!cles.size) return [];
+  const sc = pool.map((x) => { const m = new Set(plat(`${x.titre} ${x.resume || ""}`).split(" ")); return [x, [...cles].filter((k) => m.has(k)).length]; })
+    .filter(([, s]) => s >= 2).sort((a, b) => b[1] - a[1]);
+  const vus = new Set(), out = [];
+  for (const [x] of sc) { if (vus.has(x.source)) continue; vus.add(x.source); out.push(x); if (out.length >= 4) break; }
+  return out;
 }
 
 // étiquettes de plan que certains modèles écrivent dans le texte (« Mini-hook : », « Punchline : », « Question ouverte : »…) : retirées
@@ -256,7 +299,7 @@ function nomsConnus(phrase, source) {
 // victimes = le dossier touche des morts, blessés, enfants, violences sexuelles ou sinistrés : aucun humour toléré.
 // verifierPhrases renvoie null si la vérification n'a pas pu se faire (IA saturée), sinon
 //   { sorties: [phrase gardée | phrase recadrée | null], faits, avis, retirees, corrigees, refusees: [phrases retirées] }.
-const MARQUE_AVIS = /^(le non du jour|à mon (sens|avis)|je (pense|crois|trouve|me demande|constate|vous laisse|dis non)|ce qui me révolte|selon moi|pour moi|franchement|il me semble|j'ai l'impression)/i;
+const MARQUE_AVIS = /^(le non du jour|et si|coïncidence|je ne (dis|vous dis) pas|posez-vous|à qui profite|à mon (sens|avis)|je (pense|crois|trouve|me demande|constate|vous laisse|dis non)|ce qui me révolte|selon moi|pour moi|franchement|il me semble|j'ai l'impression)/i;
 async function verifierPhrases(phr, source, depart, victimes = false) {
   if (!phr.length) return { sorties: [], faits: 0, avis: 0, retirees: 0, corrigees: 0, refusees: [] };
   if (reste() < 5 * 60e3) return null;
@@ -394,6 +437,7 @@ async function ecrireDossier(g, rang = 0, depart = 0) {
 }
 async function ecrireDossier0(g, rang = 0, depart = 0) {
   const n = g.note, rev = g.revendication, rumeur = n.categorie === "RUMEUR", seule = seuleSource(g);
+  const contre = CONTRE_CATS.includes(n.categorie);
   const mots_cible = Math.round(Math.max(170, Math.min(520, 120 + g.texte.length / 25)));
   const j = await ia("Tu écris pour un live YouTube d'actualité choc (chaîne « Le Journal du NON »). Réponds en JSON valide.",
     `Écris le DOSSIER ci-dessous pour le présentateur, qui le lira au prompteur.
@@ -401,14 +445,18 @@ HUMOUR NOIR : jamais aux dépens des victimes (violences sexuelles, enfants, mor
 les institutions, l'absurde. Si le dossier compte des morts, des blessés, des enfants victimes ou des violences sexuelles : AUCUN
 humour, aucune ironie, aucun sarcasme dans tout le dossier — ton grave et factuel. Aucune image sexuelle ou gore : les violences sexuelles se disent avec les mots du droit (« viol », « agression sexuelle »), jamais
 la description des actes. Français impeccable : aucun mot inventé ou approximatif.
-STYLE : expert géopolitique et analyste, choc, alarmiste mais factuel, humour noir en contrepoint (une touche, pas plus) ; oral,
-phrases courtes ; mini-hook d'ouverture, les faits, UN angle de décryptage — ici : « ${ANGLES[rang % ANGLES.length]} » (n'utilise pas
-d'autre formule toute faite), une punchline, puis « LE NON DU JOUR », puis UNE question ouverte au public.
-« LE NON DU JOUR » (signature de la chaîne, OBLIGATOIRE, juste avant la question finale) : une phrase qui commence EXACTEMENT par
-« Le NON du jour : je dis NON à » (ou « Le NON du jour : ce qui me révolte ») suivie de 1 à 2 phrases d'indignation assumée, à la
-première personne. Elle vise les puissants, les institutions, l'hypocrisie, l'absurde ou l'impuissance publique ; JAMAIS les
-victimes, JAMAIS une personne non condamnée présentée comme coupable ; elle s'appuie sur un fait déjà dit dans le dossier et
-n'en ajoute AUCUN. Dossier avec victimes : la colère vise le système (« comment est-ce encore possible ? »), jamais une personne.
+STYLE « JOURNAL DU NON » (c'est ce qui fait venir le public, sinon il part) : du FEU. Indignation assumée, ironie mordante contre
+les puissants, phrases courtes qui claquent, rythme oral, interpellation directe (« vous », « posez-vous la question »). JAMAIS le ton
+tiède d'une dépêche ni la version des chaînes d'info répétée telle quelle. Structure : accroche choc, les faits (sourcés), puis
+${contre ? `LA CONTRE-LECTURE (obligatoire ici) : « voilà la version qu'on vous sert partout… maintenant, à qui profite ? » — ce que disent
+les AUTRES LECTURES listées dans les sources (presse étrangère, indépendante, l'autre camp), CITÉES PAR LEUR NOM (« selon Al Jazeera… »),
+et/ou un PRÉCÉDENT HISTORIQUE AVÉRÉ de la liste fournie s'il ressemble vraiment (mensonge d'État, emballement démenti) ; une hypothèse
+dérangeante est permise si elle est présentée comme TA question ou comme ce qui circule (« et si… ? », « coïncidence ? », « je ne dis
+pas que c'est vrai, je dis que la question se pose »), jamais comme un fait établi ; ` : `L'ANGLE qui dérange — « ${ANGLES[rang % ANGLES.length]} » — vu depuis le public, pas depuis les institutions ; `}puis « LE NON DU JOUR », puis UNE question ouverte qui pique.
+« LE NON DU JOUR » (signature de la chaîne, OBLIGATOIRE, juste avant la question finale) : commence EXACTEMENT par « Le NON du jour :
+NON à » (ou « Le NON du jour : ce qui me révolte ») — une charge courte, percutante, jamais une formule molle ; elle vise les puissants,
+les institutions, l'hypocrisie, le deux poids deux mesures ; JAMAIS les victimes, JAMAIS une personne non condamnée présentée comme
+coupable ; aucun fait nouveau. Dossier avec victimes : la colère vise le système (« qui a vu ? qui n'a rien fait ? »), jamais une personne.
 Le dossier est lu au milieu du live : pas de « Bienvenue », pas de salut, pas de « dans les commentaires ».
 HORS DU CONTEXTE : jamais « nous », « notre », « nos » ; dis « vous », « je ». Ne parle de la France ou des Français QUE si le sujet
 les concerne directement (jamais de rapprochement forcé).
@@ -505,7 +553,7 @@ ${g.texte}`, { maxTokens: 3000, depart, temperature: 0.3 });
     categorie: n.categorie, choc: Number(n.choc) || 0, gravite: Math.max(1, Math.min(5, Number(j.gravite) || Math.round((Number(n.choc) || 5) / 2))),
     titre: LATIN(String((titreOk && j.titre_ecran) || titreArticle())).slice(0, 70), lieu: String(j.lieu || [n.ville, n.pays].filter(Boolean).join(", ")).slice(0, 60),
     pays: n.pays || "", faits, chiffre: cle, texte, teaser: String(j.accroche_teaser || "").slice(0, 120), revendication: !!rev, rumeur,
-    sources: [...new Map(g.items.filter((x) => x.source).map((x) => [x.source, { nom: x.source, url: x.url || "" }])).values()].slice(0, 6),
+    sources: [...new Map([...g.items.filter((x) => x.source).map((x) => [x.source, { nom: x.source, url: x.url || "" }]), ...(g.autres || []).filter((x) => texte.includes(x.nom)).map((x) => [x.nom, x])]).values()].slice(0, 8),
   };
 }
 
@@ -565,6 +613,7 @@ async function habiller(dossiers) {
   try {
     hab = await ia("Tu écris pour un live YouTube d'actualité choc (« Le Journal du NON »). Réponds en JSON valide.",
       `Voici les dossiers du live, dans l'ordre. Écris :
+TON : du feu, comme la chaîne — « voilà ce qu'on vous raconte partout, ici on pose les questions que personne ne pose » ; jamais tiède.
 - "ouverture" (90 à 150 mots) : hook ultra-choc construit sur le dossier 1, teaser de la bombe finale (dernier dossier) sans la dévoiler,
   puis la phrase d'accueil exacte « Bienvenue dans le Journal du NON, et la réponse est Non. », puis une question ouverte au public ;
 - "transitions" : pour chaque dossier à partir du 2e, UNE phrase (10 à 25 mots) qui fait le lien avec le précédent et accroche ;
@@ -644,7 +693,8 @@ const duree = (t) => (String(t).split(/\s+/).filter(Boolean).length / WPM) * 60;
 
 async function main() {
   mkdirSync(OUT, { recursive: true });
-  const { items, etat } = existsSync(process.env.WARROOM_BRUT || "") ? { items: JSON.parse(readFileSync(process.env.WARROOM_BRUT, "utf8")), etat: {} } : await collecter();
+  const { items, etat, contre } = existsSync(process.env.WARROOM_BRUT || "") ? { items: JSON.parse(readFileSync(process.env.WARROOM_BRUT, "utf8")), etat: {}, contre: existsSync(`${OUT}/autres.json`) ? JSON.parse(readFileSync(`${OUT}/autres.json`, "utf8")) : [] } : await collecter();
+  POOL_AUTRES = contre || [];
   const groupes = regrouper(items);
   log(`${groupes.length} événements distincts`);
   const notes = await trier(groupes);
