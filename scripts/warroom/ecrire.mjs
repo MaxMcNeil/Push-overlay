@@ -418,6 +418,10 @@ fuite, NON CONFIRMÉE : dis-le clairement (« revendique », « affirme », « r
 théorie qui circule : raconte ce qui circule et pourquoi ça prend, puis ce qu'on sait vraiment d'après les vérifications.` : ""}${seule ? `
 SOURCE UNIQUE : aucun grand média ne rapporte ce sujet, seulement ${listeNoms(seule)}. Attribue CHAQUE fait à cette source (« selon
 ${seule[0]} », « d'après ${seule[0]} »), au conditionnel, et dis clairement qu'aucune autre rédaction ne le confirme à ce stade.` : ""}
+VALEUR AJOUTÉE (obligatoire) : le public a déjà vu les titres au JT et chez les autres youtubeurs. Ne résume PAS la dépêche :
+apporte au moins UN élément qu'ils n'ont pas eu, tiré des SOURCES ci-dessous — le détail enterré en bas d'article, le chiffre que
+personne ne met en avant, ce que dit la presse étrangère (si elle figure dans les sources), une contradiction entre deux sources,
+ou le lien avec un autre fait des sources — puis la question que personne ne pose (ton avis, présenté comme tel).
 LONGUEUR : environ ${mots_cible} mots.
 ÉCRAN (affiché derrière le présentateur) : titre en 3 à 7 mots ; 3 faits clés de 4 à 10 mots chacun, dans l'ordre où tu en parles ;
 un chiffre clé SEULEMENT s'il est dans les sources ET mesure la gravité (morts, blessés, victimes, montant, peine,
@@ -518,7 +522,8 @@ async function relire(dossiers, { doublons = true } = {}) {
   sujet, et supprime-le ("remplacement": "") dans l'autre.
 Pour chacune : "dossier" (numéro), "phrase" (copiée EXACTEMENT, mot pour mot), "remplacement" (phrase corrigée dans le même style,
 sans ajouter aucun fait ni chiffre ; "" pour la supprimer).
-Signale aussi les DOSSIERS qui racontent la même histoire (même attaque, même affaire, même loi) : "doublons" = paires de numéros.
+Signale aussi les DOSSIERS qui racontent la même histoire (même attaque, même affaire, même loi, même mouvement social ou
+même journée de mobilisation, même voyage ou sommet d'un dirigeant) : "doublons" = paires de numéros.
 Réponds : {"corrections": [{"dossier": 3, "phrase": "…", "remplacement": "…"}], "doublons": [[1, 10]]} ([] si rien).
 
 ${corps}`, { maxTokens: 5000 });
@@ -587,10 +592,45 @@ ${ordre.map((d, i) => `${i + 1}. [${d.categorie}] ${d.titre} — ${phrases(d.tex
     ordre,
     // ouverture amputée par la vérification : reconstruite sur les titres vérifiés (le 1er dossier, puis l'annonce de la fin)
     ouverture: ouverture.split(/\s+/).length >= 40 ? ouverture
-      : `Ce soir dans la War Room : ${ordre[0].titre.replace(/[.…]+$/, "")}. Puis ${ordre.slice(1, 4).map((d) => d.titre.replace(/[.…]+$/, "")).join(", ")}. Et le dernier dossier ne va pas vous laisser indifférents. ${ouverture}`.replace(/\s{2,}/g, " ").trim(),
+      : `Au programme ce soir : ${ordre.slice(0, 4).map((d) => d.titre.replace(/[.…]+$/, "")).join(" ; ")}. Et un dernier dossier, gardé pour la fin. ${ouverture}`.replace(/\s{2,}/g, " ").trim(),
     transitions: ordre.map((_, i) => (i ? recoller(parts[1 + i]) : "")),
     cloture: recoller(parts[parts.length - 1]) || "Voilà pour ce tour de la War Room. Et vous, quel dossier vous inquiète le plus ce soir ?",
   };
+}
+
+// ---------------------------------------------------------------- 5) titre, description et tags YouTube
+// Titre COURT et CHOC (≤ 70 caractères), bâti uniquement sur les dossiers vérifiés ; description avec le programme, la mention des
+// sources et de la présomption d'innocence, une question ouverte, puis les tags (dans la description ET à part) et les hashtags.
+async function youtube(ordre) {
+  const liste = ordre.map((d) => d.titre);
+  const ref = ordre.map((d) => `${d.titre} ${d.texte || ""}`).join(" ");
+  let j = {};
+  try {
+    j = await ia("Tu es responsable YouTube d'une chaîne d'actualité française indépendante (« Le Journal du NON »). Réponds en JSON valide.",
+      `Voici les dossiers du live de ce soir (dans l'ordre ; le DERNIER est la surprise de fin, ne le dévoile pas dans le titre).
+Écris :
+- "titres" : 3 titres YouTube COURTS (40 à 65 caractères) et CHOCS, originaux, qui donnent envie de cliquer SANS mentir : seulement
+  des faits présents dans la liste ; aucune accusation présentée comme prouvée ; pas de MAJUSCULES partout ; pas d'émoji ;
+- "accroche" : 2 phrases d'ouverture de description, percutantes, sans « nous » ni « on » ;
+- "question" : une question ouverte au public (jamais « écrivez X si… ») ;
+- "tags" : 25 à 35 tags (personnes, lieux, affaires, thèmes) tirés des dossiers.
+Réponds : {"titres": ["…","…","…"], "accroche": "…", "question": "…", "tags": ["…"]}
+
+${liste.map((x, i) => `${i + 1}. ${x}`).join("\n")}`, { maxTokens: 2000, temperature: 0.7 });
+  } catch (e) { log(`  titre YouTube : IA indisponible (${String(e.message).slice(0, 80)}) → titre de secours`); }
+  const ok = (s) => s && !NOUS.test(s) && !QUEMANDE.test(s) && nomsConnus(s, ref) && chiffresSurs(s, ref);
+  const titres = (j.titres || []).map((x) => LATIN(String(x)).trim()).filter((x) => x.length >= 20 && x.length <= 80 && ok(x));
+  const secours = `${liste[0]} : ${liste.length} dossiers décryptés`.slice(0, 90);
+  const tags = [...new Set([...(j.tags || []).map((x) => LATIN(String(x)).replace(/[#,]/g, "").trim()).filter((x) => x && x.length <= 40),
+    "actualité", "actu France", "décryptage", "analyse indépendante", "Le Journal du NON"])].slice(0, 40);
+  const hashtags = ["#Actualité", "#France", "#Décryptage", "#LeJournalDuNON"];
+  const acc = ok(j.accroche) ? LATIN(j.accroche) : `${liste.length} dossiers. Des faits sourcés, des avis assumés : à vous de juger.`;
+  const q = ok(j.question) && /\?\s*$/.test(j.question) ? LATIN(j.question) : "Et vous, quel dossier de cette semaine vous a le plus marqué ?";
+  const desc = [acc, "", "Au programme :", ...liste.slice(0, -1).map((x) => `▶ ${x}`), "… et un dernier dossier, gardé pour la fin.", "",
+    "Toutes les sources sont citées à l'antenne. Les personnes mises en cause sont présumées innocentes tant qu'elles n'ont pas été condamnées.",
+    "", q, "", `Tags : ${tags.join(", ")}`, "", hashtags.join(" ")].join("\n");
+  return [`TITRE (choisis-en un) :`, ...(titres.length ? titres : [secours]).map((x) => `- ${x}`), "", "DESCRIPTION :", desc, "",
+    "TAGS (à coller dans le champ Tags de YouTube Studio) :", tags.join(", "), ""].join("\n");
 }
 
 const mmss = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.round(s % 60)).padStart(2, "0")}`;
@@ -666,6 +706,7 @@ async function main() {
   P.push(`▶ CLÔTURE · ${mmss(segs[segs.length - 1].t0)}`, "", cloture, "");
   const spec = { version: 1, date: new Date().toISOString(), wpm: WPM, duree: t, segments: segs, ticker: ordre.map((d) => d.titre) };
   writeFileSync(`${OUT}/prompteur.txt`, P.join("\n"));
+  writeFileSync(`${OUT}/youtube.txt`, await youtube(ordre));
   writeFileSync(`${OUT}/warroom.json`, JSON.stringify(spec, null, 1));
   writeFileSync(`${OUT}/sources.md`, ["# Sources — War Room du jour", "", ...ordre.flatMap((d, i) => [`## ${i + 1}. ${d.titre}`, ...d.sources.map((s) => `- ${s.nom}${s.url ? ` — ${s.url}` : ""}`), ""])].join("\n"));
   log(`\nWar Room prête : ${ordre.length} dossiers, ≈ ${Math.round(t / 60)} min de lecture (${WPM} mots/min). Sources : ${JSON.stringify(etat)}`);

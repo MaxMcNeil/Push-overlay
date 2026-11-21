@@ -79,6 +79,7 @@ jobs:
           mkdir -p pub
           cp "$D/prompteur.txt" pub/prompteur.txt
           cp "$D/sources.md" pub/sources.md
+          [ -f "$D/youtube.txt" ] && cp "$D/youtube.txt" pub/youtube.txt || true
           (cd "$D/ecrans" && zip -q -0 "$GITHUB_WORKSPACE/pub/WarRoom-ecrans.zip" *.mp4 *.webm)
           ls -la pub
 
@@ -98,6 +99,6 @@ jobs:
           gh release delete "$TAG" --repo "$REPO" -y --cleanup-tag 2>/dev/null || true
           N=$(grep -c '^▶ DOSSIER' pub/prompteur.txt || true)
           gh release create "$TAG" --repo "$REPO" --target "$GITHUB_SHA" --title "War Room — $(TZ=Europe/Rome date '+%d/%m/%Y %H:%M')" \
-            --notes "$N dossiers. Télécharge **prompteur.txt** (à charger dans l'appli Prompteur) et **WarRoom-ecrans.zip** (à dézipper dans le dossier War Room du PC). Sources : sources.md." \
-            pub/prompteur.txt pub/sources.md pub/WarRoom-ecrans.zip
+            --notes "$N dossiers. Télécharge **prompteur.txt** (à charger dans l'appli Prompteur) et **WarRoom-ecrans.zip** (à dézipper dans le dossier War Room du PC). Titre, description et tags YouTube : youtube.txt. Sources : sources.md." \
+            pub/prompteur.txt pub/sources.md pub/WarRoom-ecrans.zip $( [ -f pub/youtube.txt ] && echo pub/youtube.txt )
           echo "Publié : https://github.com/$REPO/releases/tag/$TAG"
