@@ -203,40 +203,85 @@ function citationsSures(texte, source, quiet = false) {
   if (ok.length < phr.length && !quiet) log(`    ${phr.length - ok.length} phrase(s) retirée(s) : citation absente des sources`);
   return ok.join(" ");
 }
+// un extrait « copié » par l'IA est retrouvé dans les sources même s'il diffère un peu (accents, apostrophes, un mot changé) :
+// il faut une fenêtre du texte source où au moins 85 % de ses mots se retrouvent. Moins de 6 mots = pas une preuve.
+function extraitTrouve(extrait, source) {
+  const e = plat(extrait || "").split(" ").filter(Boolean);
+  if (e.length < 6) return false;
+  const s = plat(source).split(" ");
+  if (plat(source).includes(e.join(" "))) return true;
+  const L = e.length, need = Math.ceil(L * 0.85);
+  for (let i = 0; i + L <= s.length + 2; i++) {
+    const win = new Map();
+    for (const w of s.slice(i, i + L + 2)) win.set(w, (win.get(w) || 0) + 1);
+    let ok = 0;
+    for (const w of e) { const c = win.get(w); if (c) { ok++; win.set(w, c - 1); } }
+    if (ok >= need) return true;
+  }
+  return false;
+}
+
+// tout nom propre d'une phrase factuelle (personne, ville, organisation…) doit exister dans les sources
+const MAJ_COURANTS = new Set("le la les un une des de du et en au aux il elle ils elles je vous on ce cette ces son sa ses leur leurs selon pour par dans sur avec sans mais ou donc or ni car quand alors depuis après avant pendant face entre lors chaque tout tous toute toutes aucun aucune plus moins très trop bien mal regardez attention voici voilà enfin ensuite puis bref oui non france etat état république gouvernement ministre président".split(" "));
+function nomsConnus(phrase, source) {
+  const src = new Set(plat(source).split(" "));
+  const mots = String(phrase).replace(/^\s*\S+/, "").match(/\b\p{Lu}[\p{L}’'-]{2,}/gu) || [];
+  return mots.every((m) => { const w = plat(m).split(" "); return w.every((x) => MAJ_COURANTS.has(x) || src.has(x)); });
+}
+
 // b) vérification des faits par un AUTRE fournisseur que celui qui a écrit : chaque phrase qui affirme un fait absent des sources
 //    (ou contredit par elles) est corrigée d'après les sources, ou retirée. Si la vérification est impossible, le texte est gardé.
 // victimes = le dossier touche des morts, blessés, enfants, violences sexuelles ou sinistrés : aucun humour toléré.
 // Renvoie { texte, ok } : ok = false si la vérification n'a pas pu se faire (elle sera retentée à la fin, sinon le dossier est retiré).
 async function verifierFaits(texte, source, depart, victimes = false) {
   if (reste() < 5 * 60e3) return { texte, ok: false };
+  // PREUVE OBLIGATOIRE, phrase par phrase : chaque phrase factuelle doit être appuyée par un extrait EXACT des sources, retrouvé
+  // mécaniquement. Pas de preuve retrouvée = phrase retirée (ou remplacée par une version qui colle à la preuve). Les liens de cause,
+  // les lieux (ville, département, région), les qualifications et les déductions sont des faits comme les autres.
+  const phr = texte.split(/(?<=[.!?…])\s+/).filter(Boolean);
   let j;
   try {
-    j = await ia("Tu es vérificateur de faits (fact-checker) pour une émission d'actualité. Réponds en JSON valide.",
-      `Compare le TEXTE aux SOURCES. Liste chaque phrase du texte qui affirme un FAIT (nom, chiffre, date, lieu, citation, événement,
-détail, « révélation ») ABSENT des sources ou CONTREDIT par elles, chaque phrase qui présente comme coupable une personne non
-condamnée, ou qui dédouble une même affaire.${victimes ? `
-CE DOSSIER A DES VICTIMES (morts, blessés, enfants, violences sexuelles, sinistrés) : liste AUSSI chaque phrase d'humour, d'ironie,
-de sarcasme ou de moquerie liée au drame ou aux victimes (correction ""), et chaque description explicite d'actes sexuels
-(correction = la même information avec les seuls mots du droit : « viol », « agression sexuelle »).` : ""} Les opinions présentées comme telles, les questions, l'humour et
-les punchlines sans fait précis sont acceptés. Pour chaque phrase : "phrase" copiée EXACTEMENT, "correction" = la même phrase rendue
-fidèle aux sources (même ton), ou "" si elle n'a pas de version fidèle.
-Réponds : {"hors_sources": [{"phrase": "…", "correction": "…"}]} ([] si tout est fidèle).
+    j = await ia("Tu es vérificateur de faits (fact-checker) et juriste pour une émission d'actualité. Réponds en JSON valide.",
+      `Voici les phrases numérotées d'un texte, puis ses SOURCES. Pour CHAQUE phrase, donne :
+- "type" : "fait" (affirme quelque chose sur le réel : événement, nom, chiffre, date, lieu, cause, conséquence, qualification,
+  comparaison, déduction), "avis" (opinion présentée comme telle, SANS aucun fait nouveau), "question", ou "humour" ;
+- pour un "fait" : "preuve" = un extrait COPIÉ MOT POUR MOT des sources (8 à 50 mots) qui prouve TOUT ce que dit la phrase —
+  y compris le lieu exact (ville, département, région), le lien de cause à effet, la qualification juridique. Si la phrase dit
+  PLUS que ce que prouve l'extrait (un lien de cause non écrit, un lieu déduit, une précision ajoutée), donne "correction" = la
+  phrase réécrite pour ne dire QUE ce que prouve l'extrait (même ton). Si aucun extrait ne la prouve : "preuve": "".
+- un « avis » qui glisse un fait nouveau est un "fait".
+- une personne non condamnée présentée comme coupable : "correction" avec « accusé », « soupçonné », « mis en examen ».${victimes ? `
+- CE TEXTE PARLE DE VICTIMES : toute ironie, sarcasme ou moquerie est "humour" ; toute description explicite d'actes sexuels est
+  un "fait" dont la "correction" n'utilise que les mots du droit (« viol », « agression sexuelle »).` : ""}
+Réponds : {"phrases": [{"n": 0, "type": "fait", "preuve": "…", "correction": "…"}, …]} — une entrée par phrase, toutes les phrases.
 
-TEXTE :
-${texte}
+PHRASES :
+${phr.map((p, i) => `[${i}] ${p}`).join("\n")}
 
 SOURCES :
-${source}`, { maxTokens: 3000, depart, temperature: 0.1, tours: 2 });
+${source}`, { maxTokens: 6000, depart, temperature: 0.1, tours: 2 });
   } catch (e) { log(`    vérification des faits impossible pour l'instant (${String(e.message).slice(0, 80)}) : nouvel essai à la fin`); return { texte, ok: false }; }
-  let n = 0;
-  for (const c of j.hors_sources || []) {
-    const ph = String(c.phrase || "").trim(); let rp = String(c.correction || "").trim();
-    if (ph.length < 12 || !texte.includes(ph)) continue;
-    if (rp && (NOUS.test(rp) || QUEMANDE.test(rp) || HORS_DOSSIER.test(rp) || !chiffresSurs(rp, source) || citationsSures(rp, source, true) !== rp)) rp = "";
-    texte = texte.replace(ph, rp).replace(/\s{2,}/g, " ").trim(); n++;
-  }
-  if (n) log(`    vérification des faits : ${n} phrase(s) corrigée(s) ou retirée(s)`);
-  return { texte, ok: true };
+  const res = new Map((j.phrases || []).filter((x) => x && isFinite(x.n)).map((x) => [Number(x.n), x]));
+  if (res.size < phr.length * 0.8) { log(`    vérification incomplète (${res.size}/${phr.length} phrases) : nouvel essai à la fin`); return { texte, ok: false }; }
+  const prouve = (x) => extraitTrouve(x, source);
+  const sure = (x) => x && !NOUS.test(x) && !QUEMANDE.test(x) && !HORS_DOSSIER.test(x) && chiffresSurs(x, source) && citationsSures(x, source, true) === x;
+  let retirees = 0, corrigees = 0;
+  const out = [];
+  phr.forEach((p, i) => {
+    const r = res.get(i);
+    const type = String(r?.type || "").toLowerCase();
+    if (!r) { if (/\?\s*$/.test(p) || /^(à mon sens|je pense|je trouve|selon vous|et vous)/i.test(p)) out.push(p); else retirees++; return; }
+    if (type === "question" || type === "avis") { out.push(p); return; }
+    if (type === "humour") { if (victimes) retirees++; else out.push(p); return; }
+    // fait : preuve exacte obligatoire
+    if (!prouve(r.preuve)) { retirees++; return; }
+    const c = String(r.correction || "").trim();
+    if (c && c !== p) { if (sure(c) && nomsConnus(c, source)) { out.push(c); corrigees++; } else retirees++; return; }
+    if (!nomsConnus(p, source)) { retirees++; return; }
+    out.push(p);
+  });
+  if (retirees || corrigees) log(`    vérification des faits : ${corrigees} phrase(s) recadrée(s) sur la preuve, ${retirees} retirée(s) (sans preuve)`);
+  return { texte: out.join(" ").replace(/\s{2,}/g, " ").trim(), ok: true };
 }
 
 // ---------------------------------------------------------------- 3bis) écrire un dossier

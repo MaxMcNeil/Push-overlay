@@ -6,8 +6,6 @@ name: War Room du jour
 # 3) fabrique les écrans OBS : une boucle animée par dossier + la transition « ALERTE » (fond transparent)
 # 4) publie tout sur une release « out-warroom-… » (jamais lue par les autres workflows)
 on:
-  push:            # ESSAI TEMPORAIRE (branche warroom uniquement) — retiré avant main
-    branches: [warroom]
   workflow_dispatch:
     inputs:
       seuil:
