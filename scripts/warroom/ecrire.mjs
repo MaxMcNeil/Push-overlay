@@ -205,20 +205,42 @@ function citationsSures(texte, source, quiet = false) {
 }
 // un extrait « copié » par l'IA est retrouvé dans les sources même s'il diffère un peu (accents, apostrophes, un mot changé) :
 // il faut une fenêtre du texte source où au moins 85 % de ses mots se retrouvent. Moins de 6 mots = pas une preuve.
-function extraitTrouve(extrait, source) {
+function extraitPos(extrait, source) {
   const e = plat(extrait || "").split(" ").filter(Boolean);
-  if (e.length < 6) return false;
+  if (e.length < 4) return -1;
   const s = plat(source).split(" ");
-  if (plat(source).includes(e.join(" "))) return true;
-  const L = e.length, need = Math.ceil(L * 0.85);
+  const L = e.length;
+  for (let i = 0; i + L <= s.length; i++) if (s[i] === e[0] && s.slice(i, i + L).join(" ") === e.join(" ")) return i;   // copie exacte (≥ 4 mots : un titre court suffit)
+  if (L < 6) return -1;
+  const need = Math.ceil(L * 0.85);
   for (let i = 0; i + L <= s.length + 2; i++) {
     const win = new Map();
     for (const w of s.slice(i, i + L + 2)) win.set(w, (win.get(w) || 0) + 1);
     let ok = 0;
     for (const w of e) { const c = win.get(w); if (c) { ok++; win.set(w, c - 1); } }
-    if (ok >= need) return true;
+    if (ok >= need) return i;
   }
-  return false;
+  return -1;
+}
+const extraitTrouve = (extrait, source) => extraitPos(extrait, source) >= 0;
+// les noms propres et les chiffres d'une phrase factuelle doivent se trouver AUTOUR de sa preuve (± 80 mots) : une preuve exacte sur
+// la Grèce ne peut pas servir à une phrase qui dit « Strasbourg » (la ville a été déplacée par l'IA)
+function prochesDeLaPreuve(phrase, preuve, source) {
+  const i = extraitPos(preuve, source);
+  if (i < 0) return false;
+  // zone = la (ou les) phrase(s) des sources où se trouve la preuve
+  const L = plat(preuve).split(" ").filter(Boolean).length;
+  const zone = [];
+  let k = 0;
+  for (const ph of String(source).split(/(?<=[.!?…])\s+|\n+/)) {
+    const w = plat(ph).split(" ").filter(Boolean);
+    if (k + w.length > i && k < i + L) zone.push(...w);
+    k += w.length;
+  }
+  const zw = new Set(zone), zj = zone.join(" ");
+  const noms = (String(phrase).replace(/^\s*\S+/, "").match(/\b\p{Lu}[\p{L}’'-]{2,}/gu) || []).flatMap((m) => plat(m).split(" ")).filter((w) => w && !MAJ_COURANTS.has(w));
+  const nums = chiffres(phrase).filter((n) => !/^(19|20)\d\d$/.test(n));
+  return noms.every((w) => zw.has(w)) && nums.every((n) => zj.replace(/ /g, "").includes(n));
 }
 
 // tout nom propre d'une phrase factuelle (personne, ville, organisation…) doit exister dans les sources
@@ -250,7 +272,8 @@ async function verifierPhrases(phr, source, depart, victimes = false) {
   qualification, comparaison, déduction, menace, danger), "avis" (jugement personnel SANS aucun fait nouveau), "question", ou "humour" ;
 - "affirme_un_fait" : true si la phrase, même présentée comme un avis, une image, une punchline ou de l'humour, laisse entendre
   quelque chose sur le réel qui n'est pas déjà prouvé ailleurs (une action, une présence, un danger, une culpabilité) ; sinon false ;
-- pour un "fait" (ou "affirme_un_fait": true) : "preuve" = un extrait COPIÉ MOT POUR MOT des sources (8 à 50 mots) qui prouve TOUT ce
+- pour un "fait" (ou "affirme_un_fait": true) : "preuve" = un extrait COPIÉ MOT POUR MOT des sources (4 à 50 mots ; un titre d'article
+  entier peut servir) qui prouve TOUT ce
   que dit la phrase — y compris le lieu exact, le lien de cause à effet, la qualification juridique. Si la phrase dit PLUS que ce que
   prouve l'extrait, donne "correction" = la phrase réécrite pour ne dire QUE ce que prouve l'extrait (même ton). Sans extrait : "preuve": "".
 - une personne non condamnée présentée comme coupable, même par une image (« vendre les clés », « ceux qui l'ont brisée ») :
@@ -287,13 +310,22 @@ ${source}`, { maxTokens: 6000, depart, temperature: 0.1, tours: 2 });
     // fait : preuve exacte obligatoire
     if (!prouve(r.preuve)) return non(p);
     const c = String(r.correction || "").trim();
-    if (c && c !== p) { if (sure(c) && nomsConnus(c, source)) { st.sorties.push(c); st.corrigees++; st.faits++; } else non(p); return; }
-    if (!nomsConnus(p, source)) return non(p);
+    if (c && c !== p) { if (sure(c) && nomsConnus(c, source) && prochesDeLaPreuve(c, r.preuve, source)) { st.sorties.push(c); st.corrigees++; st.faits++; } else non(p); return; }
+    if (!nomsConnus(p, source) || !prochesDeLaPreuve(p, r.preuve, source)) return non(p);
     st.sorties.push(p); st.faits++;
   });
   return st;
 }
 const phrases = (t) => String(t).split(/(?<=[.!?…])\s+/).filter(Boolean);
+// une phrase qui redit une autre phrase du même texte (≥ 75 % de ses mots pleins s'y retrouvent) : la plus courte est retirée
+function sansRedites(texte) {
+  const ps = phrases(texte), M = ps.map((p) => new Set(plat(p).split(" ").filter((w) => w.length >= 4)));
+  const out = ps.filter((p, i) => {
+    if (M[i].size < 4 || /\?\s*$/.test(p)) return true;
+    return !ps.some((q, k) => k !== i && M[k].size >= M[i].size && (M[k].size > M[i].size || k > i) && [...M[i]].filter((w) => M[k].has(w)).length >= Math.ceil(M[i].size * 0.75));
+  });
+  return out.join(" ");
+}
 // Renvoie { texte, ok, faits, avis, retirees, refusees } : ok = false si la vérification n'a pas pu se faire (nouvel essai à la fin,
 // sinon dossier retiré).
 async function verifierFaits(texte, source, depart, victimes = false) {
@@ -303,8 +335,8 @@ async function verifierFaits(texte, source, depart, victimes = false) {
   return { texte: st.sorties.filter(Boolean).join(" ").replace(/\s{2,}/g, " ").trim(), ok: true, faits: st.faits, avis: st.avis, retirees: st.retirees, refusees: st.refusees };
 }
 // un dossier « amputé » (faits retirés, opinions qui dominent) se lit mal : il est réécrit, ou retiré
-const maigre = (v) => v.ok && (v.faits < 3 || v.avis > v.faits);
-const ampute = (v) => v.ok && (maigre(v) || v.retirees >= 2);
+const maigre = (v) => v.ok && (v.faits < 2 || v.avis > v.faits);
+const ampute = (v) => v.ok && (maigre(v) || v.faits < 3 || v.retirees >= 2);
 
 // c) MÉDIAS RECONNUS : si aucun ne rapporte le sujet, il n'est pas écarté (journalisme citoyen), mais le texte dit clairement qui
 //    est la seule source (« selon X, seul à le rapporter à ce stade ») — la responsabilité de l'information reste à cette source.
@@ -418,7 +450,7 @@ ${g.texte}`, { maxTokens: 3500, depart, temperature: 0.45 });
 prouvent pas, ou renvoyaient à une information absente. Cette fois, CHAQUE phrase factuelle doit reprendre une information écrite
 noir sur blanc dans les sources (mêmes lieux, mêmes chiffres, mêmes qualifications) ; tes avis sont permis mais présentés comme tels
 (« je pense », « à mon sens ») et sans aucun fait nouveau ; une personne non condamnée est « accusée », « soupçonnée », « mise en examen ».
-Le texte doit se comprendre seul : présente les faits avant de les commenter. Au moins 3 faits sourcés, plus de faits que d'avis.${seule ? `
+Le texte doit se comprendre seul : présente les faits avant de les commenter. Au moins 3 faits sourcés si les sources le permettent, plus de faits que d'avis.${seule ? `
 SOURCE UNIQUE (${listeNoms(seule)}) : chaque fait est attribué à cette source, au conditionnel.` : ""}
 Mêmes règles qu'avant : jamais « nous / notre / nos », jamais « likez / partagez / abonnez-vous », pas de « Bienvenue »,
 ${victimes ? "AUCUN humour (dossier avec victimes), " : "humour noir jamais aux dépens des victimes, "}une question ouverte au public à la fin.
@@ -438,7 +470,7 @@ ${g.texte}`, { maxTokens: 3000, depart, temperature: 0.3 });
       if (v2?.ok && !maigre(v2) && (v2.faits > v.faits || maigre(v) || v2.retirees < v.retirees)) { v = v2; log(`    réécriture gardée (${v2.faits} fait(s) prouvé(s), ${v2.retirees} refusée(s))`); }
     } catch (e) { log(`    réécriture impossible (${String(e.message).slice(0, 80)})`); }
   }
-  texte = v.texte;
+  texte = sansRedites(v.texte);
   if (maigre(v)) throw new Error(`trop peu de faits prouvés (${v.faits} fait(s), ${v.avis} avis) : dossier retiré`);
   // source unique : la précision est dite à l'antenne, mot pour mot, quoi qu'ait écrit l'IA
   if (seule && v.ok) texte = `Précision importante : cette information n'est rapportée que par ${listeNoms(seule)}, aucune autre rédaction ne la confirme à ce stade. ${texte}`;
@@ -448,12 +480,20 @@ ${g.texte}`, { maxTokens: 3000, depart, temperature: 0.3 });
   const motsDe = (s) => plat(s).split(" ").filter((w) => w.length >= 4);
   const couvert = (s, ref) => { const r = new Set(motsDe(ref)); const m = motsDe(s); return m.length > 0 && m.filter((w) => r.has(w)).length >= Math.ceil(m.length * 0.8); };
   const faits = (Array.isArray(j.faits_cles) ? j.faits_cles : []).map((x) => LATIN(String(x)).slice(0, 80)).filter((x) => x && chiffresSurs(x, g.texte) && couvert(x, texte)).slice(0, 3);
-  const titreOk = j.titre_ecran && couvert(j.titre_ecran, `${texte} ${g.items.map((x) => x.titre).join(" ")}`);
+  const ref = `${texte} ${g.items.map((x) => x.titre).join(" ")}`;
+  const titreOk = j.titre_ecran && (() => { const m = motsDe(j.titre_ecran), r = new Set(motsDe(ref)); return m.length > 0 && m.filter((w) => r.has(w)).length >= Math.ceil(m.length * 0.6); })();
+  const titreArticle = () => {           // titre réel de l'article, rendu lisible : sans « DIRECT. », sans nom du média, coupé sur un mot
+    let s = g.items[0].titre.replace(/\s+[-–—|]\s+[^-–—|]{2,40}$/, "").replace(/^\s*(DIRECT|VIDÉO|VIDEO|INFO [^.:]{1,25}|EXCLUSIF|PHOTOS?|ENQUÊTE|TÉMOIGNAGE)\s*[.:]\s*/i, "");
+    const [av, ap] = s.split(/\s+:\s+/);
+    if (ap && av.split(/\s+/).length >= 3) s = av; else if (ap && ap.split(/\s+/).length >= 3) s = ap;
+    const w = s.split(/\s+/); if (w.length > 9) s = w.slice(0, 8).join(" ").replace(/[,;:]$/, "") + "…";
+    return s.replace(/^["«»“”\s]+|["«»“”\s]+$/g, "");
+  };
   if (texte.split(/\s+/).length < 60) throw new Error("dossier trop court après contrôle");
   return {
     aVerifier: !v.ok, _src: g.texte, _victimes: victimes, _seule: seule,
     categorie: n.categorie, choc: Number(n.choc) || 0, gravite: Math.max(1, Math.min(5, Number(j.gravite) || Math.round((Number(n.choc) || 5) / 2))),
-    titre: LATIN(String((titreOk && j.titre_ecran) || g.items[0].titre.replace(/\s+[-–—|]\s+[^-–—|]{2,40}$/, ""))).slice(0, 70), lieu: String(j.lieu || [n.ville, n.pays].filter(Boolean).join(", ")).slice(0, 60),
+    titre: LATIN(String((titreOk && j.titre_ecran) || titreArticle())).slice(0, 70), lieu: String(j.lieu || [n.ville, n.pays].filter(Boolean).join(", ")).slice(0, 60),
     pays: n.pays || "", faits, chiffre: cle, texte, teaser: String(j.accroche_teaser || "").slice(0, 120), revendication: !!rev, rumeur,
     sources: [...new Map(g.items.filter((x) => x.source).map((x) => [x.source, { nom: x.source, url: x.url || "" }])).values()].slice(0, 6),
   };
@@ -463,7 +503,7 @@ ${g.texte}`, { maxTokens: 3000, depart, temperature: 0.3 });
 // Lit TOUS les dossiers ensemble : phrase incohérente ou mot qui n'existe pas, humour aux dépens d'une victime, image sexuelle ou
 // gore, affirmation non sourcée, contradiction entre deux dossiers. Seules les phrases citées EXACTEMENT sont remplacées (ou
 // retirées) ; une correction illisible ou qui ajoute un chiffre absent des sources est ignorée. Jamais bloquant.
-async function relire(dossiers) {
+async function relire(dossiers, { doublons = true } = {}) {
   if (reste() < 6 * 60e3) return;
   const corps = dossiers.map((d, i) => `### ${i + 1}. ${d.titre}\n${d.texte}`).join("\n\n");
   let j;
@@ -492,7 +532,7 @@ ${corps}`, { maxTokens: 5000 });
   }
   // doublons repérés : on garde le dossier le plus sourcé (puis le plus long), l'autre est retiré du live
   const retirer = new Set();
-  for (const p of j.doublons || []) {
+  for (const p of doublons ? j.doublons || [] : []) {
     const [a, b] = (Array.isArray(p) ? p : []).map((x) => Number(x) - 1);
     if (!dossiers[a] || !dossiers[b] || a === b || retirer.has(a) || retirer.has(b)) continue;
     const poids = (d) => d.sources.length * 1000 + d.texte.length;
@@ -522,7 +562,10 @@ Règles : jamais « nous / notre / nos », jamais « likez / partagez / abonnez-
 commentaires ». Ne parle de la France que si un dossier la concerne. Rien d'inventé.
 Réponds : {"ouverture": "…", "transitions": ["…", …], "cloture": "…"}
 
-${ordre.map((d, i) => `${i + 1}. [${d.categorie}] ${d.titre} — ${d.teaser || d.faits[0] || ""}`).join("\n")}`, { maxTokens: 3000 });
+Les accroches et transitions ne s'appuient QUE sur les faits ci-dessous (déjà vérifiés) ; aucune exagération (« votre argent est en
+danger », « la ligne rouge est franchie ») qui ne figure pas dans ces faits. Français impeccable.
+
+${ordre.map((d, i) => `${i + 1}. [${d.categorie}] ${d.titre} — ${phrases(d.texte).slice(0, 3).join(" ")}`).join("\n")}`, { maxTokens: 3000 });
   } catch (e) { log(`  ouverture/transitions impossibles (${e.message}) : repli sobre`); }
   const propre = (s, accueil = false) => String(s || "").split(/(?<=[.!?…])\s+/)
     .filter((p) => !NOUS.test(p) && !QUEMANDE.test(p) && !/dans les commentaires|en commentaire/i.test(p) && (accueil || !/\bbienvenue\b/i.test(p))).map(LATIN).filter(Boolean);
@@ -542,7 +585,9 @@ ${ordre.map((d, i) => `${i + 1}. [${d.categorie}] ${d.titre} — ${d.teaser || d
   if (!ACCUEIL.test(ouverture) && !/Bienvenue dans le Journal du NON/i.test(ouverture)) ouverture = `${ouverture} Bienvenue dans le Journal du NON, et la réponse est Non.`.trim();
   return {
     ordre,
-    ouverture: ouverture.split(/\s+/).length > 12 ? ouverture : "Bienvenue dans le Journal du NON, et la réponse est Non. L'actualité du jour ne va pas vous rassurer.",
+    // ouverture amputée par la vérification : reconstruite sur les titres vérifiés (le 1er dossier, puis l'annonce de la fin)
+    ouverture: ouverture.split(/\s+/).length >= 40 ? ouverture
+      : `Ce soir dans la War Room : ${ordre[0].titre.replace(/[.…]+$/, "")}. Puis ${ordre.slice(1, 4).map((d) => d.titre.replace(/[.…]+$/, "")).join(", ")}. Et le dernier dossier ne va pas vous laisser indifférents. ${ouverture}`.replace(/\s{2,}/g, " ").trim(),
     transitions: ordre.map((_, i) => (i ? recoller(parts[1 + i]) : "")),
     cloture: recoller(parts[parts.length - 1]) || "Voilà pour ce tour de la War Room. Et vous, quel dossier vous inquiète le plus ce soir ?",
   };
@@ -601,7 +646,12 @@ async function main() {
   dossiers = dossiers.filter((d) => !d.aVerifier && d.texte.split(/\s+/).length >= 50);
   if (!dossiers.length) throw new Error("aucun dossier assez solide aujourd'hui (sources ou IA indisponibles) : relance plus tard");
   await relire(dossiers);
-  const { ordre, ouverture, transitions, cloture } = await habiller(dossiers);
+  const hab = await habiller(dossiers);
+  // relecture de la langue de l'habillage (ouverture, transitions, clôture) : mêmes règles, sans recherche de doublons
+  const pseudo = [{ titre: "OUVERTURE", texte: hab.ouverture, sources: [] }, ...hab.transitions.map((x, i) => ({ titre: `TRANSITION ${i}`, texte: x, sources: [] })), { titre: "CLÔTURE", texte: hab.cloture, sources: [] }];
+  await relire(pseudo.filter((x) => x.texte), { doublons: false });
+  hab.ouverture = pseudo[0].texte; hab.transitions = pseudo.slice(1, -1).map((x) => x.texte); hab.cloture = pseudo[pseudo.length - 1].texte;
+  const { ordre, ouverture, transitions, cloture } = hab;
   // minutage (débit de lecture) + prompteur avec repères
   let t = 0;
   const P = [`WAR ROOM — ${new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}`, "", "▶ OUVERTURE", "", ouverture, ""];
