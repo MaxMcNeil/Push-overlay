@@ -190,6 +190,7 @@ async function enrichir(g) {
     const autres = autresPour(g, POOL_AUTRES);
     if (autres.length) g.texte += `\n\nAUTRES LECTURES (presse étrangère et indépendante — à citer avec leur nom) :\n` + autres.map((x) => `• ${x.source} : ${x.titre}${x.resume ? ` — ${x.resume}` : ""}`).join("\n");
     g.precedents = precedentsPour(g);
+    if (g.precedents.length < 2) { try { g.precedents.push(...await precedentsDyn(g, 2 - g.precedents.length)); } catch (e) { log(`    précédents hors catalogue impossibles (${String(e.message).slice(0, 80)})`); } }
     if (g.precedents.length) g.texte += `\n\nPRÉCÉDENTS HISTORIQUES AVÉRÉS RETENUS POUR CE DOSSIER :\n` + g.precedents.map((f) => `• ${f.fait} (Ce précédent illustre : ${f.type}.)`).join("\n");
     g.autres = autres.map((x) => ({ nom: x.source, url: x.url || "" }));
   }
@@ -215,6 +216,69 @@ const catalogue = () => _cat || (_cat = (() => {
     }).filter((f) => f.fait && f.repere.length && f.mots.length);
   } catch (e) { console.log(`::warning::catalogue des précédents illisible (${e.message}) : contre-lecture sans précédent`); return []; }
 })());
+// ---------------------------------------------------------------- précédents HORS catalogue (tout sujet, présent ou futur)
+// L'IA PROPOSE un précédent réel (titre d'article Wikipédia) ; le PROGRAMME vérifie que la page existe et en lit l'extrait officiel ;
+// une AUTRE IA écrit le fait UNIQUEMENT à partir de cet extrait et juge le parallèle ; le programme revérifie que dates, chiffres et noms
+// du fait figurent bien dans l'extrait. Rien d'inventé ni de plaqué à contresens ne passe : au moindre doute, aucun précédent.
+async function wiki(titre) {
+  for (const l of ["fr", "en"]) {
+    try {
+      const r = await fetch(`https://${l}.wikipedia.org/w/api.php?action=query&prop=extracts|pageprops&exintro=1&explaintext=1&exchars=1800&redirects=1&ppprop=disambiguation&format=json&titles=${encodeURIComponent(titre)}`,
+        { headers: { "user-agent": "JournalDuNon-WarRoom/1.0 (veille d'actualite)" }, signal: AbortSignal.timeout(15000) });
+      if (!r.ok) continue;
+      const p = Object.values((await r.json()).query?.pages || {})[0];
+      const ext = String(p?.extract || "").trim();
+      if (!p || p.missing !== undefined || p.pageprops?.disambiguation !== undefined || ext.length < 200) continue;
+      return { titre: p.title, extrait: ext, langue: l, url: `https://${l}.wikipedia.org/wiki/${encodeURIComponent(p.title.replace(/ /g, "_"))}` };
+    } catch {}
+  }
+  return null;
+}
+async function precedentsDyn(g, n) {
+  const dossier = `${g.items.slice(0, 6).map((x) => `• ${x.titre}`).join("\n")}\n${String(g.texte || "").slice(0, 1800)}`;
+  const deja = (g.precedents || []).map((f) => f.nom);
+  const prop = await ia("Tu es historien et rédacteur en chef d'une émission d'actualité. Réponds en JSON valide.",
+    `Dossier d'actualité :
+${dossier}
+
+Propose 0 à 3 précédents historiques RÉELS, célèbres, documentés, qui ont le MÊME MÉCANISME que ce dossier (une « preuve » ou une accusation
+démentie ensuite, un démenti officiel suivi d'un aveu, une alerte minimisée, un incident monté en épingle, une attribution hâtive, etc.).
+Le mécanisme doit être le même : pas un simple point commun de lieu, de pays ou de thème. Si rien ne colle vraiment, réponds [].
+${deja.length ? `Déjà retenus (ne pas les redonner) : ${deja.join(" ; ")}.\n` : ""}Pour chacun : "article" = titre EXACT de son article Wikipédia (français ou anglais), "mecanisme" = le mécanisme commun en une phrase.
+Réponds : {"precedents": [{"article": "…", "mecanisme": "…"}]}`, { maxTokens: 700, temperature: 0.2, tours: 2 });
+  const out = [];
+  for (const c of (prop.precedents || []).slice(0, 3)) {
+    if (out.length >= n) break;
+    const w = await wiki(String(c.article || "").trim());
+    if (!w || deja.some((d) => plat(d) === plat(w.titre))) continue;
+    let j;
+    try {
+      j = await ia("Tu es historien et vérificateur de faits. Réponds en JSON valide.",
+        `Voici l'extrait OFFICIEL de l'article « ${w.titre} » :
+${w.extrait}
+
+Dossier d'actualité à rapprocher :
+${dossier}
+
+Mécanisme proposé : ${c.mecanisme}
+
+1) "fait" : le précédent en 1 à 2 phrases françaises (45 mots max), avec sa DATE, écrit UNIQUEMENT avec ce que dit l'extrait (aucun chiffre, nom ni date qui n'y figure).
+2) "pertinent" : true seulement si le dossier présente VRAIMENT le même mécanisme, sans accuser qui que ce soit.
+3) "force" : 1 (parallèle discutable), 2 (bon), 3 (évident, tout le monde le ferait).
+4) "type" : ce que le précédent illustre, en une phrase.
+5) "repere" : 1 à 3 mots-clés (minuscules) par lesquels un texte le nommerait (ex. un nom de lieu ou de personne de l'extrait).
+Réponds : {"fait": "…", "pertinent": true, "force": 2, "type": "…", "repere": ["…"]}`, { maxTokens: 500, depart: 1, temperature: 0.1, tours: 2 });
+    } catch { continue; }
+    const fait = LATIN(String(j.fait || "").trim()), ext = plat(w.extrait), extN = chiffres(w.extrait);
+    const noms = (fait.replace(/^\s*\S+/, "").match(/\b\p{Lu}[\p{L}’'-]{2,}/gu) || []).flatMap((m) => plat(m).split(" ")).filter((x) => x && !MAJ_COURANTS.has(x));
+    const repere = (Array.isArray(j.repere) ? j.repere : []).map((x) => plat(x)).filter((x) => x.length >= 3 && (ext.includes(x) || plat(fait).includes(x))).slice(0, 3);
+    const sain = j.pertinent === true && Number(j.force) >= 2 && fait.length >= 40 && /\b(1[5-9]|20)\d\d\b/.test(fait) && repere.length
+      && chiffres(fait).every((x) => extN.includes(x)) && noms.every((x) => ext.includes(x)) && !NOUS.test(fait);
+    log(`    précédent hors catalogue « ${w.titre} » : ${sain ? "retenu" : "écarté"}${sain ? "" : j.pertinent === false ? " (parallèle non pertinent)" : " (non vérifiable dans la page)"}`);
+    if (sain) out.push({ nom: w.titre, repere, mots: [], forts: [], type: String(j.type || c.mecanisme || "").trim(), fait: `${fait} (Source : Wikipédia, article « ${w.titre} ».)`, obligatoire: Number(j.force) >= 3, dynamique: true });
+  }
+  return out;
+}
 const contient = (txt, mot) => (" " + txt + " ").includes(" " + mot + " ");
 // score d'une fiche pour un dossier : nombre de « mots » trouvés, à condition qu'au moins un mot « fort » (le thème précis) y soit
 function precedentsPour(g) {
