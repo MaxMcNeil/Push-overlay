@@ -13,11 +13,13 @@ const H24 = 26 * 3600 * 1000;                       // fenêtre : 26 h (marge de
 const UA = { "user-agent": "Mozilla/5.0 (compatible; WarRoomBot/1.0; +https://github.com/MaxMcNeil/Push-overlay)" };
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
 const etat = {};
+const statuts = {};          // dernier code HTTP par site (pour dire pourquoi une source ne donne rien)
 
 async function get(url, { json = false, timeout = 25000, essais = 2 } = {}) {
   for (let k = 0; k < essais; k++) {
     try {
       const r = await fetch(url, { headers: UA, signal: AbortSignal.timeout(timeout) });
+      statuts[new URL(url).hostname] = r.status;
       if (r.status === 429 || r.status >= 500) { await dormir(3000 * (k + 1)); continue; }
       if (!r.ok) return null;
       return json ? await r.json() : await r.text();
@@ -51,13 +53,15 @@ const THEMES = {
 };
 async function googleNews() {
   const out = [];
+  let echecs = 0;
   for (const [theme, qs] of Object.entries(THEMES)) {
     for (const q of qs) {
       const fr = theme !== "monde";
       const hl = fr ? "hl=fr&gl=FR&ceid=FR:fr" : "hl=en-US&gl=US&ceid=US:en";
+      if (out.length === 0 && echecs >= 4) break;                 // Google News bloque ce serveur : inutile d'insister
       const x = await get(q ? `https://news.google.com/rss/search?q=${encodeURIComponent(q + " when:1d")}&${hl}`
         : `https://news.google.com/rss/headlines/section/topic/NATION?${hl}`);          // « France » : la une nationale
-      if (!x) continue;
+      if (!x) { echecs++; continue; }
       for (const it of x.split("<item>").slice(1, 16)) {
         const date = tag(it, "pubDate"), titre = txt(tag(it, "title")), source = txt(tag(it, "source"));
         if (!titre || !recent(date)) continue;
@@ -68,6 +72,7 @@ async function googleNews() {
     }
   }
   etat.googlenews = out.length;
+  if (!out.length) console.log(`  Google News ne répond pas à ce serveur (code ${statuts["news.google.com"] ?? "aucun"}) : la presse française directe prend le relais`);
   return out;
 }
 
@@ -79,6 +84,48 @@ async function getGdelt(url, o) {
     try { return JSON.parse(t); } catch { console.log(`  GDELT : ${t.slice(0, 160).replace(/\s+/g, " ")}`); await dormir(8000); }
   }
   return null;
+}
+
+// ---------------------------------------------------------------- presse française en direct (flux RSS des rédactions)
+// Toujours collectée (en plus de Google News, et seule si Google News bloque) : liens DIRECTS vers les articles, que l'écriture
+// peut lire en entier. Un flux qui ne répond pas est simplement ignoré.
+const FLUX = [
+  ["franceinfo", "https://www.francetvinfo.fr/titres.rss"],
+  ["Le Monde", "https://www.lemonde.fr/rss/une.xml"],
+  ["Le Monde (France)", "https://www.lemonde.fr/societe/rss_full.xml"],
+  ["Le Figaro", "https://www.lefigaro.fr/rss/figaro_actualites.xml"],
+  ["Le Figaro (France)", "https://www.lefigaro.fr/rss/figaro_actualite-france.xml"],
+  ["BFMTV", "https://www.bfmtv.com/rss/news-24-7/"],
+  ["20 Minutes", "https://www.20minutes.fr/feeds/rss-une.xml"],
+  ["Ouest-France", "https://www.ouest-france.fr/rss/une"],
+  ["Libération", "https://www.liberation.fr/arc/outboundfeeds/rss/?outputType=xml"],
+  ["L'Express", "https://www.lexpress.fr/arc/outboundfeeds/rss/alaune.xml"],
+  ["Le Point", "https://www.lepoint.fr/rss.xml"],
+  ["Le Parisien", "https://feeds.leparisien.fr/leparisien/rss"],
+  ["Europe 1", "https://www.europe1.fr/rss.xml"],
+  ["RFI", "https://www.rfi.fr/fr/rss"],
+  ["France 24", "https://www.france24.com/fr/rss"],
+  ["Mediapart", "https://www.mediapart.fr/articles/feed"],
+];
+async function presseFr() {
+  const out = [], vides = [];
+  await Promise.all(FLUX.map(async ([nom, url]) => {
+    const x = await get(url, { timeout: 20000 });
+    if (!x) { vides.push(nom); return; }
+    const items = x.includes("<item") ? x.split(/<item[\s>]/).slice(1) : x.split(/<entry[\s>]/).slice(1);
+    let n = 0;
+    for (const it of items.slice(0, 60)) {
+      const titre = txt(tag(it, "title")), date = tag(it, "pubDate") || tag(it, "dc:date") || tag(it, "updated") || tag(it, "published");
+      const lien = txt(tag(it, "link")) || ((it.match(/<link[^>]*href="([^"]+)"/) || [])[1] || "");
+      if (!titre || !recent(date)) continue;
+      out.push({ titre, url: lien, source: nom, date: new Date(date).toISOString(), resume: txt(tag(it, "description")).slice(0, 400), origine: "presse-fr", langue: "fr" });
+      n++;
+    }
+    if (!n) vides.push(nom);
+  }));
+  etat.presse_fr = out.length;
+  if (vides.length) console.log(`  flux sans article récent ou injoignables : ${vides.join(", ")}`);
+  return out;
 }
 
 // ---------------------------------------------------------------- presse mondiale : GDELT (ton très négatif = choc)
@@ -160,7 +207,7 @@ async function catastrophes() {
 
 export async function collecter() {
   mkdirSync(OUT, { recursive: true });
-  const parts = await Promise.all([googleNews(), gdelt(), cyber(), catastrophes()].map((p) => p.catch((e) => { console.log(`  source en panne : ${e.message}`); return []; })));
+  const parts = await Promise.all([presseFr(), googleNews(), gdelt(), cyber(), catastrophes()].map((p) => p.catch((e) => { console.log(`  source en panne : ${e.message}`); return []; })));
   const tout = parts.flat();
   // doublons exacts (même lien ou même titre)
   const vus = new Set(), uniq = [];
