@@ -539,9 +539,10 @@ ${g.texte}`, { maxTokens: 3000, depart, temperature: 0.3 });
   const couvert = (s, ref) => { const r = new Set(motsDe(ref)); const m = motsDe(s); return m.length > 0 && m.filter((w) => r.has(w)).length >= Math.ceil(m.length * 0.8); };
   const faits = (Array.isArray(j.faits_cles) ? j.faits_cles : []).map((x) => LATIN(String(x)).slice(0, 80)).filter((x) => x && chiffresSurs(x, g.texte) && couvert(x, texte)).slice(0, 3);
   const ref = `${texte} ${g.items.map((x) => x.titre).join(" ")}`;
-  const titreOk = j.titre_ecran && (() => { const m = motsDe(j.titre_ecran), r = new Set(motsDe(ref)); return m.length > 0 && m.filter((w) => r.has(w)).length >= Math.ceil(m.length * 0.6); })();
+  const titreOk = j.titre_ecran && (() => { const m = motsDe(j.titre_ecran), r = new Set(motsDe(ref)); return m.length > 0 && m.filter((w) => r.has(w)).length >= Math.ceil(m.length * 0.5); })();
+  const fr = g.items.find((x) => x.langue === "fr" || /[éèàùçêâîô]|\b(le|la|les|des|du|une|est|dans|pour)\b/i.test(x.titre));
   const titreArticle = () => {           // titre réel de l'article, rendu lisible : sans « DIRECT. », sans nom du média, coupé sur un mot
-    let s = g.items[0].titre.replace(/\s+[-–—|]\s+[^-–—|]{2,40}$/, "").replace(/^\s*(DIRECT|VIDÉO|VIDEO|INFO [^.:]{1,25}|EXCLUSIF|PHOTOS?|ENQUÊTE|TÉMOIGNAGE)\s*[.:]\s*/i, "");
+    let s = (fr || g.items[0]).titre.replace(/\s+[-–—|]\s+[^-–—|]{2,40}$/, "").replace(/^\s*(DIRECT|VIDÉO|VIDEO|INFO [^.:]{1,25}|EXCLUSIF|PHOTOS?|ENQUÊTE|TÉMOIGNAGE)\s*[.:]\s*/i, "");
     const [av, ap] = s.split(/\s+:\s+/);
     if (ap && av.split(/\s+/).length >= 3) s = av; else if (ap && ap.split(/\s+/).length >= 3) s = ap;
     const w = s.split(/\s+/); if (w.length > 9) s = w.slice(0, 8).join(" ").replace(/[,;:]$/, "") + "…";
@@ -551,7 +552,7 @@ ${g.texte}`, { maxTokens: 3000, depart, temperature: 0.3 });
   return {
     aVerifier: !v.ok, _src: g.texte, _victimes: victimes, _seule: seule,
     categorie: n.categorie, choc: Number(n.choc) || 0, gravite: Math.max(1, Math.min(5, Number(j.gravite) || Math.round((Number(n.choc) || 5) / 2))),
-    titre: LATIN(String((titreOk && j.titre_ecran) || titreArticle())).slice(0, 70), lieu: String(j.lieu || [n.ville, n.pays].filter(Boolean).join(", ")).slice(0, 60),
+    titre: LATIN(String((titreOk && j.titre_ecran) || (fr ? titreArticle() : j.titre_ecran) || titreArticle())).slice(0, 70), lieu: String(j.lieu || [n.ville, n.pays].filter(Boolean).join(", ")).slice(0, 60),
     pays: n.pays || "", faits, chiffre: cle, texte, teaser: String(j.accroche_teaser || "").slice(0, 120), revendication: !!rev, rumeur,
     sources: [...new Map([...g.items.filter((x) => x.source).map((x) => [x.source, { nom: x.source, url: x.url || "" }]), ...(g.autres || []).filter((x) => texte.includes(x.nom)).map((x) => [x.nom, x])]).values()].slice(0, 8),
   };
@@ -664,8 +665,10 @@ async function youtube(ordre) {
     j = await ia("Tu es responsable YouTube d'une chaîne d'actualité française indépendante (« Le Journal du NON »). Réponds en JSON valide.",
       `Voici les dossiers du live de ce soir (dans l'ordre ; le DERNIER est la surprise de fin, ne le dévoile pas dans le titre).
 Écris :
-- "titres" : 3 titres YouTube COURTS (40 à 65 caractères) et CHOCS, originaux, qui donnent envie de cliquer SANS mentir : seulement
-  des faits présents dans la liste ; aucune accusation présentée comme prouvée ; pas de MAJUSCULES partout ; pas d'émoji ;
+- "titres" : 3 titres YouTube COURTS (35 à 60 caractères), PROVOCANTS, dans le ton de la chaîne (indignation, question qui dérange,
+  contraste, mystère) — jamais un titre plat de type « le point », « l'actu », « les faits marquants ». Exemples de TON (pas de contenu) :
+  « On vous ment encore sur l'Iran ? », « Ce que le 20h ne vous dira pas », « Ils ont voté ça pendant que vous dormiez ».
+  Seulement des faits présents dans la liste ; aucune accusation contre une personne présentée comme prouvée ; pas d'émoji ;
 - "accroche" : 2 phrases d'ouverture de description, percutantes, sans « nous » ni « on » ;
 - "question" : une question ouverte au public (jamais « écrivez X si… ») ;
 - "tags" : 25 à 35 tags (personnes, lieux, affaires, thèmes) tirés des dossiers.
@@ -698,7 +701,9 @@ async function main() {
   const groupes = regrouper(items);
   log(`${groupes.length} événements distincts`);
   const notes = await trier(groupes);
-  const solides = notes.filter((g) => g.nb_sources >= 2 || g.officiel || g.revendication);
+  // les articles « fourre-tout » (« Ce qu'il faut retenir », « L'essentiel », « En direct »…) ne font pas un sujet
+  const FOURRE_TOUT = /ce qu.il faut (savoir|retenir)|l.essentiel de l.actu|les infos? (du jour|à retenir)|^\s*(en )?direct\b|le point sur l.actu|what we know|live updates|news (wrap|roundup)/i;
+  const solides = notes.filter((g) => (g.nb_sources >= 2 || g.officiel || g.revendication) && !FOURRE_TOUT.test(g.items[0]?.titre || ""));
   // AUDIENCE FRANÇAISE : la France d'abord ; l'international seulement s'il mérite vraiment l'attention des Français (≥ 7/10),
   // et jamais plus de 40 % des dossiers
   const enFrance = (g) => /^france$/i.test(String(g.note.pays || "").trim());
