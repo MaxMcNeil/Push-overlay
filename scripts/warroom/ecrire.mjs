@@ -819,6 +819,36 @@ ${liste.map((x, i) => `${i + 1}. ${x}`).join("\n")}`, { maxTokens: 2000, tempera
 const mmss = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.round(s % 60)).padStart(2, "0")}`;
 const duree = (t) => (String(t).split(/\s+/).filter(Boolean).length / WPM) * 60;
 
+// ---------------------------------------------------------------- SUJETS IMPOSÉS (champ « sujets » du workflow, vide par défaut)
+// Un sujet que tu veux absolument dans le live (ex. « Trump piratage FBI ») : cherché dans tout ce qui a été collecté ET en direct
+// (GDELT, 48 h), puis ajouté en tête du live sans passer par le filtre de choc. Rien trouvé = dit clairement dans le journal.
+async function sujetsImposes(items) {
+  const liste = String(process.env.WARROOM_SUJETS || "").split(/[\n;]+/).map((x) => x.trim()).filter(Boolean).slice(0, 5);
+  const out = [];
+  for (const [i, q] of liste.entries()) {
+    const m = [...new Set(mots(q))];
+    if (!m.length) continue;
+    const need = Math.max(1, Math.ceil(m.length * 0.67));
+    const hit = (x) => { const t = new Set(mots(`${x.titre} ${x.resume || ""}`)); return m.filter((w) => t.has(w)).length >= need; };
+    const trouves = items.filter(hit);
+    try {
+      const r = await fetch(`https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(m.join(" "))}&mode=artlist&maxrecords=25&timespan=48h&format=json`, { signal: AbortSignal.timeout(30000) });
+      const j = r.ok ? await r.json() : null;
+      for (const a of j?.articles || []) if (a.url && !trouves.some((x) => x.url === a.url)) trouves.push({ titre: deshtml(a.title || ""), url: a.url, source: a.domain, date: new Date().toISOString(), origine: "gdelt" });
+    } catch {}
+    await dormir(5.5);
+    if (!trouves.length) { console.log(`::warning::sujet imposé « ${q} » : aucun article trouvé dans les 48 dernières heures`); continue; }
+    const g = { id: 9000 + i, items: trouves.slice(0, 12), mots: new Set(m), impose: true, officiel: false, revendication: false };
+    g.nb_sources = new Set(g.items.map((x) => (x.source || "").toLowerCase().replace(/^www\./, "")).filter(Boolean)).size;
+    let n = {};
+    try { n = await ia("Tu es rédacteur en chef. Réponds en JSON valide.", `Sujet demandé : « ${q} ». Articles :\n${g.items.slice(0, 6).map((x) => `• ${x.titre}`).join("\n")}\nRéponds : {"categorie": "CATASTROPHE|ACCIDENT|SCANDALE|CORRUPTION|POLITIQUE|GÉOPOLITIQUE|GUERRE|RÉVÉLATION|CYBER|FAIT DIVERS|INSOLITE|RUMEUR", "evenement": "3 à 8 mots", "pays": "pays principal", "ville": ""}`, { maxTokens: 300, temperature: 0.1, tours: 2 }); } catch {}
+    g.note = { choc: 10, interet_fr: 10, actuel: true, categorie: n.categorie || "POLITIQUE", evenement: n.evenement || q, pays: n.pays || "", ville: n.ville || "" };
+    log(`  sujet imposé « ${q} » : ${g.items.length} article(s), ${g.nb_sources} source(s), catégorie ${g.note.categorie}`);
+    out.push(g);
+  }
+  return out;
+}
+
 async function main() {
   mkdirSync(OUT, { recursive: true });
   const { items, etat, contre } = existsSync(process.env.WARROOM_BRUT || "") ? { items: JSON.parse(readFileSync(process.env.WARROOM_BRUT, "utf8")), etat: {}, contre: existsSync(`${OUT}/autres.json`) ? JSON.parse(readFileSync(`${OUT}/autres.json`, "utf8")) : [] } : await collecter();
@@ -837,10 +867,13 @@ async function main() {
   const candidats = solides.filter((g) => g.note.actuel !== false && Number(g.note.choc) >= Number(process.env.WARROOM_SEUIL || 6) && interet(g) >= 7)
     .sort((a, b) => score(b) - score(a))
     .slice(0, MAX_DOSSIERS + 25);
-  const uniques = await fusionner(candidats);
+  const imposes = await sujetsImposes(items);
+  const memeSujet = (a, b) => { const u = new Set(a.items.map((x) => x.url).filter(Boolean)); if (b.items.some((x) => u.has(x.url))) return true;
+    const ma = new Set(mots(a.note.evenement || a.items[0].titre)), mb = new Set(mots(b.note.evenement || b.items[0].titre)); let k = 0; for (const w of ma) if (mb.has(w)) k++; return k / Math.max(3, Math.min(ma.size, mb.size)) >= 0.6; };
+  const uniques = [...imposes, ...(await fusionner(candidats)).filter((g) => !imposes.some((i) => memeSujet(i, g)))];
   const maxMonde = Math.max(2, Math.floor((MAX_DOSSIERS + 6) * 0.4));
   let nMonde = 0;
-  const retenus = uniques.filter((g) => enFrance(g) || nMonde++ < maxMonde).slice(0, MAX_DOSSIERS + 6);   // quelques réserves si un dossier ne tient pas
+  const retenus = uniques.filter((g) => g.impose || enFrance(g) || nMonde++ < maxMonde).slice(0, MAX_DOSSIERS + 6);   // quelques réserves si un dossier ne tient pas
   log(`  ${retenus.filter(enFrance).length} sujets France, ${retenus.filter((g) => !enFrance(g)).length} internationaux qui concernent la France`);
   log(`${solides.length} sujets solides (≥ 2 sources ou source officielle), ${retenus.length} assez choc retenus`);
   // ÉCRITURE EN PARALLÈLE : WARROOM_VOIES dossiers à la fois (3 par défaut), répartis entre fournisseurs (Gemini / Groq) ;

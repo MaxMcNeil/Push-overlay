@@ -13,6 +13,10 @@ on:
         type: choice
         options: ["6", "5", "7", "8"]
         default: "6"
+      sujets:
+        description: "Sujets à inclure absolument (facultatif ; un par ligne ou séparés par « ; »), ex. : Trump piratage FBI"
+        type: string
+        default: ""
       max_dossiers:
         description: "Nombre maximum de dossiers"
         type: choice
@@ -39,6 +43,7 @@ env:
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   WARROOM_SEUIL: ${{ inputs.seuil || '6' }}
   WARROOM_MAX: ${{ inputs.max_dossiers || '25' }}
+  WARROOM_SUJETS: ${{ inputs.sujets || '' }}
   WARROOM_BUDGET_MIN: "75"
 
 jobs:
