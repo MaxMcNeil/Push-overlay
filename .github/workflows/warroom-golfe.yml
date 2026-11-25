@@ -33,7 +33,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # CLÉS DÉDIÉES à la War Room Golfe : secrets WARROOM_GOLFE_GEMINI_API_KEY et WARROOM_GOLFE_GROQ_API_KEY ; à défaut, celles de la
+  # CLÉS DÉDIÉES à la War Room Golfe : secrets WARROOM_GOLFE_GEMINI_API_KEY, WARROOM_GOLFE_GROQ_API_KEY, WARROOM_GOLFE_OPENROUTER_API_KEY,
+  # WARROOM_GOLFE_CLOUDFLARE_AI_TOKEN + WARROOM_GOLFE_CLOUDFLARE_ACCOUNT_ID ; à défaut de chacune, celles de la
   # chaîne du Golfe (Faceless : EXPLAINER_…), puis celles du dépôt (une ou plusieurs clés,
   # séparées par des virgules). Si une clé dédiée existe, c'est la SEULE utilisée ici pour ce fournisseur : les quotas de Faceless,
   # Build Video et des Shorts ne sont jamais entamés. Sans clé dédiée : les clés de Faceless, sinon celles du dépôt.
@@ -41,9 +42,9 @@ env:
   GEMINI_API_KEYS: ${{ secrets.WARROOM_GOLFE_GEMINI_API_KEY == '' && secrets.EXPLAINER_GEMINI_API_KEY == '' && secrets.GEMINI_API_KEYS || '' }}
   GEMINI_API_KEYS_PLUS: ${{ secrets.WARROOM_GOLFE_GEMINI_API_KEY == '' && secrets.EXPLAINER_GEMINI_API_KEY == '' && secrets.GEMINI_API_KEYS_PLUS || '' }}
   GROQ_API_KEY: ${{ secrets.WARROOM_GOLFE_GROQ_API_KEY || secrets.EXPLAINER_GROQ_API_KEY || secrets.GROQ_API_KEY }}
-  CLOUDFLARE_AI_TOKEN: ${{ secrets.CLOUDFLARE_AI_TOKEN }}
-  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-  OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+  CLOUDFLARE_AI_TOKEN: ${{ secrets.WARROOM_GOLFE_CLOUDFLARE_AI_TOKEN || secrets.CLOUDFLARE_AI_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.WARROOM_GOLFE_CLOUDFLARE_AI_TOKEN != '' && secrets.WARROOM_GOLFE_CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
+  OPENROUTER_API_KEY: ${{ secrets.WARROOM_GOLFE_OPENROUTER_API_KEY || secrets.OPENROUTER_API_KEY }}
   GROQ_API_KEYS: ${{ secrets.WARROOM_GOLFE_GROQ_API_KEY == '' && secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS || '' }}
   GROQ_API_KEYS_PLUS: ${{ secrets.WARROOM_GOLFE_GROQ_API_KEY == '' && secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS_PLUS || '' }}
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
