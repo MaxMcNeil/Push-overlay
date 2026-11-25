@@ -937,7 +937,7 @@ const ARABE_SYS = `Tu es le traducteur et rédacteur en chef arabe de la chaîne
 en ARABE STANDARD MODERNE (فصحى) de grande chaîne d'information, phrases courtes, rythme oral, ton percutant ; tu gardes l'ironie mordante
 et l'humour noir là où ils sont, et EXACTEMENT les faits, noms, dates et attributions (« selon… », conditionnel = صيغة الاحتمال/« بحسب »).
 Les noms propres sont écrits en arabe (translittération usuelle). Tous les nombres en CHIFFRES OCCIDENTAUX (0-9). Aucun mot en lettres
-latines, sauf « Gulf Think-Tank » et les sigles (OTAN → الناتو de préférence). « La position du jour » se traduit « موقف اليوم ». Réponds en JSON valide.`;
+latines, sauf « Gulf Think-Tank » et les sigles (OTAN → الناتو de préférence). « La position du jour » se traduit EXACTEMENT « خلاصة القول اليوم ». Réponds en JSON valide.`;
 const nombresDe = (t) => chiffres(t).filter((n) => n.length >= 2);
 const versOccidental = (t) => String(t).replace(/[٠-٩]/g, (c) => "٠١٢٣٤٥٦٧٨٩".indexOf(c)).replace(/[۰-۹]/g, (c) => "۰۱۲۳۴۵۶۷۸۹".indexOf(c));
 const LATIN_RESTE = (t) => (String(t).replace(/Gulf Think-Tank|#\S+/g, "").match(/\b[A-Za-zÀ-ÿ]{3,}\b/g) || []).filter((w) => w !== w.toUpperCase());
