@@ -1,0 +1,138 @@
+name: War Room visible (toi plein écran)
+
+# MÊME War Room, mais les écrans sont TRANSPARENTS : ta caméra est en plein écran dans OBS, les panneaux (titre, faits,
+# catégorie, bandeau « À SUIVRE ») sont posés par-dessus, semi-transparents. Lancement À LA MAIN uniquement.
+# Par défaut, reprend le script du dernier War Room de moins de 18 h (aucun quota IA dépensé) ; sinon en écrit un nouveau.
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: "Script : reprendre le dernier War Room (moins de 18 h) ou en écrire un nouveau"
+        type: choice
+        options: ["reprendre le dernier", "nouveau"]
+        default: "reprendre le dernier"
+      seuil:
+        description: "Niveau de choc minimum d'un sujet (0 à 10)"
+        type: choice
+        options: ["6", "5", "7", "8"]
+        default: "6"
+      sujets:
+        description: "Sujets à inclure absolument (facultatif ; un par ligne ou séparés par « ; »), ex. : Trump piratage FBI"
+        type: string
+        default: ""
+      max_dossiers:
+        description: "Nombre maximum de dossiers"
+        type: choice
+        options: ["25", "15", "35", "50"]
+        default: "25"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: warroom
+  cancel-in-progress: false
+
+env:
+  # CLÉS DÉDIÉES à la War Room (facultatives) : secrets WARROOM_GEMINI_API_KEY et WARROOM_GROQ_API_KEY (une ou plusieurs clés,
+  # séparées par des virgules). Si une clé dédiée existe, c'est la SEULE utilisée ici pour ce fournisseur : les quotas de Faceless,
+  # Build Video et des Shorts ne sont jamais entamés. Sans clé dédiée : les clés de Faceless, sinon celles du dépôt.
+  GEMINI_API_KEY: ${{ secrets.WARROOM_GEMINI_API_KEY || secrets.EXPLAINER_GEMINI_API_KEY || secrets.GEMINI_API_KEY }}
+  GEMINI_API_KEYS: ${{ secrets.WARROOM_GEMINI_API_KEY == '' && secrets.EXPLAINER_GEMINI_API_KEY == '' && secrets.GEMINI_API_KEYS || '' }}
+  GEMINI_API_KEYS_PLUS: ${{ secrets.WARROOM_GEMINI_API_KEY == '' && secrets.EXPLAINER_GEMINI_API_KEY == '' && secrets.GEMINI_API_KEYS_PLUS || '' }}
+  GROQ_API_KEY: ${{ secrets.WARROOM_GROQ_API_KEY || secrets.EXPLAINER_GROQ_API_KEY || secrets.GROQ_API_KEY }}
+  GROQ_API_KEYS: ${{ secrets.WARROOM_GROQ_API_KEY == '' && secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS || '' }}
+  GROQ_API_KEYS_PLUS: ${{ secrets.WARROOM_GROQ_API_KEY == '' && secrets.EXPLAINER_GROQ_API_KEY == '' && secrets.GROQ_API_KEYS_PLUS || '' }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  WARROOM_SEUIL: ${{ inputs.seuil || '6' }}
+  WARROOM_MAX: ${{ inputs.max_dossiers || '25' }}
+  WARROOM_SUJETS: ${{ inputs.sujets || '' }}
+  WARROOM_BUDGET_MIN: "75"
+
+jobs:
+  warroom:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Outils (ffmpeg…) — avec cache
+        uses: ./.github/actions/setup-media
+
+      - name: Chrome (préinstallé ; installé seulement s'il manque)
+        run: |
+          for c in /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium /usr/bin/chromium-browser; do [ -x "$c" ] && { echo "Chrome : $c"; exit 0; }; done
+          P=$(npx --yes @puppeteer/browsers install chrome@stable --path "$HOME/chrome" | awk '{print $2}' | tail -1)
+          [ -x "$P" ] || { echo "::error::Impossible d'installer Chrome"; exit 1; }
+          echo "CHROME_PATH=$P" >> "$GITHUB_ENV"
+
+      - name: Script du jour (repris du dernier War Room, sinon écrit)
+        timeout-minutes: 85
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CHOIX: ${{ inputs.script || 'reprendre le dernier' }}
+        run: |
+          set -euo pipefail
+          D=output/warroom; mkdir -p "$D"
+          repris=""
+          if [ "$CHOIX" != "nouveau" ]; then
+            # dernier War Room « normal » publié il y a moins de 18 h, avec son plan d'écrans (warroom.json)
+            T=$(gh api "repos/$REPO/releases?per_page=50" -q '[.[]|select((.tag_name|startswith("out-warroom-")) and (.tag_name|test("visible|essai")|not) and ((now - (.created_at|fromdateiso8601)) < 64800) and ([.assets[].name]|index("warroom.json")))]|sort_by(.created_at)|last|.tag_name // ""')
+            if [ -n "$T" ]; then
+              for f in prompteur.txt sources.md warroom.json youtube.txt; do
+                id=$(gh api "repos/$REPO/releases/tags/$T" -q ".assets[]|select(.name==\"$f\")|.id" || true)
+                if [ -n "$id" ]; then gh api -H "Accept: application/octet-stream" "repos/$REPO/releases/assets/$id" > "$D/$f" || true; fi
+              done
+              if [ -s "$D/warroom.json" ] && [ -s "$D/prompteur.txt" ]; then repris="$T"; fi
+            fi
+            if [ -n "$repris" ]; then echo "::notice::Script repris du War Room « $repris » (aucun quota IA dépensé)"
+            else echo "::notice::Aucun War Room de moins de 18 h réutilisable : nouveau script écrit"; fi
+          fi
+          if [ -z "$repris" ]; then node scripts/warroom/ecrire.mjs; fi
+          # repère lu par l'appli Prompteur : écrans transparents (.webm) au lieu des .mp4
+          sed -i '1s/^WAR ROOM\( VISIBLE\)\? —/WAR ROOM VISIBLE —/' "$D/prompteur.txt"
+          head -1 "$D/prompteur.txt"
+
+      - name: Écrans OBS transparents (un par dossier + transition ALERTE)
+        timeout-minutes: 70
+        env:
+          WARROOM_VISIBLE: "1"
+        run: |
+          node scripts/warroom/clips.mjs \
+            || { echo "::warning::rendu échoué : nouvel essai avec un seul Chrome"; EXPLAINER_WORKERS=1 node scripts/warroom/clips.mjs; }
+
+      - name: Paquet à télécharger sur le PC
+        run: |
+          set -euo pipefail
+          D=output/warroom
+          mkdir -p pub
+          cp "$D/prompteur.txt" pub/prompteur.txt
+          cp "$D/sources.md" pub/sources.md 2>/dev/null || true
+          [ -f "$D/youtube.txt" ] && cp "$D/youtube.txt" pub/youtube.txt || true
+          (cd "$D/ecrans" && zip -q -0 -r "$GITHUB_WORKSPACE/pub/WarRoom-visible-ecrans.zip" *.webm secours)
+          ls -la pub
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: warroom-visible
+          path: pub/*
+          retention-days: 3
+
+      - name: Publication (release out-warroom-visible-…)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_NAME" = "main" ]; then TAG="out-warroom-visible-$(TZ=Europe/Rome date +%Y%m%d-%H%M)"; else TAG="out-warroom-visible-essai"; fi
+          gh release delete "$TAG" --repo "$REPO" -y --cleanup-tag 2>/dev/null || true
+          N=$(grep -c '^▶ DOSSIER' pub/prompteur.txt || true)
+          gh release create "$TAG" --repo "$REPO" --target "$GITHUB_SHA" --title "War Room VISIBLE — $(TZ=Europe/Rome date '+%d/%m/%Y %H:%M')" \
+            --notes "$N dossiers, écrans TRANSPARENTS (ta caméra plein écran derrière). Télécharge **prompteur.txt** (à charger dans l'appli Prompteur) et **WarRoom-visible-ecrans.zip** (à dézipper dans le dossier War Room du PC ; le sous-dossier secours/ contient une image fixe de chaque écran). Titre, description et tags YouTube : youtube.txt. Sources : sources.md." \
+            pub/prompteur.txt $( [ -f pub/sources.md ] && echo pub/sources.md ) pub/WarRoom-visible-ecrans.zip $( [ -f pub/youtube.txt ] && echo pub/youtube.txt )
+          echo "Publié : https://github.com/$REPO/releases/tag/$TAG"

@@ -70,10 +70,26 @@ html,body{width:1080px;height:1920px;overflow:hidden;background:#04070c}
 #cd{position:absolute;left:36px;top:326px;width:650px;height:640px;display:none;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center}
 #cd .a{font:900 40px/1 "IT";color:var(--teal);letter-spacing:1px}#cd .n{height:210px}#cd .b{font:700 26px/1 "JB";letter-spacing:2px;color:#cfefff}
 #big .s{font:700 30px/1.35 "JB";letter-spacing:1px;color:#cfefff;margin-top:24px;max-width:900px}
+/* WAR ROOM VISIBLE : fond TRANSPARENT (ta caméra plein écran derrière, dans OBS) ; panneaux semi-transparents, texte ombré
+   pour rester lisible sur l'image ; pas de fenêtre caméra ; colonne de droite resserrée pour dégager ton visage */
+html.vis,html.vis body,.vis #root{background:transparent!important}
+.vis .halo,.vis .grid,.vis .scan,.vis .vig,.vis .lines,.vis #cam,.vis #radar{display:none!important}
+.vis #fond{display:block}
+#fond{display:none;position:absolute;left:0;right:0;top:940px;bottom:0;background:linear-gradient(180deg,transparent,rgba(0,0,0,.42) 22%,rgba(0,0,0,.55))}
+.vis #top{background:rgba(4,16,22,.5);border-color:rgba(63,224,208,.6)}
+.vis #side{left:792px;width:252px}
+.vis #cat{font-size:27px;padding:10px 10px}
+.vis #num b{font-size:44px}
+.vis .box{background:rgba(4,20,26,.45)}
+.vis .fait{background:rgba(4,20,26,.5)}
+.vis #tick{background:rgba(10,4,6,.6)}
+.vis #titre,.vis .fait,.vis #big,.vis #num,.vis #lieu,.vis #chiffre,.vis #src,.vis #top{text-shadow:0 2px 4px #000,0 0 14px rgba(0,0,0,.9)}
+.vis #src{color:#cfe6ea}
+.vis .box h4{font-size:18px;letter-spacing:2px}
 </style>
 </head>
 <body>
-<div id="root">
+<div id="root"><div id="fond"></div>
   <div class="halo"></div><div class="grid"></div><div class="scan"></div><div class="vig"></div><div class="lines"></div>
   <div id="top"><img id="logo"><div><div class="wr">ANALYSE INDÉPENDANTE</div></div><div class="live"><span>SOURCES CITÉES</span><span>INFOS PUBLIQUES</span><span>À VOUS DE JUGER</span></div></div>
   <div id="cam"><i class="c c1"></i><i class="c c2"></i><i class="c c3"></i><i class="c c4"></i><div class="lbl"><b>●</b> CAM 01 · ANALYSTE</div></div>
@@ -98,6 +114,7 @@ function hash(s){let h=7;for(const c of String(s))h=(h*31+c.charCodeAt(0))>>>0;r
 /* spec = { w, h, fps, duration: P, seg: {type, n, total, categorie, titre, faits, chiffre, gravite, lieu, sources, revendication, rumeur}, ticker, logo } */
 window.init=async function(spec){
   P=spec.duration||20;const s=spec.seg||{type:"ouverture"},dos=s.type==="dossier",r=$("root");
+  document.documentElement.classList.toggle("vis",!!spec.visible);
   r.style.setProperty("--cat",dos?(CAT[s.categorie]||"#3fe0d0"):"#3fe0d0");
   if(spec.logo){$("logo").src=spec.logo;$("logo").style.display="block"}
   $("num").innerHTML=dos?`DOSSIER<b>${String(s.n).padStart(2,"0")} / ${String(s.total).padStart(2,"0")}</b>`:`<b>${String(s.total||0).padStart(2,"0")}</b>DOSSIERS`;

@@ -27,11 +27,42 @@ const ecrans = [
   ["wr-fin", { type: "cloture", total }],
 ];
 mkdirSync(`${OUT}/ecrans`, { recursive: true });
-for (const [nom, seg] of ecrans) {
-  const f = `${OUT}/ecrans/${nom}.mp4`;
-  await render({ ...base, seg }, f);
-  console.log(`  ✓ ${nom}.mp4 ${seg.type === "dossier" ? `— ${seg.titre}` : `(${seg.type})`}`);
+// WAR ROOM VISIBLE (WARROOM_VISIBLE=1) : écrans à fond TRANSPARENT (WebM VP9 + alpha, 720×1280 = la taille de ton OBS),
+// posés par-dessus ta caméra plein écran ; + une image fixe PNG de chaque écran (secours si le PC peine à lire les vidéos)
+const VISIBLE = process.env.WARROOM_VISIBLE === "1";
+async function rendreTransparent(seg, nom) {
+  const PV = Number(process.env.WARROOM_BOUCLE_VISIBLE_S || 10), fps = 15, dir = `${OUT}/png-${nom}`;
+  rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
+  const ch = new Chrome();
+  try {
+    await ch.start(1080, 1920);
+    await ch.send("Page.navigate", { url: "file://" + path.resolve("templates/warroom/index.html") });
+    for (let i = 0; i < 200; i++) { if (await ch.eval("typeof window.init==='function'&&document.readyState==='complete'")) break; await new Promise((r) => setTimeout(r, 50)); }
+    await ch.send("Emulation.setDefaultBackgroundColorOverride", { color: { r: 0, g: 0, b: 0, a: 0 } });
+    await ch.eval(`init(${JSON.stringify({ ...base, duration: PV, seg, visible: true })})`);
+    const clip = { x: 0, y: 0, width: 1080, height: 1920, scale: 2 / 3 };
+    for (let k = 0; k < PV * fps; k++) {
+      await ch.eval(`seek(${(k / fps).toFixed(4)})`);
+      const r = await ch.send("Page.captureScreenshot", { format: "png", clip, captureBeyondViewport: false });
+      writeFileSync(`${dir}/${String(k).padStart(4, "0")}.png`, Buffer.from(r.data, "base64"));
+    }
+  } finally { ch.stop(); }
+  execFileSync("ffmpeg", ["-y", "-v", "error", "-framerate", String(fps), "-i", `${dir}/%04d.png`, "-vf", "scale=720:1280:flags=lanczos",
+    "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-b:v", "1500k", "-deadline", "good", "-cpu-used", "4", "-row-mt", "1", "-auto-alt-ref", "0",
+    "-metadata:s:v:0", "alpha_mode=1", `${OUT}/ecrans/${nom}.webm`]);
+  mkdirSync(`${OUT}/ecrans/secours`, { recursive: true });
+  execFileSync("ffmpeg", ["-y", "-v", "error", "-i", `${dir}/${String(Math.round(fps * 1.5)).padStart(4, "0")}.png`, "-vf", "scale=720:1280:flags=lanczos", `${OUT}/ecrans/secours/${nom}.png`]);
+  rmSync(dir, { recursive: true, force: true });
 }
+const VOIES = VISIBLE ? Math.max(1, Math.min(4, Number(process.env.EXPLAINER_WORKERS) || 3)) : 1;
+const file = [...ecrans];
+await Promise.all(Array.from({ length: VOIES }, async () => {
+  for (let x; (x = file.shift()); ) {
+    const [nom, seg] = x;
+    if (VISIBLE) await rendreTransparent(seg, nom); else await render({ ...base, seg }, `${OUT}/ecrans/${nom}.mp4`);
+    console.log(`  ✓ ${nom}.${VISIBLE ? "webm" : "mp4"} ${seg.type === "dossier" ? `— ${seg.titre}` : `(${seg.type})`}`);
+  }
+}));
 // transition « ALERTE » : images PNG transparentes → WebM VP9 avec transparence (OBS la lit avec son alpha)
 {
   const D = 1.2, fps = 30, dir = `${OUT}/alerte-png`;
