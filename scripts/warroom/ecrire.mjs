@@ -25,7 +25,10 @@ RÈGLE ABSOLUE : AUCUNE critique, ironie, moquerie ou insinuation visant les dir
 héritiers, familles régnantes), leurs gouvernements et institutions, ni l'islam, les lieux saints et les symboles religieux : leurs
 décisions sont rapportées avec respect, de façon factuelle et analytique (angle think-tank : enjeux, stratégie, influence, rapport de
 force). La virulence, l'ironie mordante et l'humour noir visent les puissances étrangères, l'hypocrisie occidentale, le deux poids deux
-mesures, la propagande, les milices et groupes armés, les médias qui manipulent — jamais les victimes.`,
+mesures, la propagande, les milices et groupes armés, les médias qui manipulent — jamais les victimes.
+LES MAUVAISES NOUVELLES qui touchent un pays du Golfe (attaques, menaces, pertes économiques, incidents, rumeurs) sont les bienvenues
+et donnent du piquant : raconte-les comme des faits, avec leur gravité, au conditionnel et en disant clairement « non confirmé » ou
+« une seule source, invérifiable à ce stade, affirme que… » quand c'est le cas — sans jamais en faire porter la faute aux dirigeants.`,
   signature: "La position du jour",
   accueil: "Bienvenue dans la War Room de Gulf Think-Tank.",
   paysPublic: /arabie|saoudi|[ée]mirats|qatar|kowe[iï]t|oman|bahre[iï]n|golfe/i,
@@ -929,22 +932,25 @@ ${liste.map((x, i) => `${i + 1}. ${x}`).join("\n")}`, { maxTokens: 2000, tempera
     "TAGS (à coller dans le champ Tags de YouTube Studio) :", tags.join(", "), ""].join("\n");
 }
 
-// GOLFE : juge final de chaque dossier écrit (texte français vérifié). Écarte tout dossier qui critique, accuse, moque ou insinue
-// contre un dirigeant, une famille régnante, un gouvernement, une armée ou une institution d'un pays du Golfe, contre l'islam, ou qui
-// dénigre un pays du Golfe sur la foi d'une source non confirmée. IA indisponible → dossier écarté (prudence).
+// GOLFE : juge final de chaque dossier écrit (texte français vérifié). Les mauvaises nouvelles qui touchent un pays du Golfe
+// (attaques, menaces, économie, incidents, rumeurs) PASSENT, rapportées comme des faits, et « non confirmé / une seule source » quand
+// c'est le cas. Est écarté tout dossier qui critique, accuse, moque ou insinue contre un dirigeant du Golfe, une famille régnante,
+// les décisions de leurs gouvernements, ou l'islam. IA indisponible → dossier écarté (prudence).
 async function tabouGolfe(d) {
   try {
     const j = await ia(`Tu es le rédacteur en chef de « Gulf Think-Tank », chaîne d'analyse pour le public des pays du Golfe (Arabie saoudite, Émirats, Qatar, Koweït, Oman, Bahreïn). Réponds en JSON valide.`,
-      `Ce texte peut-il passer à l'antenne ? Il est INTERDIT s'il contient la moindre critique, accusation, ironie, moquerie, insinuation ou jugement négatif
-visant : un dirigeant d'un pays du Golfe, une famille régnante, un gouvernement, une armée, une coalition dirigée par un pays du Golfe, une
-institution d'un pays du Golfe, l'islam ou un symbole religieux ; ou s'il présente un pays du Golfe de façon dénigrante ou alarmiste sur la
-foi d'une seule source non confirmée. Rapporter un fait avec neutralité (une décision, une frappe, une déclaration) est permis ; le juger
-négativement ne l'est pas. Critiquer l'Iran, Israël, les milices, les puissances occidentales ou les médias est permis.
+      `Ce texte peut-il passer à l'antenne ?
+PERMIS : les mauvaises nouvelles qui touchent un pays du Golfe (attaques subies, menaces, pertes économiques, incidents, accidents,
+rumeurs), rapportées comme des faits, au conditionnel et avec la mention « non confirmé » ou « une seule source » quand c'est le cas ;
+critiquer l'Iran, Israël, les milices, les puissances occidentales, les médias.
+INTERDIT : toute critique, accusation, ironie, moquerie, insinuation ou jugement négatif visant un dirigeant d'un pays du Golfe (roi, émir,
+sultan, prince héritier, ministre), une famille régnante, les décisions ou opérations décidées par leurs gouvernements, ou l'islam et les
+symboles religieux.
 Réponds : {"interdit": true|false, "raison": "…"}
 
 TITRE : ${d.titre}
 TEXTE : ${d.texte}`, { maxTokens: 600, temperature: 0 });
-    return j.interdit === true ? `critique du Golfe (${String(j.raison || "").slice(0, 100)})` : "";
+    return j.interdit === true ? `critique d'un dirigeant ou gouvernement du Golfe (${String(j.raison || "").slice(0, 100)})` : "";
   } catch (e) { return `contrôle Golfe impossible (${String(e.message).slice(0, 60)})`; }
 }
 
@@ -1068,8 +1074,8 @@ async function main() {
   const VOIES = Math.max(1, Number(process.env.WARROOM_VOIES || 3));
   const ecrits = new Map();
   let suivant = 0, ok = 0, nUnique = 0;
-  // GOLFE : au plus WARROOM_MAX_UNIQUE dossiers d'une seule source (3 par défaut), pour un live solide ; France : inchangé
-  const MAX_UNIQUE = Number(process.env.WARROOM_MAX_UNIQUE || (GOLFE ? 3 : 1e9));
+  // plafond facultatif de dossiers d'une seule source (WARROOM_MAX_UNIQUE) ; par défaut aucun, comme l'édition française
+  const MAX_UNIQUE = Number(process.env.WARROOM_MAX_UNIQUE || 1e9);
   async function voie(v) {
     while (suivant < retenus.length && ok < MAX_DOSSIERS && reste() > 8 * 60e3) {
       const i = suivant++, g = retenus[i];
