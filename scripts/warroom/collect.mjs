@@ -153,6 +153,50 @@ const AUTRES = [
   ["TASS (Russie)", "https://tass.com/rss/v2.xml"],
   ["Global Times (Chine)", "https://www.globaltimes.cn/rss/outbrain.xml"],
   ["Haaretz", "https://www.haaretz.com/srv/haaretz-latest-headlines"],
+  // ajoutés le 25/11/2026 depuis le catalogue du projet open source « World Monitor » (koala73/worldmonitor) — un flux mort ou
+  // bloqué est simplement ignoré. Enquêtes, terrain des conflits, l'autre camp (cité comme tel), le monde vu de chez lui.
+  ["Courrier international", "https://www.courrierinternational.com/feed/all/rss.xml"],
+  ["OCCRP (enquêtes corruption)", "https://www.occrp.org/en/feed"],
+  ["Lighthouse Reports", "https://www.lighthousereports.com/feed/"],
+  ["ProPublica", "https://www.propublica.org/feeds/propublica/main"],
+  ["Oryx (pertes militaires documentées)", "https://www.oryxspioenkop.com/feeds/posts/default?alt=rss"],
+  ["International Crisis Group", "https://www.crisisgroup.org/rss"],
+  ["War on the Rocks", "https://warontherocks.com/feed/"],
+  ["Sudan War Monitor", "https://sudanwarmonitor.com/feed"],
+  ["ONU Info (UN News)", "https://news.un.org/feed/subscribe/en/news/all/rss.xml"],
+  ["RAND", "https://www.rand.org/pubs/articles.xml"],
+  ["Stimson Center", "https://www.stimson.org/feed/"],
+  ["Atlantic Council", "https://www.atlanticcouncil.org/feed/"],
+  ["CSIS", "https://www.csis.org/rss.xml"],
+  ["Meduza (opposition russe)", "https://meduza.io/rss/en/all"],
+  ["Moscow Times", "https://www.themoscowtimes.com/rss/news"],
+  ["Novaya Gazeta Europe", "https://novayagazeta.eu/feed/rss"],
+  ["RT (média d'État russe)", "https://rt-english.com/rss/russia/"],
+  ["Kyiv Independent", "https://kyivindependent.com/news-archive/rss/"],
+  ["Eurasianet", "https://eurasianet.org/rss"],
+  ["LRT (Lituanie)", "https://www.lrt.lt/en/news-in-english?rss"],
+  ["IRNA (agence d'État iranienne)", "https://en.irna.ir/rss"],
+  ["Mehr News (Iran)", "https://en.mehrnews.com/rss"],
+  ["Syria Direct", "https://syriadirect.org/feed/"],
+  ["The Syrian Observer", "https://syrianobserver.com/feed"],
+  ["Naharnet (Liban)", "https://www.naharnet.com/tags/lebanon/en/feed.atom"],
+  ["Jerusalem Post", "https://www.jpost.com/rss/rssfeedsheadlines.aspx"],
+  ["The National (Émirats)", "https://www.thenationalnews.com/arc/outboundfeeds/rss/?outputType=xml"],
+  ["Gulf News", "https://gulfnews.com/feed/"],
+  ["Daily Sabah (Turquie)", "https://www.dailysabah.com/rss/home-page"],
+  ["Libya Herald", "https://libyaherald.com/rss.xml"],
+  ["Egypt Independent", "https://www.egyptindependent.com/feed/"],
+  ["Jeune Afrique", "https://www.jeuneafrique.com/feed/"],
+  ["Journal du Mali", "https://journaldumali.com/feed/"],
+  ["Sahelien.com", "https://sahelien.com/feed/"],
+  ["Le Sahel (Niger)", "https://www.lesahel.org/feed/"],
+  ["APS (Sénégal)", "https://aps.sn/feed/"],
+  ["La Presse de Tunisie", "https://www.lapresse.tn/feed/"],
+  ["Africanews", "https://www.africanews.com/feed/"],
+  ["Dawn (Pakistan)", "https://www.dawn.com/feeds/home/"],
+  ["The Hindu (Inde)", "https://www.thehindu.com/feeder/default.rss"],
+  ["Asahi Shimbun (Japon)", "https://www.asahi.com/rss/asahi/newsheadlines.rdf"],
+  ["Korea Herald", "https://www.koreaherald.com/rss/newsAll"],
 ];
 export async function autresLectures() {
   const out = [], ok = [];
@@ -172,6 +216,32 @@ export async function autresLectures() {
   }));
   etat.autres_lectures = out.length;
   console.log(`  autres lectures (presse étrangère / indépendante) : ${out.length} articles de ${ok.length} sources`);
+  return out;
+}
+
+// ---------------------------------------------------------------- DÉCLARATIONS DIRECTES (leurs propres mots, avant la presse)
+// Donald Trump sur Truth Social, via le miroir public trumpstruth.org (flux trouvé dans le catalogue de « World Monitor »).
+// Source officielle (le président américain qui s'exprime) : le sujet peut exister même avant que la presse le reprenne ;
+// l'écriture l'attribue toujours (« a écrit Donald Trump sur Truth Social »). Flux en panne = ignoré.
+const DECLARATIONS = [["Truth Social (Donald Trump)", "https://trumpstruth.org/feed"]];
+async function declarations() {
+  const out = [];
+  for (const [nom, url] of DECLARATIONS) {
+    const x = await get(url, { timeout: 20000 });
+    if (!x) continue;
+    for (const it of x.split(/<item[\s>]/).slice(1, 60)) {
+      const date = tag(it, "pubDate") || tag(it, "dc:date");
+      if (!date || !recent(date)) continue;
+      const desc = txt(tag(it, "description")).replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
+      let titre = txt(tag(it, "title")).replace(/https?:\/\/\S+/g, "").trim();
+      if (!titre || /^\[?no title\]?|^post from|^truth\b/i.test(titre) || titre.length < 30) titre = desc;
+      if (!titre || titre.length < 40 || /^RT\b|^ReTruth/i.test(titre)) continue;       // repartage ou message vide : ignoré
+      out.push({ titre: titre.slice(0, 300), url: txt(tag(it, "link")), source: nom, date: new Date(date).toISOString(), resume: desc.slice(0, 600),
+        origine: "declaration", officiel: true, langue: "en", pays: "États-Unis" });
+    }
+  }
+  etat.declarations = out.length;
+  console.log(`  déclarations directes (Truth Social…) : ${out.length}`);
   return out;
 }
 
@@ -256,7 +326,7 @@ export async function collecter() {
   mkdirSync(OUT, { recursive: true });
   const contre = await autresLectures().catch(() => []);
   writeFileSync(`${OUT}/autres.json`, JSON.stringify(contre, null, 1));
-  const parts = await Promise.all([presseFr(), googleNews(), gdelt(), cyber(), catastrophes()].map((p) => p.catch((e) => { console.log(`  source en panne : ${e.message}`); return []; })));
+  const parts = await Promise.all([presseFr(), googleNews(), gdelt(), cyber(), catastrophes(), declarations()].map((p) => p.catch((e) => { console.log(`  source en panne : ${e.message}`); return []; })));
   const tout = parts.flat();
   // doublons exacts (même lien ou même titre)
   const vus = new Set(), uniq = [];
