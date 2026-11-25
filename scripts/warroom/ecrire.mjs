@@ -18,17 +18,18 @@ const ED = GOLFE ? {
   interet: `- "interet_fr" : 0 à 10 = à quel point le public du GOLFE s'y intéresse. Tout ce qui se passe dans les 6 pays du Golfe ou les
   touche directement (sécurité du Golfe, Iran, Yémen, mer Rouge, pétrole, investissements, diplomatie régionale, grandes puissances au
   Moyen-Orient, monde arabe, menace mondiale) = 7 à 10. Un événement lointain sans lien avec le Golfe = 0 à 3, sauf ampleur exceptionnelle.
-- "tabou_golfe" : true si le sujet consiste à CRITIQUER, moquer ou accuser un dirigeant d'un pays du Golfe, une famille régnante, un
-  gouvernement du Golfe ou l'islam ; sinon false.`,
+- "tabou_golfe" : true si le sujet consiste à attaquer LA PERSONNE d'un souverain du Golfe (roi, émir, sultan, prince héritier) ou de
+  sa famille, ou l'islam ; sinon false (critiquer les décisions d'un gouvernement du Golfe est permis).`,
   contexte: `PUBLIC DU GOLFE : jamais « nous », « notre », « nos » ; dis « vous », « je ».
-RÈGLE ABSOLUE : AUCUNE critique, ironie, moquerie ou insinuation visant les dirigeants des pays du Golfe (rois, émirs, sultans, princes
-héritiers, familles régnantes), leurs gouvernements et institutions, ni l'islam, les lieux saints et les symboles religieux : leurs
-décisions sont rapportées avec respect, de façon factuelle et analytique (angle think-tank : enjeux, stratégie, influence, rapport de
-force). La virulence, l'ironie mordante et l'humour noir visent les puissances étrangères, l'hypocrisie occidentale, le deux poids deux
+RÈGLE ABSOLUE : AUCUNE attaque, moquerie ou insinuation visant LA PERSONNE des souverains du Golfe (rois, émirs, sultans, princes
+héritiers) ou de leurs familles, ni l'islam, les lieux saints et les symboles religieux.
+PERMIS (et attendu, sinon le public te prendra pour un flatteur d'un État) : critiquer les DÉCISIONS, politiques et opérations des
+gouvernements, ministères, armées et institutions du Golfe, avec des faits et toujours attribuées (« selon X », « d'après la source Y »,
+« une seule source, invérifiable à ce stade, affirme que… ») ; on vise la décision, jamais la personne du souverain. La virulence, l'ironie mordante et l'humour noir visent les puissances étrangères, l'hypocrisie occidentale, le deux poids deux
 mesures, la propagande, les milices et groupes armés, les médias qui manipulent — jamais les victimes.
 LES MAUVAISES NOUVELLES qui touchent un pays du Golfe (attaques, menaces, pertes économiques, incidents, rumeurs) sont les bienvenues
 et donnent du piquant : raconte-les comme des faits, avec leur gravité, au conditionnel et en disant clairement « non confirmé » ou
-« une seule source, invérifiable à ce stade, affirme que… » quand c'est le cas — sans jamais en faire porter la faute aux dirigeants.`,
+« une seule source, invérifiable à ce stade, affirme que… » quand c'est le cas.`,
   signature: "La position du jour",
   accueil: "Bienvenue dans la War Room de Gulf Think-Tank.",
   paysPublic: /arabie|saoudi|[ée]mirats|qatar|kowe[iï]t|oman|bahre[iï]n|golfe/i,
@@ -695,7 +696,7 @@ SOURCE UNIQUE (${listeNoms(seule)}) : chaque fait est attribué à cette source,
 Mêmes règles qu'avant : jamais « nous / notre / nos », jamais « likez / partagez / abonnez-vous », pas de « Bienvenue »,
 ${victimes ? "AUCUN humour (dossier avec victimes), " : "humour noir jamais aux dépens des victimes, "}un RÉCIT : accroche, contexte (ce qui s'est passé avant),
 déroulement chronologique, puis ton analyse indignée qui découle des faits (jamais contre une victime ni contre une personne non
-condamnée, jamais « ${ED.signature} »${GOLFE ? ", jamais contre un dirigeant ou un gouvernement du Golfe" : ""}), puis une question ouverte au public à la fin.
+condamnée, jamais « ${ED.signature} »${GOLFE ? ", jamais contre la personne d'un souverain du Golfe ou de sa famille" : ""}), puis une question ouverte au public à la fin.
 Environ ${Math.max(220, Math.min(450, 60 + 35 * Math.max(4, v.faits + 3)))} mots.
 Réponds : {"texte": "…"}
 
@@ -799,9 +800,9 @@ async function relire(dossiers, { doublons = true } = {}) {
       `Relis ce script de live. Signale UNIQUEMENT les phrases à corriger :
 - incohérente, mal construite, ou contenant un mot qui n'existe pas en français ;
 - humour ou image aux dépens d'une victime (violences sexuelles, enfants, morts, sinistrés), image sexuelle ou gore ;
-${GOLFE ? `- toute critique, ironie, moquerie ou insinuation visant un dirigeant d'un pays du Golfe, une famille régnante, un gouvernement
-  ou une institution du Golfe, l'islam ou un symbole religieux : "remplacement" = la même information dite de façon factuelle et
-  respectueuse, ou "" ;
+${GOLFE ? `- toute attaque, ironie, moquerie ou insinuation visant LA PERSONNE d'un souverain du Golfe (roi, émir, sultan, prince héritier) ou
+  de sa famille, l'islam ou un symbole religieux : "remplacement" = la même information dite de façon factuelle, ou "" (critiquer
+  les décisions d'un gouvernement, d'une armée ou d'une institution du Golfe, avec attribution, est PERMIS : ne le retire pas) ;
 ` : ""}- insinuation qu'une personne, la police ou une institution serait l'auteur d'un acte alors que les sources ne le disent pas
   (ex. « la violence vient de l'intérieur du dispositif de sécurité » quand l'auteur du tir n'est pas identifié), ou « coupables »
   pour des personnes non condamnées : "remplacement" = la même question posée sans rien affirmer (« qui a tiré ? l'enquête le dira-t-elle ? »), ou "" ;
@@ -932,25 +933,23 @@ ${liste.map((x, i) => `${i + 1}. ${x}`).join("\n")}`, { maxTokens: 2000, tempera
     "TAGS (à coller dans le champ Tags de YouTube Studio) :", tags.join(", "), ""].join("\n");
 }
 
-// GOLFE : juge final de chaque dossier écrit (texte français vérifié). Les mauvaises nouvelles qui touchent un pays du Golfe
-// (attaques, menaces, économie, incidents, rumeurs) PASSENT, rapportées comme des faits, et « non confirmé / une seule source » quand
-// c'est le cas. Est écarté tout dossier qui critique, accuse, moque ou insinue contre un dirigeant du Golfe, une famille régnante,
-// les décisions de leurs gouvernements, ou l'islam. IA indisponible → dossier écarté (prudence).
+// GOLFE : juge final de chaque dossier écrit (texte français vérifié). Tout est permis — mauvaises nouvelles, critique des décisions
+// des gouvernements, armées et institutions du Golfe, rumeurs attribuées (« selon X », « une seule source affirme ») — SAUF attaquer la
+// personne d'un souverain (roi, émir, sultan, prince héritier) ou de sa famille, ou l'islam. IA indisponible → dossier écarté (prudence).
 async function tabouGolfe(d) {
   try {
     const j = await ia(`Tu es le rédacteur en chef de « Gulf Think-Tank », chaîne d'analyse pour le public des pays du Golfe (Arabie saoudite, Émirats, Qatar, Koweït, Oman, Bahreïn). Réponds en JSON valide.`,
       `Ce texte peut-il passer à l'antenne ?
-PERMIS : les mauvaises nouvelles qui touchent un pays du Golfe (attaques subies, menaces, pertes économiques, incidents, accidents,
-rumeurs), rapportées comme des faits, au conditionnel et avec la mention « non confirmé » ou « une seule source » quand c'est le cas ;
-critiquer l'Iran, Israël, les milices, les puissances occidentales, les médias.
-INTERDIT : toute critique, accusation, ironie, moquerie, insinuation ou jugement négatif visant un dirigeant d'un pays du Golfe (roi, émir,
-sultan, prince héritier, ministre), une famille régnante, les décisions ou opérations décidées par leurs gouvernements, ou l'islam et les
-symboles religieux.
+PERMIS : les mauvaises nouvelles qui touchent un pays du Golfe ; la critique des DÉCISIONS, politiques et opérations des gouvernements,
+ministères, armées et institutions du Golfe ; les rumeurs et accusations ATTRIBUÉES (« selon X », « une seule source affirme ») ; critiquer
+l'Iran, Israël, les milices, les puissances occidentales, les médias.
+INTERDIT seulement : attaquer, moquer, insulter ou insinuer contre LA PERSONNE d'un souverain du Golfe (roi, émir, sultan, prince
+héritier) ou de sa famille ; attaquer l'islam ou un symbole religieux ; une accusation grave NON attribuée présentée comme un fait.
 Réponds : {"interdit": true|false, "raison": "…"}
 
 TITRE : ${d.titre}
 TEXTE : ${d.texte}`, { maxTokens: 600, temperature: 0 });
-    return j.interdit === true ? `critique d'un dirigeant ou gouvernement du Golfe (${String(j.raison || "").slice(0, 100)})` : "";
+    return j.interdit === true ? `attaque d'un souverain, de sa famille ou de l'islam (${String(j.raison || "").slice(0, 100)})` : "";
   } catch (e) { return `contrôle Golfe impossible (${String(e.message).slice(0, 60)})`; }
 }
 
