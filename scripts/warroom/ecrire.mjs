@@ -337,7 +337,7 @@ function autresPour(g, pool) {
 }
 
 // étiquettes de plan que certains modèles écrivent dans le texte (« Mini-hook : », « Punchline : », « Question ouverte : »…) : retirées
-const ETIQ = /(^|[.!?…]\s+)(?:mini[\s‑-]?hook|hook|accroche|punchline|chute|question ouverte|question au public|d[ée]cryptage|analyse|angle|les faits|faits|conclusion)\s*:\s*/gi;
+const ETIQ = /(^|[.!?…]\s+)(?:mini[\s‑-]?hook|hook|accroche|punchline|chute|question ouverte|question au public|question|d[ée]cryptage|mon analyse|l'analyse|analyse|angle|les faits|faits|conclusion|le contexte|contexte|le d[ée]roul[ée]ment|d[ée]roul[ée]ment|contre[\s-]?lecture)\s*:\s*/gi;
 // majuscule après un point… sauf après une initiale ou une abréviation (« Florian M. soit jugé », « M. Dupont », « Mme. »)
 const ABREV = /(?:^|\s)(?:\p{Lu}|M|Mme|Mlle|Dr|Pr|St|Ste|av|J\.-C|etc)\.\s+$/u;
 const sansEtiquettes = (t) => { const x = String(t).replace(ETIQ, "$1");
@@ -633,7 +633,8 @@ CATÉGORIE : ${n.categorie} — PAYS : ${n.pays || "?"}
 SOURCES (${g.nb_sources}) :
 ${g.texte}`, { maxTokens: 3500, depart, temperature: 0.45 });
   const nettoyer = (brut) => {
-    let tx = LATIN(sansEtiquettes(String(brut || "").replace(/\s+\n/g, "\n").trim()));
+    // traces de mise en forme de certains modèles : « \\n » écrit en toutes lettres, renvois [3], puces « - » → retirés
+    let tx = LATIN(sansEtiquettes(String(brut || "").replace(/\\n/g, " ").replace(/\s*\[\d{1,2}\]/g, "").replace(/(^|\n|[.!?…:])\s*[-•]\s+/g, "$1 ").replace(/\s*\n+\s*/g, " ").trim()));
     // contrôle : phrases avec « nous », quémande de likes, ou chiffre absent des sources → retirées
     const phr = tx.split(/(?<=[.!?…])\s+/);
     const bonnes = phr.filter((p) => !NOUS.test(p) && !QUEMANDE.test(p) && !HORS_DOSSIER.test(p) && chiffresSurs(p, g.texte));
@@ -700,7 +701,7 @@ ${g.texte}`, { maxTokens: 3000, depart, temperature: 0.3 });
     return s.replace(/^["«»“”\s]+|["«»“”\s]+$/g, "");
   };
   texte = recoller(texte, g.items.map((x) => x.titre));
-  if (texte.split(/\s+/).length < 60) throw new Error("dossier trop court après contrôle");
+  if (texte.split(/\s+/).length < 110) throw new Error("dossier trop court après contrôle (moins de 110 mots : une brève, pas un récit)");
   return {
     aVerifier: !v.ok, _src: g.texte, _victimes: victimes, _seule: seule,
     categorie: n.categorie, choc: Number(n.choc) || 0, gravite: Math.max(1, Math.min(5, Number(j.gravite) || Math.round((Number(n.choc) || 5) / 2))),
@@ -763,6 +764,9 @@ async function relire(dossiers, { doublons = true } = {}) {
       `Relis ce script de live. Signale UNIQUEMENT les phrases à corriger :
 - incohérente, mal construite, ou contenant un mot qui n'existe pas en français ;
 - humour ou image aux dépens d'une victime (violences sexuelles, enfants, morts, sinistrés), image sexuelle ou gore ;
+- insinuation qu'une personne, la police ou une institution serait l'auteur d'un acte alors que les sources ne le disent pas
+  (ex. « la violence vient de l'intérieur du dispositif de sécurité » quand l'auteur du tir n'est pas identifié), ou « coupables »
+  pour des personnes non condamnées : "remplacement" = la même question posée sans rien affirmer (« qui a tiré ? l'enquête le dira-t-elle ? »), ou "" ;
 - reproche à une institution, à la police ou à la justice NON étayé par un fait du dossier, ou contredit par lui (ex. « inertie » alors que des suspects sont interpellés) : "remplacement" = la même charge reformulée sur le fait établi, ou "" ;
 - affirmation présentée comme certaine sans source (au lieu de « selon… », « soupçonné », « présumé ») ;
 - contradiction avec un autre dossier du script ;
@@ -974,7 +978,7 @@ async function main() {
     else if (maigre(v)) log(`  ✗ ${d.titre} : trop peu de faits prouvés → dossier retiré`);
     else { d.texte = d._seule ? `Précision importante : cette information n'est rapportée que par ${listeNoms(d._seule)}, aucune autre rédaction ne la confirme à ce stade. ${v.texte}` : v.texte; d.aVerifier = false; }
   }
-  dossiers = dossiers.filter((d) => !d.aVerifier && d.texte.split(/\s+/).length >= 50);
+  dossiers = dossiers.filter((d) => !d.aVerifier && d.texte.split(/\s+/).length >= 100);
   if (!dossiers.length) throw new Error("aucun dossier assez solide aujourd'hui (sources ou IA indisponibles) : relance plus tard");
   await relire(dossiers);
   const hab = await habiller(dossiers);
@@ -982,6 +986,8 @@ async function main() {
   const pseudo = [{ titre: "OUVERTURE", texte: hab.ouverture, sources: [] }, ...hab.transitions.map((x, i) => ({ titre: `TRANSITION ${i}`, texte: x, sources: [] })), { titre: "CLÔTURE", texte: hab.cloture, sources: [] }];
   await relire(pseudo.filter((x) => x.texte), { doublons: false });
   hab.ouverture = pseudo[0].texte; hab.transitions = pseudo.slice(1, -1).map((x) => x.texte); hab.cloture = pseudo[pseudo.length - 1].texte;
+  // un seul « Le NON du jour » (le premier) : un second est retiré avec la phrase qui le porte
+  { let vu = false; hab.cloture = phrases(hab.cloture || "").filter((p) => { if (!/^le non du jour/i.test(p)) return true; if (vu) return false; vu = true; return true; }).join(" "); }
   // la relecture peut avoir vidé ou raccourci l'ouverture / la clôture : jamais de partie vide au prompteur
   if (!/Bienvenue dans le Journal du NON/i.test(hab.ouverture)) hab.ouverture = `${hab.ouverture} Bienvenue dans le Journal du NON, et la réponse est Non.`.trim();
   if (hab.ouverture.split(/\s+/).length < 40) hab.ouverture = `Au programme ce soir : ${hab.ordre.slice(0, 4).map((d) => d.titre.replace(/[.…]+$/, "")).join(" ; ")}. Et un dernier dossier, gardé pour la fin. ${hab.ouverture}`.replace(/\s{2,}/g, " ").trim();
