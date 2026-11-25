@@ -367,7 +367,7 @@ function autresPour(g, pool) {
 }
 
 // étiquettes de plan que certains modèles écrivent dans le texte (« Mini-hook : », « Punchline : », « Question ouverte : »…) : retirées
-const ETIQ = /(^|[.!?…]\s+)(?:mini[\s‑-]?hook|hook|accroche|punchline|chute|question ouverte|question au public|question|d[ée]cryptage|mon analyse|l'analyse|analyse|angle|les faits|faits|conclusion|le contexte|contexte|le d[ée]roul[ée]ment|d[ée]roul[ée]ment|contre[\s-]?lecture)\s*:\s*/gi;
+const ETIQ = /(^|[.!?…]\s+)(?:mini[\s‑-]?hook|hook|accroche|punchline|chute|question ouverte|question au public|question|d[ée]cryptage|mon analyse|l'analyse|analyse indign[ée]e|analyse|angle|les faits|faits|conclusion|le contexte|contexte|le d[ée]roul[ée]ment|d[ée]roul[ée]ment|contre[\s-]?lecture)\s*:\s*/gi;
 // majuscule après un point… sauf après une initiale ou une abréviation (« Florian M. soit jugé », « M. Dupont », « Mme. »)
 const ABREV = /(?:^|\s)(?:\p{Lu}|M|Mme|Mlle|Dr|Pr|St|Ste|av|J\.-C|etc)\.\s+$/u;
 const sansEtiquettes = (t) => { const x = String(t).replace(ETIQ, "$1");
@@ -929,6 +929,25 @@ ${liste.map((x, i) => `${i + 1}. ${x}`).join("\n")}`, { maxTokens: 2000, tempera
     "TAGS (à coller dans le champ Tags de YouTube Studio) :", tags.join(", "), ""].join("\n");
 }
 
+// GOLFE : juge final de chaque dossier écrit (texte français vérifié). Écarte tout dossier qui critique, accuse, moque ou insinue
+// contre un dirigeant, une famille régnante, un gouvernement, une armée ou une institution d'un pays du Golfe, contre l'islam, ou qui
+// dénigre un pays du Golfe sur la foi d'une source non confirmée. IA indisponible → dossier écarté (prudence).
+async function tabouGolfe(d) {
+  try {
+    const j = await ia(`Tu es le rédacteur en chef de « Gulf Think-Tank », chaîne d'analyse pour le public des pays du Golfe (Arabie saoudite, Émirats, Qatar, Koweït, Oman, Bahreïn). Réponds en JSON valide.`,
+      `Ce texte peut-il passer à l'antenne ? Il est INTERDIT s'il contient la moindre critique, accusation, ironie, moquerie, insinuation ou jugement négatif
+visant : un dirigeant d'un pays du Golfe, une famille régnante, un gouvernement, une armée, une coalition dirigée par un pays du Golfe, une
+institution d'un pays du Golfe, l'islam ou un symbole religieux ; ou s'il présente un pays du Golfe de façon dénigrante ou alarmiste sur la
+foi d'une seule source non confirmée. Rapporter un fait avec neutralité (une décision, une frappe, une déclaration) est permis ; le juger
+négativement ne l'est pas. Critiquer l'Iran, Israël, les milices, les puissances occidentales ou les médias est permis.
+Réponds : {"interdit": true|false, "raison": "…"}
+
+TITRE : ${d.titre}
+TEXTE : ${d.texte}`, { maxTokens: 600, temperature: 0 });
+    return j.interdit === true ? `critique du Golfe (${String(j.raison || "").slice(0, 100)})` : "";
+  } catch (e) { return `contrôle Golfe impossible (${String(e.message).slice(0, 60)})`; }
+}
+
 // ---------------------------------------------------------------- 6) ÉDITION GOLFE : traduction en ARABE STANDARD (fusha)
 // Le script est écrit et vérifié en français (garde-fous juridiques rodés), puis traduit. Contrôles : chaque nombre du français se
 // retrouve dans l'arabe (chiffres occidentaux), aucun reste en lettres latines (sauf sigles et « Gulf Think-Tank »). Un texte qui
@@ -937,13 +956,16 @@ const ARABE_SYS = `Tu es le traducteur et rédacteur en chef arabe de la chaîne
 en ARABE STANDARD MODERNE (فصحى) de grande chaîne d'information, phrases courtes, rythme oral, ton percutant ; tu gardes l'ironie mordante
 et l'humour noir là où ils sont, et EXACTEMENT les faits, noms, dates et attributions (« selon… », conditionnel = صيغة الاحتمال/« بحسب »).
 Les noms propres sont écrits en arabe (translittération usuelle). Tous les nombres en CHIFFRES OCCIDENTAUX (0-9). Aucun mot en lettres
-latines, sauf « Gulf Think-Tank » et les sigles (OTAN → الناتو de préférence). « La position du jour » se traduit EXACTEMENT « خلاصة القول اليوم ». Réponds en JSON valide.`;
+latines, sauf « Gulf Think-Tank » et les sigles (OTAN → الناتو de préférence). « La position du jour » se traduit EXACTEMENT « خلاصة القول اليوم », et SEULEMENT là où « La position du jour » figure : n'emploie JAMAIS
+« خلاصة القول اليوم » pour autre chose (« Précision importante » = « توضيح هام »). Traduis TOUT le texte, sans rien résumer ni couper. Réponds en JSON valide.`;
 const nombresDe = (t) => chiffres(t).filter((n) => n.length >= 2);
 const versOccidental = (t) => String(t).replace(/[٠-٩]/g, (c) => "٠١٢٣٤٥٦٧٨٩".indexOf(c)).replace(/[۰-۹]/g, (c) => "۰۱۲۳۴۵۶۷۸۹".indexOf(c));
 const LATIN_RESTE = (t) => (String(t).replace(/Gulf Think-Tank|#\S+/g, "").match(/\b[A-Za-zÀ-ÿ]{3,}\b/g) || []).filter((w) => w !== w.toUpperCase());
 function arabeOk(fr, ar) {
   if (!ar || !/[\u0600-\u06FF]/.test(ar)) return false;
   const nAr = new Set(chiffres(versOccidental(ar)));
+  const mFr = String(fr).split(/\s+/).filter(Boolean).length, mAr = String(ar).split(/\s+/).filter(Boolean).length;
+  if (mFr >= 25 && mAr < 0.55 * mFr) return false;            // traduction tronquée ou résumée
   return nombresDe(fr).every((n) => nAr.has(n) || /^(19|20)\d\d$/.test(n) && nAr.has(n)) && LATIN_RESTE(ar).length <= 1;
 }
 async function traduireAr(textes) {
@@ -970,7 +992,7 @@ Réponds : {"ar": "…"}\n\n${textes[i]}`, { maxTokens: 6000, temperature: 0.2, 
       const ar = String(j.ar || "").trim();
       if (arabeOk(textes[i], ar) || !out[i]) out[i] = ar || out[i];
     } catch {}
-    if (!arabeOk(textes[i], out[i])) log(`  ⚠ traduction arabe à relire (texte ${i + 1} : nombres ou mots latins) : « ${String(textes[i]).slice(0, 60)}… »`);
+    if (!arabeOk(textes[i], out[i])) log(`  ⚠ traduction arabe à relire (texte ${i + 1} : nombres, mots latins ou longueur) : « ${String(textes[i]).slice(0, 60)}… »`);
   }
   return out.map((x, i) => x || String(textes[i] || ""));
 }
@@ -1045,15 +1067,20 @@ async function main() {
   // un modèle saturé est mis en pause pour toutes les voies, qui passent alors au modèle suivant. L'ordre des dossiers est conservé.
   const VOIES = Math.max(1, Number(process.env.WARROOM_VOIES || 3));
   const ecrits = new Map();
-  let suivant = 0, ok = 0;
+  let suivant = 0, ok = 0, nUnique = 0;
+  // GOLFE : au plus WARROOM_MAX_UNIQUE dossiers d'une seule source (3 par défaut), pour un live solide ; France : inchangé
+  const MAX_UNIQUE = Number(process.env.WARROOM_MAX_UNIQUE || (GOLFE ? 3 : 1e9));
   async function voie(v) {
     while (suivant < retenus.length && ok < MAX_DOSSIERS && reste() > 8 * 60e3) {
       const i = suivant++, g = retenus[i];
       await enrichir(g);
       if (sujetAutolyse(g)) { log(`  ✗ ${g.items[0].titre.slice(0, 80)} : suicide ou automutilation → jamais dans le live`); continue; }
+      if (g.nb_sources === 1 && !g.officiel && nUnique >= MAX_UNIQUE) { log(`  ✗ ${g.items[0].titre.slice(0, 80)} : déjà ${MAX_UNIQUE} dossiers d'une seule source → réserve suivante`); continue; }
       try {
         const d = await ecrireDossier(g, i, v);
+        if (GOLFE) { const tb = await tabouGolfe(d); if (tb) { log(`  ✗ ${d.titre} : ${tb} → écarté (jamais contre le Golfe)`); continue; } }
         if (ok >= MAX_DOSSIERS) break;
+        if (d.unique) nUnique++;
         ok++; ecrits.set(i, d); log(`  ✓ [${d.categorie}] ${d.titre} (${d.texte.split(/\s+/).length} mots, ${g.nb_sources} sources)`);
       } catch (e) { log(`  ✗ ${g.items[0].titre.slice(0, 80)} : ${e.message}`); }
     }
@@ -1086,9 +1113,14 @@ async function main() {
     const T = [hab.ouverture, hab.cloture, ...hab.transitions, ...hab.ordre.flatMap((d) => [d.texte, d.titre, d.lieu || "", d.chiffre?.libelle || "", ...(d.faits || [])])];
     const A = await traduireAr(T);
     let k = 0;
-    hab.ouverture = A[k++]; hab.cloture = A[k++]; hab.transitions = hab.transitions.map(() => A[k++]);
+    const SIG_AR = /\s*خلاصة القول اليوم\s*[:：،,]?\s*/g;
+    const sansSig = (x) => String(x || "").replace(SIG_AR, " ").replace(/\s{2,}/g, " ").trim();
+    hab.ouverture = sansSig(A[k++]); hab.cloture = A[k++]; hab.transitions = hab.transitions.map(() => sansSig(A[k++]));
+    if (!/خلاصة القول اليوم/.test(hab.cloture || "")) log("  ⚠ clôture : « خلاصة القول اليوم » absent de la traduction (à dire à l'antenne)");
+    const finSig = (hab.cloture || "").search(/خلاصة القول اليوم/);
+    if (finSig >= 0) hab.cloture = hab.cloture.slice(0, finSig) + "خلاصة القول اليوم:" + sansSig(hab.cloture.slice(finSig)).replace(/^/, " ");
     for (const d of hab.ordre) {
-      d.texte_fr = d.texte; d.texte = A[k++]; d.titre_fr = d.titre; d.titre = A[k++]; d.lieu = A[k++] || d.lieu;
+      d.texte_fr = d.texte; d.texte = sansSig(A[k++]); d.titre_fr = d.titre; d.titre = A[k++]; d.lieu = A[k++] || d.lieu;
       const lib = A[k++]; if (d.chiffre) d.chiffre = { ...d.chiffre, libelle: lib || d.chiffre.libelle };
       d.faits = (d.faits || []).map(() => A[k++]);
       d.categorie_ar = CAT_AR[d.categorie] || d.categorie;
@@ -1110,7 +1142,13 @@ async function main() {
   const spec = { version: 1, lang: GOLFE ? "ar" : "fr", edition: GOLFE ? "golfe" : "france", date: new Date().toISOString(), wpm: WPM, duree: t, segments: segs, ticker: ordre.map((d) => d.titre) };
   writeFileSync(`${OUT}/prompteur.txt`, P.join("\n"));
   { let yt = await youtube(GOLFE ? ordre.map((d) => ({ ...d, titre: d.titre_fr || d.titre, texte: d.texte_fr || d.texte })) : ordre);
-    if (GOLFE) yt = (await traduireAr([yt]))[0];
+    if (GOLFE) {   // ligne par ligne : un seul gros texte revenait réduit au titre
+      const L = yt.split("\n");
+      const idx = L.map((x, i) => (x.trim() && !/^#/.test(x.trim()) ? i : -1)).filter((i) => i >= 0);
+      const tr = await traduireAr(idx.map((i) => L[i]));
+      idx.forEach((i, k) => { L[i] = tr[k] || L[i]; });
+      yt = L.join("\n");
+    }
     writeFileSync(`${OUT}/youtube.txt`, yt); }
   writeFileSync(`${OUT}/warroom.json`, JSON.stringify(spec, null, 1));
   writeFileSync(`${OUT}/sources.md`, ["# Sources — War Room du jour", "", ...ordre.flatMap((d, i) => [`## ${i + 1}. ${d.titre}`, ...d.sources.map((s) => `- ${s.nom}${s.url ? ` — ${s.url}` : ""}`), ""])].join("\n"));
