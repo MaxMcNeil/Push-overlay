@@ -12,7 +12,7 @@ import { collecter, deshtml } from "./collect.mjs";
 
 const OUT = "output/warroom";
 const WPM = Number(process.env.WARROOM_WPM || 145);
-const MAX_DOSSIERS = Number(process.env.WARROOM_MAX || 25);
+const MAX_DOSSIERS = Number(process.env.WARROOM_MAX || 15);
 const T0 = Date.now(), BUDGET = Number(process.env.WARROOM_BUDGET_MIN || 120) * 60e3;
 const reste = () => BUDGET - (Date.now() - T0);
 const dormir = (s) => new Promise((r) => setTimeout(r, s * 1000));
@@ -186,6 +186,7 @@ async function enrichir(g) {
   const textes = (await Promise.all(urls.map(lire))).filter(Boolean);
   g.texte = [g.items.map((x) => `• ${x.titre}${x.resume ? ` — ${x.resume}` : ""} (${x.source})`).join("\n"), ...textes].join("\n\n").slice(0, 9000);
   g.nb_sources = new Set(g.items.map((x) => (x.source || "").toLowerCase().replace(/^www\./, ""))).size;
+  try { const ctx = await contexteWiki(g); if (ctx) g.texte += `\n\nCONTEXTE (Wikipédia, article « ${ctx.titre} ») :\n${ctx.extrait}`; } catch {}
   if (CONTRE_CATS.includes(g.note?.categorie)) {
     const autres = autresPour(g, POOL_AUTRES);
     if (autres.length) g.texte += `\n\nAUTRES LECTURES (presse étrangère et indépendante — à citer avec leur nom) :\n` + autres.map((x) => `• ${x.source} : ${x.titre}${x.resume ? ` — ${x.resume}` : ""}`).join("\n");
@@ -235,6 +236,28 @@ async function wiki(titre) {
   }
   return null;
 }
+// CONTEXTE : l'article Wikipédia de l'affaire, de la personne ou du lieu au cœur du dossier (recherche SANS IA, sur les noms propres
+// des titres) ; gardé seulement si son titre partage un nom propre avec le dossier. Il donne le « avant » que les dépêches n'ont pas.
+async function contexteWiki(g) {
+  const titres = g.items.slice(0, 6).map((x) => x.titre).join(" ");
+  const noms = [...new Set((titres.match(/(?<!\p{L})\p{Lu}[\p{L}'’-]{2,}/gu) || []).filter((w) => !MAJ_COURANTS.has(plat(w))))].slice(0, 6);
+  if (!noms.length) return null;
+  for (const l of ["fr", "en"]) {
+    try {
+      const r = await fetch(`https://${l}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(noms.slice(0, 4).join(" "))}&srlimit=3&format=json`,
+        { headers: { "user-agent": "JournalDuNon-WarRoom/1.0 (veille d'actualite)" }, signal: AbortSignal.timeout(15000) });
+      const res = r.ok ? (await r.json()).query?.search || [] : [];
+      for (const h of res) {
+        const t = plat(h.title);
+        if (!noms.some((n) => t.includes(plat(n)))) continue;            // sans nom propre commun : hors sujet
+        const w = await wiki(h.title);
+        if (w && w.extrait.length >= 300) return { titre: w.titre, extrait: w.extrait.slice(0, 1800) };
+      }
+    } catch {}
+  }
+  return null;
+}
+
 async function precedentsDyn(g, n) {
   const dossier = `${g.items.slice(0, 6).map((x) => `• ${x.titre}`).join("\n")}\n${String(g.texte || "").slice(0, 1800)}`;
   const deja = (g.precedents || []).map((f) => f.nom);
@@ -554,7 +577,7 @@ async function ecrireDossier(g, rang = 0, depart = 0) {
 async function ecrireDossier0(g, rang = 0, depart = 0) {
   const n = g.note, rev = g.revendication, rumeur = n.categorie === "RUMEUR", seule = seuleSource(g);
   const contre = CONTRE_CATS.includes(n.categorie);
-  const mots_cible = Math.round(Math.max(170, Math.min(520, 120 + g.texte.length / 25)));
+  const mots_cible = Math.round(Math.max(300, Math.min(650, 200 + g.texte.length / 25)));   // un récit avec contexte, pas une brève
   const j = await ia("Tu écris pour un live YouTube d'actualité choc (chaîne « Le Journal du NON »). Réponds en JSON valide.",
     `Écris le DOSSIER ci-dessous pour le présentateur, qui le lira au prompteur.
 HUMOUR NOIR : jamais aux dépens des victimes (violences sexuelles, enfants, morts, sinistrés, malades) ; il vise les puissants,
@@ -563,16 +586,24 @@ humour, aucune ironie, aucun sarcasme dans tout le dossier — ton grave et fact
 la description des actes. Français impeccable : aucun mot inventé ou approximatif.
 STYLE « JOURNAL DU NON » (c'est ce qui fait venir le public, sinon il part) : du FEU. Indignation assumée, ironie mordante contre
 les puissants, phrases courtes qui claquent, rythme oral, interpellation directe (« vous », « posez-vous la question »). JAMAIS le ton
-tiède d'une dépêche ni la version des chaînes d'info répétée telle quelle. Structure : accroche choc, les faits (sourcés), puis
-${contre ? `LA CONTRE-LECTURE (obligatoire ici) : « voilà la version qu'on vous sert partout… maintenant, à qui profite ? » — ce que disent
+tiède d'une dépêche ni la version des chaînes d'info répétée telle quelle.
+C'EST UN RÉCIT, PAS UNE BRÈVE : le public doit COMPRENDRE comment on en est arrivé là. Déroulé obligatoire, sans titres ni étiquettes :
+1) ACCROCHE (1 à 2 phrases) : le fait le plus fort, tout de suite ;
+2) LE CONTEXTE (« pour comprendre, il faut revenir en arrière… ») : qui sont les acteurs, ce qui s'est passé AVANT, depuis quand,
+   l'enjeu — tiré des sources (y compris la partie « CONTEXTE » si elle existe), avec les dates ;
+3) LE DÉROULEMENT : les faits dans l'ordre chronologique jusqu'à aujourd'hui, chaque étape reliée à la précédente (« c'est là que… »,
+   « trois jours plus tard… », « et c'est précisément ce qui… ») ;
+4) ${contre ? `LA CONTRE-LECTURE (obligatoire ici) : « voilà la version qu'on vous sert partout… maintenant, à qui profite ? » — ce que disent
 les AUTRES LECTURES listées dans les sources (presse étrangère, indépendante, l'autre camp), CITÉES PAR LEUR NOM (« selon Al Jazeera… »),
 et/ou ${g.precedents?.length ? `le PRÉCÉDENT HISTORIQUE retenu dans les sources (${g.precedents.map((f) => f.nom).join(" ; ")}) — en expliquant en une phrase le parallèle${g.precedents.some((f) => f.obligatoire) ? ` (OBLIGATOIRE ici : ${g.precedents.filter((f) => f.obligatoire).map((f) => f.nom).join(" ; ")})` : ""} ; AUCUN autre précédent historique` : "AUCUN précédent historique (aucun ne colle à ce dossier : n'en cite pas)"} ; une hypothèse
 dérangeante est permise si elle est présentée comme TA question ou comme ce qui circule (« et si… ? », « coïncidence ? », « je ne dis
-pas que c'est vrai, je dis que la question se pose »), jamais comme un fait établi ; ` : `L'ANGLE qui dérange — « ${ANGLES[rang % ANGLES.length]} » — vu depuis le public, pas depuis les institutions ; `}puis « LE NON DU JOUR », puis UNE question ouverte qui pique.
-« LE NON DU JOUR » (signature de la chaîne, OBLIGATOIRE, juste avant la question finale) : commence EXACTEMENT par « Le NON du jour :
-NON à » (ou « Le NON du jour : ce qui me révolte ») — une charge courte, percutante, jamais une formule molle ; elle vise les puissants,
-les institutions, l'hypocrisie, le deux poids deux mesures — MAIS ancrée dans UN FAIT PRÉCIS du dossier (un délai, un écart entre réquisitions et peine, une décision, une contradiction) ; sans fait précis à dénoncer (accident, fait divers en cours d'enquête), vise le sujet lui-même (« NON à la banalisation de… ») sans accuser aucune institution ni les forces de l'ordre ; JAMAIS les victimes, JAMAIS une personne non condamnée présentée comme
-coupable ; aucun fait nouveau. Dossier avec victimes : la colère vise le système (« qui a vu ? qui n'a rien fait ? »), jamais une personne.
+pas que c'est vrai, je dis que la question se pose »), jamais comme un fait établi ; ` : `L'ANGLE qui dérange — « ${ANGLES[rang % ANGLES.length]} » — vu depuis le public, pas depuis les institutions ; `}
+5) MON ANALYSE : l'indignation NAÎT des faits racontés juste avant (« et c'est là que ça devient insupportable : … »), elle vise
+   les puissants, les institutions, l'hypocrisie, le deux poids deux mesures — ancrée dans un fait précis du récit (un délai, un écart,
+   une contradiction) ; jamais une formule plaquée, jamais un slogan de plateau télé ; JAMAIS les victimes, JAMAIS une personne non
+   condamnée présentée comme coupable ; dossier avec victimes : la colère vise le système, jamais une personne ;
+6) UNE question ouverte qui pique, qui découle du récit.
+N'ÉCRIS PAS « Le NON du jour » dans ce dossier (il est réservé à la fin du live).
 Le dossier est lu au milieu du live : pas de « Bienvenue », pas de salut, pas de « dans les commentaires ».
 HORS DU CONTEXTE : jamais « nous », « notre », « nos » ; dis « vous », « je ». Ne parle de la France ou des Français QUE si le sujet
 les concerne directement (jamais de rapprochement forcé).
@@ -626,9 +657,10 @@ noir sur blanc dans les sources (mêmes lieux, mêmes chiffres, mêmes qualifica
 Le texte doit se comprendre seul : présente les faits avant de les commenter. Au moins 3 faits sourcés si les sources le permettent, plus de faits que d'avis.${seule ? `
 SOURCE UNIQUE (${listeNoms(seule)}) : chaque fait est attribué à cette source, au conditionnel.` : ""}
 Mêmes règles qu'avant : jamais « nous / notre / nos », jamais « likez / partagez / abonnez-vous », pas de « Bienvenue »,
-${victimes ? "AUCUN humour (dossier avec victimes), " : "humour noir jamais aux dépens des victimes, "}« Le NON du jour : je dis NON à … » (indignation
-assumée, sans aucun fait nouveau, jamais contre une victime ni contre une personne non condamnée) puis une question ouverte au public à la fin.
-Environ ${Math.max(110, Math.min(260, 40 + 30 * Math.max(3, v.faits + 2)))} mots.
+${victimes ? "AUCUN humour (dossier avec victimes), " : "humour noir jamais aux dépens des victimes, "}un RÉCIT : accroche, contexte (ce qui s'est passé avant),
+déroulement chronologique, puis ton analyse indignée qui découle des faits (jamais contre une victime ni contre une personne non
+condamnée, jamais « Le NON du jour »), puis une question ouverte au public à la fin.
+Environ ${Math.max(220, Math.min(450, 60 + 35 * Math.max(4, v.faits + 3)))} mots.
 Réponds : {"texte": "…"}
 
 TEXTE PRÉCÉDENT (après contrôle) :
@@ -779,7 +811,11 @@ TON : du feu, comme la chaîne — « voilà ce qu'on vous raconte partout, ici 
 - "ouverture" (90 à 150 mots) : hook ultra-choc construit sur le dossier 1, teaser de la bombe finale (dernier dossier) sans la dévoiler,
   puis la phrase d'accueil exacte « Bienvenue dans le Journal du NON, et la réponse est Non. », puis une question ouverte au public ;
 - "transitions" : pour chaque dossier à partir du 2e, UNE phrase (10 à 25 mots) qui fait le lien avec le précédent et accroche ;
-- "cloture" (60 à 110 mots) : la bombe est passée, synthèse percutante, question ouverte au public, rendez-vous au prochain live SANS date.
+- "cloture" (130 à 200 mots) : la bombe est passée ; synthèse percutante du fil rouge de la soirée ; puis « LE NON DU JOUR », le
+  moment fort de la chaîne, UN SEUL pour tout le live : choisis le fait le plus révoltant de la soirée, RAPPELLE-le en une phrase
+  (le dossier d'où il vient), explique en deux phrases pourquoi il est inacceptable, puis la phrase qui commence EXACTEMENT par
+  « Le NON du jour : NON à » — une charge qui découle de ce qui précède, jamais un slogan de plateau télé, jamais contre une victime
+  ni contre une personne non condamnée ; enfin une question ouverte au public et le rendez-vous au prochain live SANS date.
 Règles : jamais « nous / notre / nos », jamais « likez / partagez / abonnez-vous », jamais « écrivez X si… », jamais « dans les
 commentaires ». Ne parle de la France que si un dossier la concerne. Rien d'inventé.
 Réponds : {"ouverture": "…", "transitions": ["…", …], "cloture": "…"}
