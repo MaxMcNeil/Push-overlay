@@ -1,0 +1,25 @@
+name: essai Cloudflare (temporaire)
+on:
+  push:
+    branches: [cloudflare]
+jobs:
+  t:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: "22" }
+      - env:
+          CLOUDFLARE_AI_TOKEN: ${{ secrets.CLOUDFLARE_AI_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_AI_TOKEN" && echo "jeton présent" || echo "::error::jeton absent"
+          test -n "$CLOUDFLARE_ACCOUNT_ID" && echo "account id présent" || echo "::error::account id absent"
+          node -e '
+          const { callCloudflare, parseJson, providers } = await import("./scripts/lib/llm.mjs");
+          console.log("fournisseurs :", providers().map((p) => p[0]).join(", "));
+          const a = await callCloudflare("Réponds en JSON valide.", "Donne la capitale de la France et de l Italie. Réponds {\"france\": \"…\", \"italie\": \"…\"}", { maxTokens: 300 });
+          console.log("JSON →", a, "→", JSON.stringify(parseJson(a)));
+          const b = await callCloudflare("Tu écris en français.", "Écris une liste numérotée des 25 premiers départements français avec leur préfecture, une ligne chacun.", { maxTokens: 150, json: false });
+          console.log("LONG (coupé puis suite) →", b.split("\n").length, "lignes ; fin :", b.slice(-200));
+          ' --input-type=module

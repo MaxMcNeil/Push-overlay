@@ -31,7 +31,8 @@ export function keysOf(...names) {
 }
 export const geminiKeys = () => keysOf("GEMINI_API_KEYS", "GEMINI_API_KEY", "GEMINI_API_KEYS_PLUS");
 export const groqKeys = () => keysOf("GROQ_API_KEYS", "GROQ_API_KEY", "GROQ_API_KEYS_PLUS");
-export const hasAnyLLM = () => geminiKeys().length + groqKeys().length + (process.env.ANTHROPIC_API_KEY ? 1 : 0) > 0;
+const cfOk = () => !!(process.env.CLOUDFLARE_AI_TOKEN && process.env.CLOUDFLARE_ACCOUNT_ID);
+export const hasAnyLLM = () => geminiKeys().length + groqKeys().length + (cfOk() ? 1 : 0) + (process.env.ANTHROPIC_API_KEY ? 1 : 0) > 0;
 
 // départ décalé (jobs parallèles : chaque job commence par une clé différente)
 function rotate(arr, offset = Number(process.env.KEY_OFFSET || 0)) {
@@ -426,11 +427,68 @@ export async function callClaude(sys, user, ctx = {}) {
   return acc;
 }
 
+// CLOUDFLARE WORKERS AI (secrets CLOUDFLARE_AI_TOKEN + CLOUDFLARE_ACCOUNT_ID, gratuit : 10 000 « neurones » par jour, soit
+// environ 50 appels moyens ; les textes ne servent pas à entraîner l'IA). 3e fournisseur, derrière Gemini et Groq. Allocation du
+// jour épuisée → Cloudflare est mis de côté jusqu'à la fin du run. Réponse coupée → seulement LA SUITE est demandée.
+const CF_MODELS = (process.env.CLOUDFLARE_AI_MODELS || "@cf/openai/gpt-oss-120b,@cf/meta/llama-3.3-70b-instruct-fp8-fast").split(",").map((x) => x.trim()).filter(Boolean);
+let cfFini = 0;                                   // horodatage jusqu'auquel Cloudflare est hors service (quota du jour)
+const cfBad = new Set();                          // modèles refusés par l'API (introuvables, format) pour ce run
+export async function callCloudflare(sys, user, ctx = {}) {
+  if (!cfOk()) throw new Error("aucune clé Cloudflare");
+  if (cfFini > Date.now()) throw new Error("Cloudflare : allocation gratuite du jour épuisée");
+  const base = `https://api.cloudflare.com/client/v4/accounts/${process.env.CLOUDFLARE_ACCOUNT_ID}/ai/v1`;
+  const H = { "content-type": "application/json", authorization: `Bearer ${process.env.CLOUDFLARE_AI_TOKEN}` };
+  const left = () => (ctx.deadline ? ctx.deadline - Date.now() : Infinity);
+  const tmo = () => AbortSignal.timeout(Math.max(15000, Math.min(ctx.timeoutMs || 3 * 60 * 1000, left() - 5000)));
+  const maxTok = Math.min(ctx.maxTokens || 4096, 8192);
+  let lastErr = new Error("Cloudflare indisponible");
+  const quota = (st, t) => st === 429 || /neuron|allocation|daily|quota|4006/i.test(t);
+  // une requête (chat/completions ; si ce modèle ne l'accepte pas et que c'est gpt-oss : API « responses »)
+  const une = async (model, msgs, json) => {
+    let r = await fetch(`${base}/chat/completions`, { method: "POST", headers: H, signal: tmo(),
+      body: JSON.stringify({ model, messages: msgs, max_tokens: maxTok, temperature: ctx.temperature ?? 0.6, ...(json ? { response_format: { type: "json_object" } } : {}) }) })
+      .catch((e) => ({ ok: false, status: 0, text: async () => e.message }));
+    if (r.ok) { const d = await r.json(); const c = d.choices?.[0]; return { txt: c?.message?.content || "", coupe: c?.finish_reason === "length" }; }
+    let t = await r.text().catch(() => "");
+    if (quota(r.status, t)) return { quota: true, err: t };
+    if (r.status === 400 && json && /response_format|json/i.test(t)) return une(model, msgs, false);      // JSON strict refusé : sans
+    if (/gpt-oss/.test(model) && r.status >= 400 && r.status < 500) {
+      r = await fetch(`${base}/responses`, { method: "POST", headers: H, signal: tmo(),
+        body: JSON.stringify({ model, instructions: msgs[0].content, input: msgs.slice(1).map((m) => ({ role: m.role, content: m.content })), max_output_tokens: maxTok, reasoning: { effort: "low" } }) })
+        .catch((e) => ({ ok: false, status: 0, text: async () => e.message }));
+      if (r.ok) { const d = await r.json();
+        const txt = d.output_text || (d.output || []).filter((o) => o.type === "message").flatMap((o) => o.content || []).map((c) => c.text || "").join("");
+        return { txt, coupe: d.status === "incomplete" }; }
+      t = await r.text().catch(() => "");
+      if (quota(r.status, t)) return { quota: true, err: t };
+    }
+    return { err: `HTTP ${r.status} ${t.slice(0, 160)}`, mauvais: r.status === 400 || r.status === 404 };
+  };
+  for (const model of CF_MODELS.filter((m) => !cfBad.has(m))) {
+    const msgs = [{ role: "system", content: sys }, { role: "user", content: user }];
+    const r = await une(model, msgs, ctx.json !== false);
+    if (r.quota) { cfFini = Date.now() + 12 * 3600e3; console.log("  Cloudflare : allocation gratuite du jour épuisée → mis de côté pour ce run"); throw new Error("Cloudflare : allocation du jour épuisée"); }
+    if (r.err) { lastErr = new Error(`Cloudflare ${model} : ${r.err}`); console.log(`  ${lastErr.message}`); if (r.mauvais) cfBad.add(model); continue; }
+    let acc = r.txt, coupe = r.coupe, n = 0;
+    while (coupe && acc && n++ < MAX_SUITES && left() > 30000) {
+      console.log(`  Cloudflare ${model} : réponse coupée → demande de la suite seulement (${n}/${MAX_SUITES})`);
+      const r2 = await une(model, [...msgs, { role: "assistant", content: acc }, { role: "user", content: SUITE }], false);
+      if (!r2.txt) break;
+      acc = jonction(acc, r2.txt); coupe = r2.coupe;
+    }
+    if (!acc) { lastErr = new Error(`Cloudflare ${model} : réponse vide`); continue; }
+    console.log(`  Cloudflare : modèle utilisé = ${model}${n ? ", réponse complétée par la suite" : ""}`);
+    return acc;
+  }
+  throw lastErr;
+}
+
 /** Liste des fournisseurs configurés, dans l'ordre d'essai. */
 export function providers() {
   return [
     ["gemini", geminiKeys().length, callGemini],
     ["groq", groqKeys().length, callGroq],
+    ["cloudflare", cfOk() ? 1 : 0, callCloudflare],
     ["claude", process.env.ANTHROPIC_API_KEY ? 1 : 0, callClaude],
   ].filter((x) => x[1]).map(([name, , fn]) => [name, fn]);
 }
