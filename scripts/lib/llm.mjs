@@ -261,7 +261,7 @@ async function groqModels0(key) {
   try {
     const r = await fetch(`${GROQ_BASE}/openai/v1/models`, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15000) });
     if (r.ok) ids = ((await r.json()).data || []).filter((m) => m.active !== false).map((m) => m.id)
-      .filter((id) => !/whisper|tts|guard|prompt-guard|playai|distil-whisper|vision|compound/i.test(id));
+      .filter((id) => !/whisper|tts|guard|prompt-guard|playai|orpheus|distil-whisper|vision|compound|embed|moderation/i.test(id));   // seulement des modèles de TEXTE
   } catch {}
   const ranked = [];
   for (const re of GROQ_PREF) for (const id of ids) if (re.test(id) && !ranked.includes(id)) ranked.push(id);
@@ -286,7 +286,7 @@ const jetons = (t) => { const s = String(t || ""), ar = (s.match(/[\u0600-\u06FF
 // Le programme tient le compte des jetons envoyés à chaque modèle sur la dernière minute et n'envoie à un modèle que ce
 // qu'il peut accepter ; un modèle qui refuse (429) est mis de côté le temps indiqué (une minute ou la journée) et la
 // requête part AUSSITÔT vers un autre modèle libre. On n'attend que si TOUS les modèles sont occupés.
-const groqCool = new Map(), groqUse = new Map();
+const groqCool = new Map(), groqUse = new Map(), groqMort = new Set();   // groqMort : modèle inutilisable pour tout le run
 const groqUsed = (m) => { const a = (groqUse.get(m) || []).filter(([t]) => Date.now() - t < 60000); groqUse.set(m, a); return a.reduce((x, [, k]) => x + k, 0); };
 const groqLibre = (m, need) => (groqCool.get(m) || 0) <= Date.now() && groqUsed(m) + need <= capOf(m);
 const groqAttente = (m, need) => {           // ms avant que ce modèle puisse accepter « need » jetons
@@ -311,7 +311,7 @@ export async function callGroq(sys, user, ctx = {}) {
   const exclus = new Set();                                    // modèles refusés pour CETTE requête (404, trop long…)
   let lastErr = new Error("Groq indisponible");
   for (let tour = 0; tour < 8; tour++) {
-    const possibles = ordre.filter((m) => !exclus.has(m) && tient(m));
+    const possibles = ordre.filter((m) => !exclus.has(m) && !groqMort.has(m) && tient(m));
     if (!possibles.length) throw new Error(`Groq : texte trop long pour tous les modèles gratuits (${besoin} jetons) — à découper`);
     const demande = (m) => besoin + Math.max(512, Math.min(veut, capOf(m) - besoin));
     let model = possibles.find((m) => groqLibre(m, demande(m)));
@@ -369,7 +369,11 @@ export async function callGroq(sys, user, ctx = {}) {
         }
         lastErr = new Error(`Groq ${model} : HTTP ${res.status} ${body}`); console.log(`  ${lastErr.message}`);
         if (res.status === 400 && /reasoning_effort/i.test(body) && !noEffort) { noEffort = true; ki--; continue; }
-        if ((res.status === 404 || res.status === 400) && /model|decommission|not exist|not found/i.test(body)) { exclus.add(model); break; }
+        // modèle réservé (conditions à accepter), retiré ou qui ne fait pas de texte : écarté pour TOUT le run (plus jamais réessayé)
+        if ((res.status === 404 || res.status === 400 || res.status === 403) && /terms acceptance|decommission|not exist|not found|does not support|not supported/i.test(full)) { groqMort.add(model); console.log(`  Groq : ${model} écarté pour ce run`); break; }
+        // fenêtre de texte trop petite pour cette demande : sa vraie capacité est retenue (il reste utilisable pour les petites demandes)
+        if (res.status === 400 && /reduce the length|context_length|context length|maximum context/i.test(full)) { groqCap.set(model, Math.max(1000, besoin - 500)); exclus.add(model); break; }
+        if ((res.status === 404 || res.status === 400) && /model/i.test(body)) { exclus.add(model); break; }
         continue;
       }
       const d = await res.json();
