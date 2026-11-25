@@ -49,6 +49,7 @@ const modelCache = new Map();
 const health = { good: null, cool: new Map() };
 const cooled = (m) => (health.cool.get(m) || 0) > Date.now();
 const coolDown = (m, ms) => health.cool.set(m, Math.max(health.cool.get(m) || 0, Date.now() + ms));
+const geminiMort = new Set();   // modèle introuvable, retiré ou inutilisable : plus jamais réessayé pendant ce run
 async function geminiModels(key) {
   if (process.env.GEMINI_MODEL) return [process.env.GEMINI_MODEL];
   if (modelCache.has("list")) return modelCache.get("list");
@@ -116,8 +117,8 @@ async function callGemini0(sys, user, ctx = {}) {
   const left = () => (ctx.deadline ? ctx.deadline - Date.now() : Infinity);
   let thinking = ctx.thinking; // budget de « réflexion » limité = réponses bien plus rapides
   let preferLite = false; // après un délai dépassé : seulement les modèles « lite », bien plus rapides
-  const avail = models.filter((m) => !cooled(m));
-  const order = [...new Set([...(health.good && avail.includes(health.good) ? [health.good] : []), ...avail, ...models.filter(cooled)])];
+  const avail = models.filter((m) => !cooled(m) && !geminiMort.has(m));
+  const order = [...new Set([...(health.good && avail.includes(health.good) ? [health.good] : []), ...avail, ...models.filter((m) => cooled(m) && !geminiMort.has(m))])];
   modelLoop: for (const m of order) {
     if (preferLite && !/lite/.test(m)) continue;
     if (cooled(m) && order.some((x) => !cooled(x) && x !== m && (!preferLite || /lite/.test(x)))) continue;
@@ -157,7 +158,7 @@ async function callGemini0(sys, user, ctx = {}) {
             if (saturated >= keys.length - dead.size) { coolDown(m, perDay ? 12 * 3600 * 1000 : (retry + 5) * 1000); continue modelLoop; }
             continue;
           }
-          if (res.status === 404) { lastErr = new Error(`${tag} : modèle introuvable`); break; }
+          if (res.status === 404) { lastErr = new Error(`${tag} : modèle introuvable`); geminiMort.add(m); console.log(`  ${tag} : modèle introuvable → écarté pour ce run`); continue modelLoop; }
           if (!res.ok) {
             const body = (await res.text()).replace(/\s+/g, " ").slice(0, 300);
             if (res.status === 400 && /thinking/i.test(body) && thinking !== undefined) { // modèle sans réglage de réflexion
@@ -174,6 +175,7 @@ async function callGemini0(sys, user, ctx = {}) {
               console.log(`  ${tag} : requête refusée par ce modèle (HTTP 400 : ${body.replace(/^\{ ?"error": ?\{ ?"code": ?400, ?"message": ?/, "").slice(0, 220)}) → modèle suivant`);
               lastErr = new Error(`${tag} : HTTP 400 ${body}`);
               if (thinking !== undefined) { thinking = undefined; ki--; continue; }
+              if (/not supported|not found|deprecat|no longer available|is not available/i.test(body)) { geminiMort.add(m); console.log(`  ${tag} : modèle écarté pour ce run`); }
               continue modelLoop;
             }
             if ((res.status === 400 || res.status === 403) && (await geminiKeyOk(keys[ki]))) {
@@ -492,6 +494,7 @@ export async function callCloudflare(sys, user, ctx = {}) {
 // La liste des modèles gratuits change souvent : elle est lue en direct (jamais un nom figé), les plus gros d'abord.
 // Jamais de modèle payant : seul un identifiant finissant par « :free » ET au prix 0 est utilisé.
 let orModelsP = null, orFini = 0;
+const orMort = new Set();   // modèle retiré ou refusé : plus réessayé pendant ce run
 const orModels = () => (orModelsP ||= (async () => {
   try {
     const r = await fetch("https://openrouter.ai/api/v1/models", { signal: AbortSignal.timeout(20000) });
@@ -519,11 +522,13 @@ export async function callOpenRouter(sys, user, ctx = {}) {
     const c = (await r.json()).choices?.[0];
     return { txt: c?.message?.content || "", coupe: c?.finish_reason === "length" };
   };
-  for (const model of models) {
+  for (const model of models.filter((m) => !orMort.has(m))) {
     const msgs = [{ role: "system", content: sys }, { role: "user", content: user }];
     const r = await une(model, msgs);
     if (r.status === 429 && /per.day|daily|free-models-per-day/i.test(r.err)) { orFini = Date.now() + 12 * 3600e3; console.log("  OpenRouter : quota gratuit du jour épuisé → mis de côté pour ce run"); throw new Error("OpenRouter : quota du jour épuisé"); }
-    if (r.err !== undefined) { lastErr = new Error(`OpenRouter ${model} : HTTP ${r.status} ${r.err}`); console.log(`  ${lastErr.message.slice(0, 200)}`); continue; }
+    if (r.err !== undefined) { lastErr = new Error(`OpenRouter ${model} : HTTP ${r.status} ${r.err}`); console.log(`  ${lastErr.message.slice(0, 200)}`);
+      if ([400, 403, 404].includes(r.status) && !/rate|limit/i.test(r.err)) orMort.add(model);
+      continue; }
     let acc = r.txt, coupe = r.coupe, n = 0;
     while (coupe && acc && n++ < MAX_SUITES && left() > 30000) {
       console.log(`  OpenRouter ${model} : réponse coupée → demande de la suite seulement (${n}/${MAX_SUITES})`);
