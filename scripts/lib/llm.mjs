@@ -32,7 +32,8 @@ export function keysOf(...names) {
 export const geminiKeys = () => keysOf("GEMINI_API_KEYS", "GEMINI_API_KEY", "GEMINI_API_KEYS_PLUS");
 export const groqKeys = () => keysOf("GROQ_API_KEYS", "GROQ_API_KEY", "GROQ_API_KEYS_PLUS");
 const cfOk = () => !!(process.env.CLOUDFLARE_AI_TOKEN && process.env.CLOUDFLARE_ACCOUNT_ID);
-export const hasAnyLLM = () => geminiKeys().length + groqKeys().length + (cfOk() ? 1 : 0) + (process.env.ANTHROPIC_API_KEY ? 1 : 0) > 0;
+const orOk = () => !!process.env.OPENROUTER_API_KEY;
+export const hasAnyLLM = () => geminiKeys().length + groqKeys().length + (cfOk() ? 1 : 0) + (orOk() ? 1 : 0) + (process.env.ANTHROPIC_API_KEY ? 1 : 0) > 0;
 
 // départ décalé (jobs parallèles : chaque job commence par une clé différente)
 function rotate(arr, offset = Number(process.env.KEY_OFFSET || 0)) {
@@ -483,12 +484,63 @@ export async function callCloudflare(sys, user, ctx = {}) {
   throw lastErr;
 }
 
+// OPENROUTER, modèles GRATUITS seulement (« :free », secret OPENROUTER_API_KEY) : ~50 requêtes par jour, en dernière réserve.
+// La liste des modèles gratuits change souvent : elle est lue en direct (jamais un nom figé), les plus gros d'abord.
+// Jamais de modèle payant : seul un identifiant finissant par « :free » ET au prix 0 est utilisé.
+let orModelsP = null, orFini = 0;
+const orModels = () => (orModelsP ||= (async () => {
+  try {
+    const r = await fetch("https://openrouter.ai/api/v1/models", { signal: AbortSignal.timeout(20000) });
+    const ids = ((await r.json()).data || []).filter((m) => /:free$/.test(m.id) && Number(m.pricing?.prompt) === 0 && Number(m.pricing?.completion) === 0
+      && (m.context_length || 0) >= 32000 && !/vision|vl\b|image|audio|embed/i.test(m.id))
+      .map((m) => ({ id: m.id, taille: Number((m.id.match(/(\d+)b\b/i) || [])[1]) || 0 })).sort((x, y) => y.taille - x.taille).map((m) => m.id);
+    const pref = [/gpt-oss-120b/, /deepseek/, /llama-3\.3-70b/, /qwen/];
+    const out = [...pref.flatMap((re) => ids.filter((i) => re.test(i))), ...ids];
+    return [...new Set(out)].slice(0, 5);
+  } catch { return []; }
+})());
+export async function callOpenRouter(sys, user, ctx = {}) {
+  if (!orOk()) throw new Error("aucune clé OpenRouter");
+  if (orFini > Date.now()) throw new Error("OpenRouter : quota gratuit du jour épuisé");
+  const models = await orModels();
+  if (!models.length) throw new Error("OpenRouter : aucun modèle gratuit disponible");
+  const left = () => (ctx.deadline ? ctx.deadline - Date.now() : Infinity);
+  let lastErr = new Error("OpenRouter indisponible");
+  const une = async (model, msgs) => {
+    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", { method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, "x-title": "Push-overlay" },
+      body: JSON.stringify({ model, messages: msgs, max_tokens: Math.min(ctx.maxTokens || 4096, 8192), temperature: ctx.temperature ?? 0.6 }),
+      signal: AbortSignal.timeout(Math.max(15000, Math.min(ctx.timeoutMs || 3 * 60 * 1000, left() - 5000))) }).catch((e) => ({ ok: false, status: 0, text: async () => e.message }));
+    if (!r.ok) return { status: r.status, err: (await r.text().catch(() => "")).slice(0, 200) };
+    const c = (await r.json()).choices?.[0];
+    return { txt: c?.message?.content || "", coupe: c?.finish_reason === "length" };
+  };
+  for (const model of models) {
+    const msgs = [{ role: "system", content: sys }, { role: "user", content: user }];
+    const r = await une(model, msgs);
+    if (r.status === 429 && /per.day|daily|free-models-per-day/i.test(r.err)) { orFini = Date.now() + 12 * 3600e3; console.log("  OpenRouter : quota gratuit du jour épuisé → mis de côté pour ce run"); throw new Error("OpenRouter : quota du jour épuisé"); }
+    if (r.err !== undefined) { lastErr = new Error(`OpenRouter ${model} : HTTP ${r.status} ${r.err}`); console.log(`  ${lastErr.message.slice(0, 200)}`); continue; }
+    let acc = r.txt, coupe = r.coupe, n = 0;
+    while (coupe && acc && n++ < MAX_SUITES && left() > 30000) {
+      console.log(`  OpenRouter ${model} : réponse coupée → demande de la suite seulement (${n}/${MAX_SUITES})`);
+      const r2 = await une(model, [...msgs, { role: "assistant", content: acc }, { role: "user", content: SUITE }]);
+      if (!r2.txt) break;
+      acc = jonction(acc, r2.txt); coupe = r2.coupe;
+    }
+    if (!acc) { lastErr = new Error(`OpenRouter ${model} : réponse vide`); continue; }
+    console.log(`  OpenRouter : modèle utilisé = ${model}${n ? ", réponse complétée par la suite" : ""}`);
+    return acc;
+  }
+  throw lastErr;
+}
+
 /** Liste des fournisseurs configurés, dans l'ordre d'essai. */
 export function providers() {
   return [
     ["gemini", geminiKeys().length, callGemini],
     ["groq", groqKeys().length, callGroq],
     ["cloudflare", cfOk() ? 1 : 0, callCloudflare],
+    ["openrouter", orOk() ? 1 : 0, callOpenRouter],
     ["claude", process.env.ANTHROPIC_API_KEY ? 1 : 0, callClaude],
   ].filter((x) => x[1]).map(([name, , fn]) => [name, fn]);
 }
