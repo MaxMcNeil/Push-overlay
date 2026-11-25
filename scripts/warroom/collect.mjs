@@ -232,10 +232,10 @@ async function declarations() {
     for (const it of x.split(/<item[\s>]/).slice(1, 60)) {
       const date = tag(it, "pubDate") || tag(it, "dc:date");
       if (!date || !recent(date)) continue;
-      const desc = txt(tag(it, "description")).replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
-      let titre = txt(tag(it, "title")).replace(/https?:\/\/\S+/g, "").trim();
+      const desc = txt(tag(it, "description")).replace(/https?:\/\/\s*\S+/g, "").replace(/\s+/g, " ").trim();
+      let titre = txt(tag(it, "title")).replace(/https?:\/\/\s*\S+/g, "").trim();
       if (!titre || /^\[?no title\]?|^post from|^truth\b/i.test(titre) || titre.length < 30) titre = desc;
-      if (!titre || titre.length < 40 || /^RT\b|^ReTruth/i.test(titre)) continue;       // repartage ou message vide : ignoré
+      if (!titre || titre.length < 40 || (titre.match(/\p{L}{2,}/gu) || []).length < 7 || /^RT\b|^ReTruth/i.test(titre)) continue;       // repartage ou message vide : ignoré
       out.push({ titre: titre.slice(0, 300), url: txt(tag(it, "link")), source: nom, date: new Date(date).toISOString(), resume: desc.slice(0, 600),
         origine: "declaration", officiel: true, langue: "en", pays: "États-Unis" });
     }
