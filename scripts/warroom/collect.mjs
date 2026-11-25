@@ -60,9 +60,9 @@ const THEMES = {
 async function googleNews() {
   const out = [];
   let echecs = 0;
-  for (const [theme, qs] of Object.entries(THEMES)) {
+  for (const [theme, qs] of Object.entries(GOLFE ? THEMES_GOLFE : THEMES)) {
     for (const q of qs) {
-      const fr = theme !== "monde";
+      const fr = !GOLFE && theme !== "monde";
       const hl = fr ? "hl=fr&gl=FR&ceid=FR:fr" : "hl=en-US&gl=US&ceid=US:en";
       if (out.length === 0 && echecs >= 4) break;                 // Google News bloque ce serveur : inutile d'insister
       const x = await get(q ? `https://news.google.com/rss/search?q=${encodeURIComponent(q + " when:1d")}&${hl}`
@@ -92,6 +92,38 @@ async function getGdelt(url, o) {
   return null;
 }
 
+// ÉDITION GOLFE (WARROOM_EDITION=golfe, chaîne Gulf Think-Tank) : public des 6 pays du Golfe ; le monde seulement s'il touche le Golfe
+export const GOLFE = process.env.WARROOM_EDITION === "golfe";
+const THEMES_GOLFE = {
+  golfe: ["Saudi Arabia", "United Arab Emirates", "Qatar", "Kuwait", "Oman", "Bahrain", "GCC Gulf summit", "Riyadh OR Abu Dhabi OR Doha announcement",
+    "Gulf investment deal billion", "Saudi Vision 2030", "OPEC oil price", "Strait of Hormuz", "Red Sea shipping attack"],
+  region: ["Iran Gulf tension", "Yemen Houthi", "Israel Gaza", "Lebanon Hezbollah", "Syria", "Iraq militia", "Sudan war", "Egypt crisis"],
+  monde: ["US Middle East policy", "Russia Ukraine war", "China Gulf", "military strike escalation", "leaked documents reveal", "deadly disaster",
+    "ransomware attack Gulf OR Middle East"],
+};
+const FLUX_GOLFE = [
+  ["Gulf News (EAU)", "https://gulfnews.com/feed/"],
+  ["The National (EAU)", "https://www.thenationalnews.com/arc/outboundfeeds/rss/?outputType=xml"],
+  ["Khaleej Times (EAU)", "https://www.khaleejtimes.com/arc/outboundfeeds/rss/?outputType=xml"],
+  ["Arab News (Arabie saoudite)", "https://www.arabnews.com/rss.xml"],
+  ["Saudi Gazette", "https://saudigazette.com.sa/rssFeed/74"],
+  ["Gulf Times (Qatar)", "https://www.gulf-times.com/rssFeed/8"],
+  ["The Peninsula (Qatar)", "https://thepeninsulaqatar.com/rss"],
+  ["Times of Oman", "https://timesofoman.com/rss"],
+  ["Kuwait Times", "https://kuwaittimes.com/feed/"],
+  ["Gulf Daily News (Bahreïn)", "https://www.gdnonline.com/rss"],
+  ["Al Jazeera English", "https://www.aljazeera.com/xml/rss/all.xml"],
+  ["Middle East Eye", "https://www.middleeasteye.net/rss"],
+  ["Al-Monitor", "https://www.al-monitor.com/rss"],
+  ["Asharq Al-Awsat (anglais)", "https://english.aawsat.com/feed"],
+  ["Al Arabiya (anglais)", "https://english.alarabiya.net/feed/rss2/en.xml"],
+  ["SPA (agence saoudienne)", "https://www.spa.gov.sa/en/rss"],
+  ["WAM (agence émiratie)", "https://www.wam.ae/en/rss"],
+  ["QNA (agence qatarie)", "https://www.qna.org.qa/en/rss"],
+  ["Reuters Moyen-Orient (via Google)", "https://news.google.com/rss/search?q=site:reuters.com+middle+east+when:1d&hl=en-US&gl=US&ceid=US:en"],
+  ["BBC Moyen-Orient", "https://feeds.bbci.co.uk/news/world/middle_east/rss.xml"],
+];
+
 // ---------------------------------------------------------------- presse française en direct (flux RSS des rédactions)
 // Toujours collectée (en plus de Google News, et seule si Google News bloque) : liens DIRECTS vers les articles, que l'écriture
 // peut lire en entier. Un flux qui ne répond pas est simplement ignoré.
@@ -115,7 +147,7 @@ const FLUX = [
 ];
 async function presseFr() {
   const out = [], vides = [];
-  await Promise.all(FLUX.map(async ([nom, url]) => {
+  await Promise.all((GOLFE ? FLUX_GOLFE : FLUX).map(async ([nom, url]) => {
     const x = await get(url, { timeout: 20000 });
     if (!x) { vides.push(nom); return; }
     const items = x.includes("<item") ? x.split(/<item[\s>]/).slice(1) : x.split(/<entry[\s>]/).slice(1);
@@ -124,7 +156,7 @@ async function presseFr() {
       const titre = txt(tag(it, "title")), date = tag(it, "pubDate") || tag(it, "dc:date") || tag(it, "updated") || tag(it, "published");
       const lien = txt(tag(it, "link")) || ((it.match(/<link[^>]*href="([^"]+)"/) || [])[1] || "");
       if (!titre || !recent(date)) continue;
-      out.push({ titre, url: lien, source: nom, date: new Date(date).toISOString(), resume: txt(tag(it, "description")).slice(0, 400), origine: "presse-fr", langue: "fr" });
+      out.push({ titre, url: lien, source: nom, date: new Date(date).toISOString(), resume: txt(tag(it, "description")).slice(0, 400), origine: GOLFE ? "presse-golfe" : "presse-fr", langue: GOLFE ? "en" : "fr" });
       n++;
     }
     if (!n) vides.push(nom);
@@ -249,7 +281,8 @@ async function declarations() {
 async function gdelt() {
   const out = [];
   const qs = ["(killed OR dead OR massacre OR disaster OR explosion)", "(scandal OR corruption OR leaked OR exposed OR arrested)",
-    "(cyberattack OR hackers OR ransomware OR breach)", "(missile OR airstrike OR invasion OR coup)"];
+    "(cyberattack OR hackers OR ransomware OR breach)", "(missile OR airstrike OR invasion OR coup)",
+    ...(GOLFE ? ["(Saudi OR Emirates OR Qatar OR Kuwait OR Oman OR Bahrain OR Gulf)"] : [])];
   for (const q of qs) {
     const j = await getGdelt(`https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(q + " tone<-6 sourcelang:english")}&mode=artlist&maxrecords=60&timespan=24h&sort=hybridrel&format=json`, { json: true, timeout: 40000 });
     for (const a of j?.articles || []) {

@@ -15,12 +15,16 @@ const spec = JSON.parse(readFileSync(`${OUT}/warroom.json`, "utf8"));
 const dossiers = spec.segments.filter((s) => s.type === "dossier");
 const total = dossiers.length;
 let logo = null;
-try { const ch = channelFor("fr"); if (ch.logo && existsSync(ch.logo)) logo = path.resolve(ch.logo); } catch {}
-const base = { w: 1080, h: 1920, fps: 30, duration: P, scenes: [], crf: 20, maxrateK: 6000, ...(logo ? { logo } : {}) };
+const AR = spec.lang === "ar";                                    // édition Golfe : écrans en arabe, logo Gulf Think-Tank
+try { const ch = channelFor(AR ? "ar" : "fr"); if (ch.logo && existsSync(ch.logo)) logo = path.resolve(ch.logo); } catch {}
+const base = { w: 1080, h: 1920, fps: 30, duration: P, scenes: [], crf: 20, maxrateK: 6000, lang: AR ? "ar" : "fr", ...(logo ? { logo } : {}) };
 const cats = {}; for (const d of dossiers) cats[d.categorie] = (cats[d.categorie] || 0) + 1;
-const resume = `${total} DOSSIERS · ` + Object.entries(cats).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${n} ${c}`).join(" · ");
+const CAT_AR = { CATASTROPHE: "كارثة", ACCIDENT: "حادث", SCANDALE: "فضيحة", CORRUPTION: "فساد", POLITIQUE: "سياسة", "GÉOPOLITIQUE": "جيوسياسة",
+  GUERRE: "حرب", "RÉVÉLATION": "كشف", CYBER: "سيبراني", "FAIT DIVERS": "حوادث", INSOLITE: "غرائب", RUMEUR: "شائعة" };
+const resume = AR ? `${total} ملفات · ` + Object.entries(cats).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${n} ${CAT_AR[c] || c}`).join(" · ")
+  : `${total} DOSSIERS · ` + Object.entries(cats).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${n} ${c}`).join(" · ");
 // bandeau du bas : le titre du dossier SUIVANT (fixe, lisible) ; le dernier annonce la fin sans la dévoiler
-const suivant = (i) => (i < dossiers.length ? dossiers[i].titre : "Le mot de la fin");
+const suivant = (i) => (i < dossiers.length ? dossiers[i].titre : AR ? "الكلمة الأخيرة" : "Le mot de la fin");
 const ecrans = [
   ["wr-00", { type: "ouverture", total, resume, suivant: suivant(0) }],
   ...dossiers.map((d, i) => [`wr-${String(d.n).padStart(2, "0")}`, { ...d, total, suivant: suivant(i + 1) }]),

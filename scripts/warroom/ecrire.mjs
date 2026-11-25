@@ -8,10 +8,40 @@
 // Sorties (output/warroom) : prompteur.txt, warroom.json (pour l'écran), sources.md, journal des choix.
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { providers, parseJson } from "../lib/llm.mjs";
-import { collecter, deshtml } from "./collect.mjs";
+import { collecter, deshtml, GOLFE } from "./collect.mjs";
 
 const OUT = "output/warroom";
-const WPM = Number(process.env.WARROOM_WPM || 145);
+// ÉDITION : France (Le Journal du NON, défaut) ou Golfe (Gulf Think-Tank : écrit et vérifié en français, puis traduit en arabe standard)
+const ED = GOLFE ? {
+  chaine: "Gulf Think-Tank",
+  public: "pour le public des pays du GOLFE (Arabie saoudite, Émirats arabes unis, Qatar, Koweït, Oman, Bahreïn)",
+  interet: `- "interet_fr" : 0 à 10 = à quel point le public du GOLFE s'y intéresse. Tout ce qui se passe dans les 6 pays du Golfe ou les
+  touche directement (sécurité du Golfe, Iran, Yémen, mer Rouge, pétrole, investissements, diplomatie régionale, grandes puissances au
+  Moyen-Orient, monde arabe, menace mondiale) = 7 à 10. Un événement lointain sans lien avec le Golfe = 0 à 3, sauf ampleur exceptionnelle.
+- "tabou_golfe" : true si le sujet consiste à CRITIQUER, moquer ou accuser un dirigeant d'un pays du Golfe, une famille régnante, un
+  gouvernement du Golfe ou l'islam ; sinon false.`,
+  contexte: `PUBLIC DU GOLFE : jamais « nous », « notre », « nos » ; dis « vous », « je ».
+RÈGLE ABSOLUE : AUCUNE critique, ironie, moquerie ou insinuation visant les dirigeants des pays du Golfe (rois, émirs, sultans, princes
+héritiers, familles régnantes), leurs gouvernements et institutions, ni l'islam, les lieux saints et les symboles religieux : leurs
+décisions sont rapportées avec respect, de façon factuelle et analytique (angle think-tank : enjeux, stratégie, influence, rapport de
+force). La virulence, l'ironie mordante et l'humour noir visent les puissances étrangères, l'hypocrisie occidentale, le deux poids deux
+mesures, la propagande, les milices et groupes armés, les médias qui manipulent — jamais les victimes.`,
+  signature: "La position du jour",
+  accueil: "Bienvenue dans la War Room de Gulf Think-Tank.",
+  paysPublic: /arabie|saoudi|[ée]mirats|qatar|kowe[iï]t|oman|bahre[iï]n|golfe/i,
+  France: "le Golfe",
+} : {
+  chaine: "Le Journal du NON",
+  public: "pour un public FRANÇAIS",
+  interet: null,
+  contexte: null,
+  signature: "Le NON du jour",
+  accueil: "Bienvenue dans le Journal du NON, et la réponse est Non.",
+  paysPublic: /^france$/i,
+  France: "la France",
+};
+const SIGN = new RegExp(`^${ED.signature}`, "i");
+const WPM = Number(process.env.WARROOM_WPM || (GOLFE ? 105 : 145));          // l'arabe se lit plus lentement
 const MAX_DOSSIERS = Number(process.env.WARROOM_MAX || 15);
 const T0 = Date.now(), BUDGET = Number(process.env.WARROOM_BUDGET_MIN || 120) * 60e3;
 const reste = () => BUDGET - (Date.now() - T0);
@@ -69,7 +99,7 @@ async function trier(groupes) {
     const lot = file.shift();
     const liste = lot.map((g) => `#${g.id} [${g.nb_sources} source(s)${g.officiel ? ", officiel" : ""}${g.revendication ? ", REVENDICATION non confirmée" : ""}] ${g.items.slice(0, 3).map((x) => x.titre).join(" | ").slice(0, 300)}`).join("\n");
     try {
-      const j = await ia("Tu es rédacteur en chef d'une émission d'actualité choc pour un public FRANÇAIS. Réponds en JSON valide.",
+      const j = await ia(`Tu es rédacteur en chef d'une émission d'actualité choc ${ED.public}. Réponds en JSON valide.`,
         `Pour chaque sujet ci-dessous (actualité des dernières 24 h), donne :
 - "choc" : 0 à 10 = à quel point il CHOQUE, INDIGNE ou INQUIÈTE le grand public (catastrophe, morts, scandale, corruption, accident grave,
   guerre, escalade, fuite, révélation, piratage, fait divers grave, insolite et grave, rumeur/complot qui fait le buzz). 0 = banal, sport,
@@ -77,10 +107,10 @@ async function trier(groupes) {
 - "categorie" : CATASTROPHE, ACCIDENT, SCANDALE, CORRUPTION, POLITIQUE, GÉOPOLITIQUE, GUERRE, RÉVÉLATION, CYBER, FAIT DIVERS, INSOLITE ou RUMEUR.
   Échelle MONDIALE : un accident ou un fait divers local avec une seule victime vaut 4 au plus (sauf circonstances inouïes) ;
   une guerre qui s'étend, une catastrophe meurtrière, un scandale d'État, une fuite massive valent 8 à 10.
-- "interet_fr" : 0 à 10 = à quel point un Français moyen s'y intéresse et en parlerait. Tout ce qui se passe EN FRANCE ou touche
+${ED.interet || `- "interet_fr" : 0 à 10 = à quel point un Français moyen s'y intéresse et en parlerait. Tout ce qui se passe EN FRANCE ou touche
   directement les Français (victimes françaises, argent, prix, énergie, sécurité, Europe, guerre aux portes de l'Europe, grandes
   puissances, menace mondiale, buzz mondial) = 7 à 10. Un événement lointain sans lien avec la France (petit pays, politique locale
-  étrangère, fait divers à l'étranger) = 0 à 3, même s'il est grave, SAUF s'il est d'une ampleur exceptionnelle.
+  étrangère, fait divers à l'étranger) = 0 à 3, même s'il est grave, SAUF s'il est d'une ampleur exceptionnelle.`}
 - "actuel" : true si c'est un FAIT NOUVEAU des dernières 48 h ; false si c'est un récit du passé, un portrait, une rétrospective,
   un anniversaire, un documentaire, une série, un livre, une analyse sans fait nouveau.
 - "categorie" : CATASTROPHE, ACCIDENT, SCANDALE, CORRUPTION, POLITIQUE, GÉOPOLITIQUE, GUERRE, RÉVÉLATION, CYBER, FAIT DIVERS, INSOLITE ou RUMEUR.
@@ -418,7 +448,7 @@ function nomsConnus(phrase, source) {
 // victimes = le dossier touche des morts, blessés, enfants, violences sexuelles ou sinistrés : aucun humour toléré.
 // verifierPhrases renvoie null si la vérification n'a pas pu se faire (IA saturée), sinon
 //   { sorties: [phrase gardée | phrase recadrée | null], faits, avis, retirees, corrigees, refusees: [phrases retirées] }.
-const MARQUE_AVIS = /^(le non du jour|et si|coïncidence|je ne (dis|vous dis) pas|posez-vous|à qui profite|à mon (sens|avis)|je (pense|crois|trouve|me demande|constate|vous laisse|dis non)|ce qui me révolte|selon moi|pour moi|franchement|il me semble|j'ai l'impression)/i;
+const MARQUE_AVIS = /^(le non du jour|la position du jour|et si|coïncidence|je ne (dis|vous dis) pas|posez-vous|à qui profite|à mon (sens|avis)|je (pense|crois|trouve|me demande|constate|vous laisse|dis non)|ce qui me révolte|selon moi|pour moi|franchement|il me semble|j'ai l'impression)/i;
 async function verifierPhrases(phr, source, depart, victimes = false) {
   if (!phr.length) return { sorties: [], faits: 0, avis: 0, retirees: 0, corrigees: 0, refusees: [] };
   if (reste() < 5 * 60e3) return null;
@@ -580,7 +610,7 @@ async function ecrireDossier0(g, rang = 0, depart = 0) {
   const n = g.note, rev = g.revendication, rumeur = n.categorie === "RUMEUR", seule = seuleSource(g);
   const contre = CONTRE_CATS.includes(n.categorie);
   const mots_cible = Math.round(Math.max(300, Math.min(650, 200 + g.texte.length / 25)));   // un récit avec contexte, pas une brève
-  const j = await ia("Tu écris pour un live YouTube d'actualité choc (chaîne « Le Journal du NON »). Réponds en JSON valide.",
+  const j = await ia(`Tu écris pour un live YouTube d'actualité choc (chaîne « ${ED.chaine} »). Réponds en JSON valide.`,
     `Écris le DOSSIER ci-dessous pour le présentateur, qui le lira au prompteur.
 HUMOUR NOIR : jamais aux dépens des victimes (violences sexuelles, enfants, morts, sinistrés, malades) ; il vise les puissants,
 les institutions, l'absurde. Si le dossier compte des morts, des blessés, des enfants victimes ou des violences sexuelles : AUCUN
@@ -605,10 +635,10 @@ pas que c'est vrai, je dis que la question se pose »), jamais comme un fait ét
    une contradiction) ; jamais une formule plaquée, jamais un slogan de plateau télé ; JAMAIS les victimes, JAMAIS une personne non
    condamnée présentée comme coupable ; dossier avec victimes : la colère vise le système, jamais une personne ;
 6) UNE question ouverte qui pique, qui découle du récit.
-N'ÉCRIS PAS « Le NON du jour » dans ce dossier (il est réservé à la fin du live).
+N'ÉCRIS PAS « ${ED.signature} » dans ce dossier (il est réservé à la fin du live).
 Le dossier est lu au milieu du live : pas de « Bienvenue », pas de salut, pas de « dans les commentaires ».
-HORS DU CONTEXTE : jamais « nous », « notre », « nos » ; dis « vous », « je ». Ne parle de la France ou des Français QUE si le sujet
-les concerne directement (jamais de rapprochement forcé).
+${ED.contexte || `HORS DU CONTEXTE : jamais « nous », « notre », « nos » ; dis « vous », « je ». Ne parle de la France ou des Français QUE si le sujet
+les concerne directement (jamais de rapprochement forcé).`}
 JAMAIS « likez », « partagez », « abonnez-vous », ni « écrivez X si… / tapez X si… ».
 EXACTITUDE (protection juridique) : n'utilise QUE les faits des sources ci-dessous ; aucun chiffre, nom, date, citation ou détail
 inventé, aucune « révélation » que les sources ne contiennent pas. Ton analyse est permise, mais présentée comme ton avis (« je pense »,
@@ -652,7 +682,7 @@ ${g.texte}`, { maxTokens: 3500, depart, temperature: 0.45 });
   if (ampute(v) && reste() > 10 * 60e3) {
     log(`    dossier amputé par le contrôle (${v.faits} fait(s) prouvé(s), ${v.retirees} phrase(s) refusée(s)) : réécriture`);
     try {
-      const j2 = await ia("Tu écris pour un live YouTube d'actualité choc (chaîne « Le Journal du NON »). Réponds en JSON valide.",
+      const j2 = await ia(`Tu écris pour un live YouTube d'actualité choc (chaîne « ${ED.chaine} »). Réponds en JSON valide.`,
         `Réécris ce dossier. Le contrôle des faits a REFUSÉ les phrases ci-dessous : elles affirmaient des choses que les sources ne
 prouvent pas, ou renvoyaient à une information absente. Cette fois, CHAQUE phrase factuelle doit reprendre une information écrite
 noir sur blanc dans les sources (mêmes lieux, mêmes chiffres, mêmes qualifications) ; tes avis sont permis mais présentés comme tels
@@ -662,7 +692,7 @@ SOURCE UNIQUE (${listeNoms(seule)}) : chaque fait est attribué à cette source,
 Mêmes règles qu'avant : jamais « nous / notre / nos », jamais « likez / partagez / abonnez-vous », pas de « Bienvenue »,
 ${victimes ? "AUCUN humour (dossier avec victimes), " : "humour noir jamais aux dépens des victimes, "}un RÉCIT : accroche, contexte (ce qui s'est passé avant),
 déroulement chronologique, puis ton analyse indignée qui découle des faits (jamais contre une victime ni contre une personne non
-condamnée, jamais « Le NON du jour »), puis une question ouverte au public à la fin.
+condamnée, jamais « ${ED.signature} »${GOLFE ? ", jamais contre un dirigeant ou un gouvernement du Golfe" : ""}), puis une question ouverte au public à la fin.
 Environ ${Math.max(220, Math.min(450, 60 + 35 * Math.max(4, v.faits + 3)))} mots.
 Réponds : {"texte": "…"}
 
@@ -734,7 +764,7 @@ ${texte}`, { maxTokens: 400, depart: depart + 1, temperature: 0.1, tours: 1 });
   }
   for (const f of retenus.filter((r) => r.obligatoire && !cite(texte, r))) {
     try {
-      const j = await ia("Tu écris pour un live YouTube d'actualité (« Le Journal du NON »), ton indigné et direct. Réponds en JSON valide.",
+      const j = await ia(`Tu écris pour un live YouTube d'actualité (« ${ED.chaine} »), ton indigné et direct. Réponds en JSON valide.`,
         `Écris 1 à 2 phrases (35 mots max) qui rappellent ce précédent et posent le parallèle avec le dossier, sous forme de question
 ou de rappel (« Souvenez-vous… »), sans aucun fait nouveau sur le dossier, jamais « nous ».
 PRÉCÉDENT : ${f.fait}
@@ -744,7 +774,7 @@ Réponds : {"phrases": "…"}`, { maxTokens: 300, depart, temperature: 0.4, tour
       const st = ajout && cite(ajout, f) ? await verifierPhrases(phrases(ajout), g.texte, depart + 1, victimes) : null;
       const ok = st ? st.sorties.filter(Boolean).join(" ") : "";
       if (ok && cite(ok, f) && !NOUS.test(ok)) {
-        const ps = phrases(texte), k = ps.findIndex((p) => /^le non du jour/i.test(p));
+        const ps = phrases(texte), k = ps.findIndex((p) => SIGN.test(p));
         ps.splice(k >= 0 ? k : Math.max(0, ps.length - 1), 0, ok);
         texte = ps.join(" "); log(`    précédent obligatoire ajouté : ${f.nom}`);
       }
@@ -766,7 +796,10 @@ async function relire(dossiers, { doublons = true } = {}) {
       `Relis ce script de live. Signale UNIQUEMENT les phrases à corriger :
 - incohérente, mal construite, ou contenant un mot qui n'existe pas en français ;
 - humour ou image aux dépens d'une victime (violences sexuelles, enfants, morts, sinistrés), image sexuelle ou gore ;
-- insinuation qu'une personne, la police ou une institution serait l'auteur d'un acte alors que les sources ne le disent pas
+${GOLFE ? `- toute critique, ironie, moquerie ou insinuation visant un dirigeant d'un pays du Golfe, une famille régnante, un gouvernement
+  ou une institution du Golfe, l'islam ou un symbole religieux : "remplacement" = la même information dite de façon factuelle et
+  respectueuse, ou "" ;
+` : ""}- insinuation qu'une personne, la police ou une institution serait l'auteur d'un acte alors que les sources ne le disent pas
   (ex. « la violence vient de l'intérieur du dispositif de sécurité » quand l'auteur du tir n'est pas identifié), ou « coupables »
   pour des personnes non condamnées : "remplacement" = la même question posée sans rien affirmer (« qui a tiré ? l'enquête le dira-t-elle ? »), ou "" ;
 - reproche à une institution, à la police ou à la justice NON étayé par un fait du dossier, ou contredit par lui (ex. « inertie » alors que des suspects sont interpellés) : "remplacement" = la même charge reformulée sur le fait établi, ou "" ;
@@ -811,19 +844,20 @@ async function habiller(dossiers) {
   const ordre = tri.length > 2 ? [tri[1], ...tri.slice(2).reverse(), tri[0]] : tri.reverse();
   let hab = { ouverture: "", transitions: [], cloture: "" };
   try {
-    hab = await ia("Tu écris pour un live YouTube d'actualité choc (« Le Journal du NON »). Réponds en JSON valide.",
+    hab = await ia(`Tu écris pour un live YouTube d'actualité choc (« ${ED.chaine} »). Réponds en JSON valide.`,
       `Voici les dossiers du live, dans l'ordre. Écris :
 TON : du feu, comme la chaîne — « voilà ce qu'on vous raconte partout, ici on pose les questions que personne ne pose » ; jamais tiède.
 - "ouverture" (90 à 150 mots) : hook ultra-choc construit sur le dossier 1, teaser de la bombe finale (dernier dossier) sans la dévoiler,
-  puis la phrase d'accueil exacte « Bienvenue dans le Journal du NON, et la réponse est Non. », puis une question ouverte au public ;
+  puis la phrase d'accueil exacte « ${ED.accueil} », puis une question ouverte au public ;
 - "transitions" : pour chaque dossier à partir du 2e, UNE phrase (10 à 25 mots) qui fait le lien avec le précédent et accroche ;
-- "cloture" (130 à 200 mots) : la bombe est passée ; synthèse percutante du fil rouge de la soirée ; puis « LE NON DU JOUR », le
+- "cloture" (130 à 200 mots) : la bombe est passée ; synthèse percutante du fil rouge de la soirée ; puis « ${ED.signature.toUpperCase()} », le
   moment fort de la chaîne, UN SEUL pour tout le live : choisis le fait le plus révoltant de la soirée, RAPPELLE-le en une phrase
   (le dossier d'où il vient), explique en deux phrases pourquoi il est inacceptable, puis la phrase qui commence EXACTEMENT par
-  « Le NON du jour : NON à » — une charge qui découle de ce qui précède, jamais un slogan de plateau télé, jamais contre une victime
+  « ${GOLFE ? "La position du jour :" : "Le NON du jour : NON à"} » — une charge qui découle de ce qui précède, jamais un slogan de plateau télé, jamais contre une victime
   ni contre une personne non condamnée ; enfin une question ouverte au public et le rendez-vous au prochain live SANS date.
 Règles : jamais « nous / notre / nos », jamais « likez / partagez / abonnez-vous », jamais « écrivez X si… », jamais « dans les
-commentaires ». Ne parle de la France que si un dossier la concerne. Rien d'inventé.
+commentaires ». Ne parle de ${ED.France} que si un dossier le concerne. Rien d'inventé.${GOLFE ? `
+${ED.contexte}` : ""}
 Réponds : {"ouverture": "…", "transitions": ["…", …], "cloture": "…"}
 
 Les accroches et transitions ne s'appuient QUE sur les faits ci-dessous (déjà vérifiés) ; aucune exagération (« votre argent est en
@@ -836,7 +870,7 @@ ${ordre.map((d, i) => `${i + 1}. [${d.categorie}] ${d.titre} — ${phrases(d.tex
   const parts = [propre(hab.ouverture, true), ...ordre.map((_, i) => (i ? propre((hab.transitions || [])[i - 1]) : [])), propre(hab.cloture)];
   // L'HABILLAGE AUSSI EST VÉRIFIÉ : une accroche ou une transition qui affirme un fait (« votre argent est en danger », « l'OTAN
   // forcée à répondre ») doit être prouvée par les dossiers déjà vérifiés ; sinon elle est retirée. La phrase d'accueil est gardée.
-  const ACCUEIL = /^Bienvenue dans le Journal du NON/i;
+  const ACCUEIL = new RegExp(`^${ED.accueil.split(/[,.]/)[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i");
   const aVerif = [];
   parts.forEach((ps, k) => ps.forEach((p, m) => { if (!ACCUEIL.test(p)) aVerif.push([k, m, p]); }));
   const base = ordre.map((d, i) => `### ${i + 1}. ${d.titre}\n${d.faits.join(". ")}\n${d.texte}`).join("\n\n");
@@ -846,7 +880,7 @@ ${ordre.map((d, i) => `${i + 1}. [${d.categorie}] ${d.titre} — ${phrases(d.tex
   if (st?.retirees) log(`  habillage : ${st.retirees} phrase(s) d'accroche ou de transition retirée(s) (fait non prouvé)`);
   const recoller = (ps) => ps.filter(Boolean).join(" ").trim();
   let ouverture = recoller(parts[0]);
-  if (!ACCUEIL.test(ouverture) && !/Bienvenue dans le Journal du NON/i.test(ouverture)) ouverture = `${ouverture} Bienvenue dans le Journal du NON, et la réponse est Non.`.trim();
+  if (!ACCUEIL.test(ouverture) && !ouverture.includes(ED.accueil.split(/[,.]/)[0])) ouverture = `${ouverture} ${ED.accueil}`.trim();
   return {
     ordre,
     // ouverture amputée par la vérification : reconstruite sur les titres vérifiés (le 1er dossier, puis l'annonce de la fin)
@@ -865,7 +899,7 @@ async function youtube(ordre) {
   const ref = ordre.map((d) => `${d.titre} ${d.texte || ""}`).join(" ");
   let j = {};
   try {
-    j = await ia("Tu es responsable YouTube d'une chaîne d'actualité française indépendante (« Le Journal du NON »). Réponds en JSON valide.",
+    j = await ia(`Tu es responsable YouTube d'une chaîne d'actualité ${GOLFE ? "du Golfe" : "française"} indépendante (« ${ED.chaine} »). Réponds en JSON valide.`,
       `Voici les dossiers du live de ce soir (dans l'ordre ; le DERNIER est la surprise de fin, ne le dévoile pas dans le titre).
 Écris :
 - "titres" : 3 titres YouTube COURTS (35 à 60 caractères), PROVOCANTS, dans le ton de la chaîne (indignation, question qui dérange,
@@ -883,8 +917,9 @@ ${liste.map((x, i) => `${i + 1}. ${x}`).join("\n")}`, { maxTokens: 2000, tempera
   const titres = (j.titres || []).map((x) => LATIN(String(x)).trim()).filter((x) => x.length >= 20 && x.length <= 80 && ok(x));
   const secours = `${liste[0]} : ${liste.length} dossiers décryptés`.slice(0, 90);
   const tags = [...new Set([...(j.tags || []).map((x) => LATIN(String(x)).replace(/[#,]/g, "").trim()).filter((x) => x && x.length <= 40),
-    "actualité", "actu France", "décryptage", "analyse indépendante", "Le Journal du NON"])].slice(0, 40);
-  const hashtags = ["#Actualité", "#France", "#Décryptage", "#LeJournalDuNON"];
+    ...(GOLFE ? ["Golfe", "Arabie saoudite", "Émirats", "Qatar", "Koweït", "Oman", "Bahreïn", "analyse géopolitique", "Gulf Think-Tank"]
+      : ["actualité", "actu France", "décryptage", "analyse indépendante", "Le Journal du NON"])])].slice(0, 40);
+  const hashtags = GOLFE ? ["#الخليج", "#السعودية", "#الإمارات", "#قطر", "#تحليل", "#GulfThinkTank"] : ["#Actualité", "#France", "#Décryptage", "#LeJournalDuNON"];
   const acc = ok(j.accroche) ? LATIN(j.accroche) : `${liste.length} dossiers. Des faits sourcés, des avis assumés : à vous de juger.`;
   const q = ok(j.question) && /\?\s*$/.test(j.question) ? LATIN(j.question) : "Et vous, quel dossier de cette semaine vous a le plus marqué ?";
   const desc = [acc, "", "Au programme :", ...liste.slice(0, -1).map((x) => `▶ ${x}`), "… et un dernier dossier, gardé pour la fin.", "",
@@ -893,6 +928,54 @@ ${liste.map((x, i) => `${i + 1}. ${x}`).join("\n")}`, { maxTokens: 2000, tempera
   return [`TITRE (choisis-en un) :`, ...(titres.length ? titres : [secours]).map((x) => `- ${x}`), "", "DESCRIPTION :", desc, "",
     "TAGS (à coller dans le champ Tags de YouTube Studio) :", tags.join(", "), ""].join("\n");
 }
+
+// ---------------------------------------------------------------- 6) ÉDITION GOLFE : traduction en ARABE STANDARD (fusha)
+// Le script est écrit et vérifié en français (garde-fous juridiques rodés), puis traduit. Contrôles : chaque nombre du français se
+// retrouve dans l'arabe (chiffres occidentaux), aucun reste en lettres latines (sauf sigles et « Gulf Think-Tank »). Un texte qui
+// échoue est retraduit seul, plus strictement ; s'il échoue encore, il est gardé et signalé dans le journal.
+const ARABE_SYS = `Tu es le traducteur et rédacteur en chef arabe de la chaîne « Gulf Think-Tank » (public des pays du Golfe). Tu traduis
+en ARABE STANDARD MODERNE (فصحى) de grande chaîne d'information, phrases courtes, rythme oral, ton percutant ; tu gardes l'ironie mordante
+et l'humour noir là où ils sont, et EXACTEMENT les faits, noms, dates et attributions (« selon… », conditionnel = صيغة الاحتمال/« بحسب »).
+Les noms propres sont écrits en arabe (translittération usuelle). Tous les nombres en CHIFFRES OCCIDENTAUX (0-9). Aucun mot en lettres
+latines, sauf « Gulf Think-Tank » et les sigles (OTAN → الناتو de préférence). « La position du jour » se traduit « موقف اليوم ». Réponds en JSON valide.`;
+const nombresDe = (t) => chiffres(t).filter((n) => n.length >= 2);
+const versOccidental = (t) => String(t).replace(/[٠-٩]/g, (c) => "٠١٢٣٤٥٦٧٨٩".indexOf(c)).replace(/[۰-۹]/g, (c) => "۰۱۲۳۴۵۶۷۸۹".indexOf(c));
+const LATIN_RESTE = (t) => (String(t).replace(/Gulf Think-Tank|#\S+/g, "").match(/\b[A-Za-zÀ-ÿ]{3,}\b/g) || []).filter((w) => w !== w.toUpperCase());
+function arabeOk(fr, ar) {
+  if (!ar || !/[\u0600-\u06FF]/.test(ar)) return false;
+  const nAr = new Set(chiffres(versOccidental(ar)));
+  return nombresDe(fr).every((n) => nAr.has(n) || /^(19|20)\d\d$/.test(n) && nAr.has(n)) && LATIN_RESTE(ar).length <= 1;
+}
+async function traduireAr(textes) {
+  const out = new Array(textes.length).fill("");
+  const lots = [];
+  let cur = [], taille = 0;
+  textes.forEach((t, i) => { const n = String(t || "").length; if (cur.length && (taille + n > 6000 || cur.length >= 8)) { lots.push(cur); cur = []; taille = 0; } cur.push(i); taille += n; });
+  if (cur.length) lots.push(cur);
+  for (const lot of lots) {
+    const vides = lot.filter((i) => !String(textes[i] || "").trim());
+    const a = lot.filter((i) => !vides.includes(i));
+    if (!a.length) continue;
+    try {
+      const j = await ia(ARABE_SYS, `Traduis chaque texte. Réponds : {"ar": ["…", …]} (même nombre, même ordre).\n\n${a.map((i, k) => `[${k + 1}] ${textes[i]}`).join("\n\n")}`,
+        { maxTokens: 8000, temperature: 0.3, depart: 0 });
+      (j.ar || []).forEach((x, k) => { if (a[k] !== undefined) out[a[k]] = String(x || "").trim(); });
+    } catch (e) { log(`  traduction arabe : lot impossible (${String(e.message).slice(0, 80)}) → texte par texte`); }
+  }
+  for (let i = 0; i < textes.length; i++) {
+    if (!String(textes[i] || "").trim() || arabeOk(textes[i], out[i])) continue;
+    try {
+      const j = await ia(ARABE_SYS, `Traduis ce texte. ATTENTION : chaque nombre doit apparaître en chiffres occidentaux (${nombresDe(textes[i]).join(", ") || "aucun"}) et aucun mot latin ne doit rester.
+Réponds : {"ar": "…"}\n\n${textes[i]}`, { maxTokens: 6000, temperature: 0.2, depart: 1 });
+      const ar = String(j.ar || "").trim();
+      if (arabeOk(textes[i], ar) || !out[i]) out[i] = ar || out[i];
+    } catch {}
+    if (!arabeOk(textes[i], out[i])) log(`  ⚠ traduction arabe à relire (texte ${i + 1} : nombres ou mots latins) : « ${String(textes[i]).slice(0, 60)}… »`);
+  }
+  return out.map((x, i) => x || String(textes[i] || ""));
+}
+const CAT_AR = { CATASTROPHE: "كارثة", ACCIDENT: "حادث", SCANDALE: "فضيحة", CORRUPTION: "فساد", POLITIQUE: "سياسة", "GÉOPOLITIQUE": "جيوسياسة",
+  GUERRE: "حرب", "RÉVÉLATION": "كشف", CYBER: "سيبراني", "FAIT DIVERS": "حوادث", INSOLITE: "غرائب", RUMEUR: "شائعة" };
 
 const mmss = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.round(s % 60)).padStart(2, "0")}`;
 const duree = (t) => (String(t).split(/\s+/).filter(Boolean).length / WPM) * 60;
@@ -939,11 +1022,11 @@ async function main() {
   // une info d'UNE SEULE source n'est pas supprimée si elle est vraiment chaude (choc ≥ 8) : elle passe, annoncée comme telle
   // (« seule X le rapporte »), au conditionnel, avec le tampon « SOURCE UNIQUE · NON CONFIRMÉ » à l'écran
   const chaudeUnique = (g) => g.nb_sources === 1 && Number(g.note?.choc) >= Number(process.env.WARROOM_SEUIL_UNIQUE || 8);
-  const solides = notes.filter((g) => (g.nb_sources >= 2 || g.officiel || g.revendication || chaudeUnique(g)) && !FOURRE_TOUT.test(g.items[0]?.titre || ""));
+  const solides = notes.filter((g) => !(GOLFE && g.note?.tabou_golfe === true) && (g.nb_sources >= 2 || g.officiel || g.revendication || chaudeUnique(g)) && !FOURRE_TOUT.test(g.items[0]?.titre || ""));
   if (solides.some(chaudeUnique)) log(`  ${solides.filter(chaudeUnique).length} info(s) très chaude(s) d'une seule source gardée(s), annoncée(s) comme non confirmée(s)`);
   // AUDIENCE FRANÇAISE : la France d'abord ; l'international seulement s'il mérite vraiment l'attention des Français (≥ 7/10),
   // et jamais plus de 40 % des dossiers
-  const enFrance = (g) => /^france$/i.test(String(g.note.pays || "").trim());
+  const enFrance = (g) => ED.paysPublic.test(String(g.note.pays || "").trim());      // « chez le public » (France ou Golfe)
   const interet = (g) => (enFrance(g) ? 10 : Number(g.note.interet_fr) || 0);
   const score = (g) => Number(g.note.choc) + 0.6 * interet(g) + (g.officiel ? 0.5 : 0) + Math.min(1.5, g.nb_sources * 0.25);
   const candidats = solides.filter((g) => g.note.actuel !== false && Number(g.note.choc) >= Number(process.env.WARROOM_SEUIL || 6) && interet(g) >= 7)
@@ -993,27 +1076,42 @@ async function main() {
   await relire(pseudo.filter((x) => x.texte), { doublons: false });
   hab.ouverture = pseudo[0].texte; hab.transitions = pseudo.slice(1, -1).map((x) => x.texte); hab.cloture = pseudo[pseudo.length - 1].texte;
   // un seul « Le NON du jour » (le premier) : un second est retiré avec la phrase qui le porte
-  { let vu = false; hab.cloture = phrases(hab.cloture || "").filter((p) => { if (!/^le non du jour/i.test(p)) return true; if (vu) return false; vu = true; return true; }).join(" "); }
+  { let vu = false; hab.cloture = phrases(hab.cloture || "").filter((p) => { if (!SIGN.test(p)) return true; if (vu) return false; vu = true; return true; }).join(" "); }
   // la relecture peut avoir vidé ou raccourci l'ouverture / la clôture : jamais de partie vide au prompteur
-  if (!/Bienvenue dans le Journal du NON/i.test(hab.ouverture)) hab.ouverture = `${hab.ouverture} Bienvenue dans le Journal du NON, et la réponse est Non.`.trim();
+  if (!hab.ouverture.includes(ED.accueil.split(/[,.]/)[0])) hab.ouverture = `${hab.ouverture} ${ED.accueil}`.trim();
   if (hab.ouverture.split(/\s+/).length < 40) hab.ouverture = `Au programme ce soir : ${hab.ordre.slice(0, 4).map((d) => d.titre.replace(/[.…]+$/, "")).join(" ; ")}. Et un dernier dossier, gardé pour la fin. ${hab.ouverture}`.replace(/\s{2,}/g, " ").trim();
   if (String(hab.cloture || "").split(/\s+/).filter(Boolean).length < 12) hab.cloture = `${hab.cloture || ""} Voilà pour ce tour de la War Room. Les faits sont sourcés, les avis sont assumés : à vous de juger. Et vous, quel dossier de ce soir vous a le plus révolté ? À très vite pour le prochain live.`.replace(/\s{2,}/g, " ").trim();
+  if (GOLFE) {
+    log("Traduction en arabe standard (fusha)…");
+    const T = [hab.ouverture, hab.cloture, ...hab.transitions, ...hab.ordre.flatMap((d) => [d.texte, d.titre, d.lieu || "", d.chiffre?.libelle || "", ...(d.faits || [])])];
+    const A = await traduireAr(T);
+    let k = 0;
+    hab.ouverture = A[k++]; hab.cloture = A[k++]; hab.transitions = hab.transitions.map(() => A[k++]);
+    for (const d of hab.ordre) {
+      d.texte_fr = d.texte; d.texte = A[k++]; d.titre_fr = d.titre; d.titre = A[k++]; d.lieu = A[k++] || d.lieu;
+      const lib = A[k++]; if (d.chiffre) d.chiffre = { ...d.chiffre, libelle: lib || d.chiffre.libelle };
+      d.faits = (d.faits || []).map(() => A[k++]);
+      d.categorie_ar = CAT_AR[d.categorie] || d.categorie;
+    }
+  }
   const { ordre, ouverture, transitions, cloture } = hab;
   // minutage (débit de lecture) + prompteur avec repères
   let t = 0;
-  const P = [`WAR ROOM — ${new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}`, "", "▶ OUVERTURE", "", ouverture, ""];
+  const P = [`WAR ROOM${GOLFE ? " GOLFE" : ""} — ${new Date().toLocaleDateString(GOLFE ? "ar" : "fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}`, "", "▶ OUVERTURE", "", ouverture, ""];
   const segs = [{ type: "ouverture", t0: 0, t1: (t += duree(ouverture)) }];
   ordre.forEach((d, i) => {
     const tx = [transitions[i], d.texte].filter(Boolean).join(" ");
     const t0 = t; t += duree(tx);
     segs.push({ type: "dossier", n: i + 1, t0, t1: t, ...d, texte: undefined, _src: undefined, _victimes: undefined, _seule: undefined, aVerifier: undefined });
-    P.push(`▶ DOSSIER ${i + 1}/${ordre.length} · ${d.categorie} · ${mmss(t0)}`, `« ${d.titre} »`, "", tx, "");
+    P.push(`▶ DOSSIER ${i + 1}/${ordre.length} · ${GOLFE ? d.categorie_ar : d.categorie} · ${mmss(t0)}`, GOLFE ? `« ${d.titre} »` : `« ${d.titre} »`, "", tx, "");
   });
   segs.push({ type: "cloture", t0: t, t1: (t += duree(cloture)) });
   P.push(`▶ CLÔTURE · ${mmss(segs[segs.length - 1].t0)}`, "", cloture, "");
-  const spec = { version: 1, date: new Date().toISOString(), wpm: WPM, duree: t, segments: segs, ticker: ordre.map((d) => d.titre) };
+  const spec = { version: 1, lang: GOLFE ? "ar" : "fr", edition: GOLFE ? "golfe" : "france", date: new Date().toISOString(), wpm: WPM, duree: t, segments: segs, ticker: ordre.map((d) => d.titre) };
   writeFileSync(`${OUT}/prompteur.txt`, P.join("\n"));
-  writeFileSync(`${OUT}/youtube.txt`, await youtube(ordre));
+  { let yt = await youtube(GOLFE ? ordre.map((d) => ({ ...d, titre: d.titre_fr || d.titre, texte: d.texte_fr || d.texte })) : ordre);
+    if (GOLFE) yt = (await traduireAr([yt]))[0];
+    writeFileSync(`${OUT}/youtube.txt`, yt); }
   writeFileSync(`${OUT}/warroom.json`, JSON.stringify(spec, null, 1));
   writeFileSync(`${OUT}/sources.md`, ["# Sources — War Room du jour", "", ...ordre.flatMap((d, i) => [`## ${i + 1}. ${d.titre}`, ...d.sources.map((s) => `- ${s.nom}${s.url ? ` — ${s.url}` : ""}`), ""])].join("\n"));
   log(`\nWar Room prête : ${ordre.length} dossiers, ≈ ${Math.round(t / 60)} min de lecture (${WPM} mots/min). Sources : ${JSON.stringify(etat)}`);

@@ -85,7 +85,7 @@ jobs:
           repris=""
           if [ "$CHOIX" != "nouveau" ]; then
             # dernier War Room « normal » publié il y a moins de 18 h, avec son plan d'écrans (warroom.json)
-            T=$(gh api "repos/$REPO/releases?per_page=50" -q '[.[]|select((.tag_name|startswith("out-warroom-")) and (.tag_name|test("visible|essai")|not) and ((now - (.created_at|fromdateiso8601)) < 64800) and ([.assets[].name]|index("warroom.json")))]|sort_by(.created_at)|last|.tag_name // ""')
+            T=$(gh api "repos/$REPO/releases?per_page=50" -q '[.[]|select((.tag_name|startswith("out-warroom-")) and (.tag_name|test("visible|essai|golfe")|not) and ((now - (.created_at|fromdateiso8601)) < 64800) and ([.assets[].name]|index("warroom.json")))]|sort_by(.created_at)|last|.tag_name // ""')
             if [ -n "$T" ]; then
               for f in prompteur.txt sources.md warroom.json youtube.txt; do
                 id=$(gh api "repos/$REPO/releases/tags/$T" -q ".assets[]|select(.name==\"$f\")|.id" || true)

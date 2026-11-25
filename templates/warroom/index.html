@@ -12,6 +12,10 @@
 @font-face{font-family:"IT";font-weight:700;src:url(../explainer/fonts/inter-tight-latin-700-normal.woff2),url(../explainer/fonts/inter-tight-latin-ext-700-normal.woff2)}
 @font-face{font-family:"JB";font-weight:700;src:url(../explainer/fonts/jetbrains-mono-latin-700-normal.woff2),url(../explainer/fonts/jetbrains-mono-latin-ext-700-normal.woff2)}
 @font-face{font-family:"JB";font-weight:500;src:url(../explainer/fonts/jetbrains-mono-latin-500-normal.woff2),url(../explainer/fonts/jetbrains-mono-latin-ext-500-normal.woff2)}
+@font-face{font-family:"CA";font-weight:900;src:url(../explainer/fonts/cairo-arabic-900-normal.woff2),url(../explainer/fonts/cairo-latin-900-normal.woff2)}
+@font-face{font-family:"CA";font-weight:800;src:url(../explainer/fonts/cairo-arabic-800-normal.woff2),url(../explainer/fonts/cairo-latin-900-normal.woff2)}
+@font-face{font-family:"CA";font-weight:700;src:url(../explainer/fonts/cairo-arabic-700-normal.woff2),url(../explainer/fonts/cairo-latin-700-normal.woff2)}
+@font-face{font-family:"CA";font-weight:500;src:url(../explainer/fonts/cairo-arabic-600-normal.woff2),url(../explainer/fonts/cairo-latin-700-normal.woff2)}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:1080px;height:1920px;overflow:hidden;background:#04070c}
 #root{position:absolute;inset:0;overflow:hidden;background:#04070c;color:#e6f6ff;--cat:#3fe0d0;--teal:#3fe0d0;--red:#ff3045}
@@ -86,6 +90,17 @@ html.vis,html.vis body,.vis #root{background:transparent!important}
 .vis #titre,.vis .fait,.vis #big,.vis #num,.vis #lieu,.vis #chiffre,.vis #src,.vis #top{text-shadow:0 2px 4px #000,0 0 14px rgba(0,0,0,.9)}
 .vis #src{color:#cfe6ea}
 .vis .box h4{font-size:18px;letter-spacing:2px}
+/* ÉDITION ARABE (Gulf Think-Tank) : police arabe, lecture de droite à gauche, jamais d'espacement entre lettres (casse la liaison) */
+html.ar *{font-family:"CA",sans-serif!important;letter-spacing:0!important}
+html.ar #bas,html.ar #big,html.ar #src,html.ar .fait,html.ar #cd{direction:rtl;text-align:right}
+html.ar .fait{padding:10px 22px 10px 16px;border-left:none;border-right:6px solid var(--cat)}
+html.ar #titre{line-height:1.25}
+html.ar #top .live{margin-left:0;margin-right:auto;text-align:left}
+html.ar #top .live span{right:auto;left:0}
+html.ar #tick .run{direction:rtl;text-align:right;line-height:56px}
+html.ar #big .t{font-size:92px;line-height:1.2}
+html.ar #stamp{transform:rotate(1.5deg);align-self:flex-end}
+html.ar #chiffre{flex-direction:row-reverse;justify-content:flex-end}
 </style>
 </head>
 <body>
@@ -112,40 +127,55 @@ const $=(id)=>document.getElementById(id),esc=(s)=>String(s??"").replace(/[&<>"]
 const TAU=Math.PI*2;let P=20,run=null,step=90;const MENACE=["GUERRE","GÉOPOLITIQUE","CYBER"];
 function hash(s){let h=7;for(const c of String(s))h=(h*31+c.charCodeAt(0))>>>0;return h}
 /* spec = { w, h, fps, duration: P, seg: {type, n, total, categorie, titre, faits, chiffre, gravite, lieu, sources, revendication, rumeur}, ticker, logo } */
+const TXT={fr:{wr:"ANALYSE INDÉPENDANTE",live:["SOURCES CITÉES","INFOS PUBLIQUES","À VOUS DE JUGER"],cam:"CAM 01 · ANALYSTE",menace:"NIVEAU DE MENACE",loc:"LOCALISATION",
+  dossier:"DOSSIER",dossiers:"DOSSIERS",decr:"DÉCRYPTAGE",fin:"FIN",monde:"MONDE",rev:"REVENDICATION NON CONFIRMÉE",rum:"CE QUI CIRCULE · VÉRIFIÉ",uni1:"SOURCE UNIQUE · NON CONFIRMÉ",
+  uni2:"PEU DE SOURCES · NON CONFIRMÉ",src:"SOURCES : ",k:{ouverture:"TRANSMISSION ÉTABLIE",attente:"TRANSMISSION IMMINENTE",pause:"TRANSMISSION EN PAUSE",cloture:"FIN DE TRANSMISSION"},
+  prog:"AU PROGRAMME",bye:"À TRÈS VITE",chaine:"LE JOURNAL DU NON",suivre:"À SUIVRE",menu:"AU MENU",pause:"PAUSE",reprise:"Le décryptage reprend dans un instant",
+  retour:"RETOUR DANS",debut:"LE LIVE COMMENCE DANS",courte:"COURTE PAUSE",faits:"DOSSIERS · FAITS SOURCÉS"},
+ ar:{wr:"تحليل مستقل",live:["مصادر موثّقة","معلومات علنية","والحكم لكم"],cam:"كاميرا 01 · المحلل",menace:"مستوى التهديد",loc:"الموقع",
+  dossier:"الملف",dossiers:"ملفات",decr:"تحليل",fin:"النهاية",monde:"العالم",rev:"ادعاء غير مؤكد",rum:"ما يتداول · تم التحقق",uni1:"مصدر وحيد · غير مؤكد",
+  uni2:"مصادر قليلة · غير مؤكد",src:"المصادر: ",k:{ouverture:"بدء البث",attente:"البث بعد قليل",pause:"البث متوقف مؤقتاً",cloture:"نهاية البث"},
+  prog:"في هذه الحلقة",bye:"إلى اللقاء",chaine:"GULF THINK-TANK",suivre:"التالي",menu:"على القائمة",pause:"استراحة",reprise:"نعود بعد قليل",
+  retour:"نعود خلال",debut:"البث يبدأ خلال",courte:"استراحة قصيرة",faits:"ملفات · حقائق موثّقة"}};
+let L=TXT.fr;
 window.init=async function(spec){
+  L=TXT[spec.lang]||TXT.fr;document.documentElement.classList.toggle("ar",spec.lang==="ar");document.documentElement.dir=spec.lang==="ar"?"rtl":"ltr";
+  document.querySelector("#top .wr").textContent=L.wr;document.querySelectorAll("#top .live span").forEach((e,k)=>e.textContent=L.live[k]);
+  document.querySelector("#cam .lbl").innerHTML=`<b>●</b> ${L.cam}`;document.querySelector("#menace h4").textContent=L.menace;
+  document.querySelectorAll(".box h4")[1].textContent=L.loc;
   P=spec.duration||20;const s=spec.seg||{type:"ouverture"},dos=s.type==="dossier",r=$("root");
   document.documentElement.classList.toggle("vis",!!spec.visible);
   r.style.setProperty("--cat",dos?(CAT[s.categorie]||"#3fe0d0"):"#3fe0d0");
   if(spec.logo){$("logo").src=spec.logo;$("logo").style.display="block"}
-  $("num").innerHTML=dos?`DOSSIER<b>${String(s.n).padStart(2,"0")} / ${String(s.total).padStart(2,"0")}</b>`:`<b>${String(s.total||0).padStart(2,"0")}</b>DOSSIERS`;
+  $("num").innerHTML=dos?`${L.dossier}<b>${String(s.n).padStart(2,"0")} / ${String(s.total).padStart(2,"0")}</b>`:`<b>${String(s.total||0).padStart(2,"0")}</b>${L.dossiers}`;
   const att=s.type==="attente"||s.type==="pause";
-  $("cat").textContent=dos?s.categorie:(s.type==="cloture"?"FIN":"DÉCRYPTAGE");
+  $("cat").textContent=dos?(spec.lang==="ar"?(s.categorie_ar||s.categorie):s.categorie):(s.type==="cloture"?L.fin:L.decr);
   /* « niveau de menace » : seulement pour la guerre, la géopolitique et les cyberattaques */
   $("menace").style.display=dos&&MENACE.includes(s.categorie)?"":"none";
   document.querySelectorAll("#menace .bars i").forEach((b,k)=>b.className=k<(dos?s.gravite:5)?"on":"");
-  $("lieu").textContent=dos?(s.lieu||"MONDE"):"MONDE";
+  $("lieu").textContent=dos?(s.lieu||L.monde):L.monde;
   const h=hash(s.titre||s.type),a=(h%360)*Math.PI/180,d=.25+((h>>9)%60)/100*.4,bl=document.querySelector("#radar .blip");bl.style.left=(50+Math.cos(a)*d*50)+"%";bl.style.top=(50+Math.sin(a)*d*50)+"%";
   $("bas").style.display=dos?"flex":"none";$("big").style.display=dos?"none":"block";
   $("cd").style.display=att?"flex":"none";
-  if(att){$("cd").querySelector(".a").textContent=s.type==="pause"?"RETOUR DANS":"LE LIVE COMMENCE DANS";
-    $("cd").querySelector(".b").textContent=s.type==="pause"?"COURTE PAUSE":`${s.total} DOSSIERS · FAITS SOURCÉS`;
+  if(att){$("cd").querySelector(".a").textContent=s.type==="pause"?L.retour:L.debut;
+    $("cd").querySelector(".b").textContent=s.type==="pause"?L.courte:`${s.total} ${L.faits}`;
     document.querySelector("#cam .lbl").style.display="none"}
   const nb=(x)=>String(x||"").replace(/\s+([:;!?»])/g,"\u00a0$1").replace(/«\s+/g,"«\u00a0");   /* jamais « : » seul en début de ligne */
   if(dos){const T=$("titre");T.textContent=nb(s.titre);T.className=s.titre.length>60?"xl":s.titre.length>38?"l":"";
     $("chiffre").style.display=s.chiffre?"flex":"none";if(s.chiffre){$("chiffre").querySelector(".v").textContent=s.chiffre.valeur;$("chiffre").querySelector(".l").textContent=s.chiffre.libelle}
     $("faits").innerHTML=(s.faits||[]).map(f=>`<div class="fait">${esc(f)}</div>`).join("");$("faits").style.cssText="display:flex;flex-direction:column;gap:12px";
-    const st=s.revendication?"REVENDICATION NON CONFIRMÉE":s.rumeur?"CE QUI CIRCULE · VÉRIFIÉ":s.unique===1?"SOURCE UNIQUE · NON CONFIRMÉ":s.unique?"PEU DE SOURCES · NON CONFIRMÉ":"";$("stamp").style.display=st?"":"none";$("stamp").textContent=st;
-    $("src").textContent=(s.sources||[]).length?"SOURCES : "+s.sources.map(x=>x.nom).slice(0,4).join(" · "):"";
+    const st=s.revendication?L.rev:s.rumeur?L.rum:s.unique===1?L.uni1:s.unique?L.uni2:"";$("stamp").style.display=st?"":"none";$("stamp").textContent=st;
+    $("src").textContent=(s.sources||[]).length?L.src+s.sources.map(x=>x.nom).slice(0,4).join(" · "):"";
     /* trop de texte : on réduit jusqu'à ce que tout tienne (jamais de débordement) */
     await document.fonts.ready;const B=$("bas");let k=1;while(B.scrollHeight>B.clientHeight+1&&k>.6){k-=.04;B.style.zoom=k}
-  }else{const K={ouverture:"TRANSMISSION ÉTABLIE",attente:"TRANSMISSION IMMINENTE",pause:"TRANSMISSION EN PAUSE",cloture:"FIN DE TRANSMISSION"};
-    $("big").querySelector(".k").textContent=K[s.type]||"";
-    $("big").querySelector(".t").innerHTML=s.type==="cloture"?"À TRÈS VITE":"AU PROGRAMME";
-    $("big").querySelector(".s").textContent=s.type==="cloture"?"LE JOURNAL DU NON":(s.resume||"");$("src").textContent=""}
+  }else{
+    $("big").querySelector(".k").textContent=L.k[s.type]||"";
+    $("big").querySelector(".t").innerHTML=s.type==="cloture"?L.bye:L.prog;
+    $("big").querySelector(".s").textContent=s.type==="cloture"?L.chaine:(s.resume||"");$("src").textContent=""}
   /* bandeau du bas FIXE et lisible : le dossier suivant (rien sur l'écran de fin ; texte posé à part pour l'attente) */
   run=null;const R=document.querySelector("#tick .run");
-  $("tick").querySelector(".lab").textContent=s.type==="attente"?"AU MENU":s.type==="pause"?"PAUSE":"À SUIVRE";
-  R.textContent=s.type==="pause"?"Le décryptage reprend dans un instant":nb(s.suivant||"");R.style.left=($("tick").querySelector(".lab").offsetWidth+24)+"px";
+  $("tick").querySelector(".lab").textContent=s.type==="attente"?L.menu:s.type==="pause"?L.pause:L.suivre;
+  R.textContent=s.type==="pause"?L.reprise:nb(s.suivant||"");R.style.left=($("tick").querySelector(".lab").offsetWidth+24)+"px";
   $("tick").style.display=s.type==="cloture"?"none":"";
   await document.fonts.ready;
   await seek(0);return{P,scenes:[]}};
