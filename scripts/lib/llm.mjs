@@ -123,7 +123,7 @@ async function callGemini0(sys, user, ctx = {}) {
             body: JSON.stringify({
               systemInstruction: { parts: [{ text: sys }] },
               contents: [{ role: "user", parts: [...(ctx.audio ? [ctx.audio] : []), ...(Array.isArray(ctx.parts) ? ctx.parts : []), { text: user }] }],
-              generationConfig: { temperature: ctx.temperature ?? 0.7, responseMimeType: ctx.json === false ? "text/plain" : "application/json", maxOutputTokens: ctx.maxTokens || 8192,
+              generationConfig: { temperature: ctx.temperature ?? 0.7, responseMimeType: ctx.json === false ? "text/plain" : "application/json", maxOutputTokens: Math.max(ctx.maxTokens || 8192, Number(process.env.GEMINI_MIN_OUT || 32768)),
                 ...(thinking !== undefined ? { thinkingConfig: { thinkingBudget: thinking } } : {}) },
             }),
             signal: AbortSignal.timeout(tmo),
@@ -182,7 +182,7 @@ async function callGemini0(sys, user, ctx = {}) {
           const txt = (d.candidates?.[0]?.content?.parts || []).filter((x) => !x.thought).map((x) => x.text || "").join("");
           if (fin === "MAX_TOKENS") {
             // les modèles "qui réfléchissent" consomment le budget de sortie : réponse coupée → on redemande avec plus de place
-            if ((ctx.maxTokens || 8192) < 60000) { console.log(`  ${tag} : réponse coupée (MAX_TOKENS) → nouvel essai avec plus de place`); ctx = { ...ctx, maxTokens: 65536 }; ki--; continue; }
+            if (Math.max(ctx.maxTokens || 8192, Number(process.env.GEMINI_MIN_OUT || 32768)) < 60000) { console.log(`  ${tag} : réponse coupée (MAX_TOKENS) → nouvel essai avec plus de place`); ctx = { ...ctx, maxTokens: 65536 }; ki--; continue; }
             console.log(`  ${tag} : réponse coupée même avec 65 536 jetons`);
           }
           if (!txt) { lastErr = new Error(`${tag} : réponse vide (${d.candidates?.[0]?.finishReason || d.promptFeedback?.blockReason || "?"})`); console.log(`  ${lastErr.message}`); continue; }
@@ -217,7 +217,9 @@ async function callGemini0(sys, user, ctx = {}) {
 // et on prend le meilleur modèle de texte selon un ordre de préférence, jamais un nom figé.
 let groqModelCache = null;
 const GROQ_PREF = [/gpt-oss-120b/, /llama-4-maverick/, /kimi-k2/, /llama-3\.3-70b/, /qwen3-32b/, /llama-4-scout/, /gpt-oss-20b/, /deepseek-r1-distill-llama-70b/, /gemma2-9b/, /llama-3\.1-8b/];
-async function groqModels(key) {
+let groqModelsP = null;                       // appels en parallèle : la liste des modèles n'est demandée qu'UNE fois
+const groqModels = (key) => (groqModelsP ||= groqModels0(key));
+async function groqModels0(key) {
   if (process.env.GROQ_MODEL) return [process.env.GROQ_MODEL];
   if (groqModelCache) return groqModelCache;
   let ids = [];
@@ -228,7 +230,8 @@ async function groqModels(key) {
   } catch {}
   const ranked = [];
   for (const re of GROQ_PREF) for (const id of ids) if (re.test(id) && !ranked.includes(id)) ranked.push(id);
-  groqModelCache = (ranked.length ? ranked : ids).slice(0, 6);
+  // préférés d'abord, puis TOUS les autres modèles de texte (chaque modèle a SON quota : plus de modèles = plus de capacité)
+  groqModelCache = [...ranked, ...ids.filter((id) => !ranked.includes(id) && !/embed|moderation|safeguard|tts|whisper/i.test(id))].slice(0, 10);
   // un modèle qui accepte les GROS textes (offre gratuite, jetons/minute élevés) est toujours gardé en réserve
   for (const id of ids) if (/llama-4-scout|llama-3\.3-70b/.test(id) && !groqModelCache.includes(id)) groqModelCache.push(id);
   if (!groqModelCache.length) groqModelCache = ["openai/gpt-oss-120b", "llama-3.3-70b-versatile"];
@@ -244,6 +247,20 @@ const capOf = (m) => groqCap.get(m) || GROQ_CAP0.find(([re]) => re.test(m))[1];
 // estimation des jetons : ~3,5 caractères par jeton en écriture latine, ~2 en arabe
 const jetons = (t) => { const s = String(t || ""), ar = (s.match(/[\u0600-\u06FF]/g) || []).length; return Math.ceil((s.length - ar) / 3.5 + ar / 2); };
 
+// MUTUALISATION des modèles Groq : chaque modèle a ses PROPRES limites (jetons par minute, requêtes et jetons par jour).
+// Le programme tient le compte des jetons envoyés à chaque modèle sur la dernière minute et n'envoie à un modèle que ce
+// qu'il peut accepter ; un modèle qui refuse (429) est mis de côté le temps indiqué (une minute ou la journée) et la
+// requête part AUSSITÔT vers un autre modèle libre. On n'attend que si TOUS les modèles sont occupés.
+const groqCool = new Map(), groqUse = new Map();
+const groqUsed = (m) => { const a = (groqUse.get(m) || []).filter(([t]) => Date.now() - t < 60000); groqUse.set(m, a); return a.reduce((x, [, k]) => x + k, 0); };
+const groqLibre = (m, need) => (groqCool.get(m) || 0) <= Date.now() && groqUsed(m) + need <= capOf(m);
+const groqAttente = (m, need) => {           // ms avant que ce modèle puisse accepter « need » jetons
+  const c = Math.max(0, (groqCool.get(m) || 0) - Date.now());
+  const a = groqUse.get(m) || []; let tot = groqUsed(m), w = 0;
+  for (const [t, k] of a) { if (tot + need <= capOf(m)) break; tot -= k; w = t + 60000 - Date.now(); }
+  return Math.max(c, w);
+};
+
 export async function callGroq(sys, user, ctx = {}) {
   const keys = rotate(groqKeys());
   if (!keys.length) throw new Error("aucune clé Groq");
@@ -255,45 +272,61 @@ export async function callGroq(sys, user, ctx = {}) {
   const tient = (m) => capOf(m) - besoin >= Math.min(veut, 1000);
   const large = (m) => capOf(m) - besoin >= veut;             // assez de place pour une réponse COMPLÈTE
   const ordre = [...new Set([...models.filter(large), ...models.filter(tient), ...models])];
-  let mi = 0, model = ordre[0];
-  const maxTok = () => Math.max(512, Math.min(veut, capOf(model) - besoin));
+  const left = () => (ctx.deadline ? ctx.deadline - Date.now() : Infinity);
+  const exclus = new Set();                                    // modèles refusés pour CETTE requête (404, trop long…)
   let lastErr = new Error("Groq indisponible");
-  for (let round = 0; round < 3; round++) {
-    let wait = 0;
+  for (let tour = 0; tour < 8; tour++) {
+    const possibles = ordre.filter((m) => !exclus.has(m) && tient(m));
+    if (!possibles.length) throw new Error(`Groq : texte trop long pour tous les modèles gratuits (${besoin} jetons) — à découper`);
+    const demande = (m) => besoin + Math.max(512, Math.min(veut, capOf(m) - besoin));
+    let model = possibles.find((m) => groqLibre(m, demande(m)));
+    if (!model) {
+      const w = Math.min(...possibles.map((m) => groqAttente(m, demande(m))));
+      if (w > 65000 || left() < w + 30000) throw new Error("Groq : tous les modèles au quota pour l'instant");
+      console.log(`  Groq : tous les modèles occupés, pause ${Math.ceil(w / 1000)} s...`);
+      await jitter(Math.max(1000, w));
+      continue;
+    }
+    const maxTok = Math.max(512, Math.min(veut, capOf(model) - besoin));
+    let limitees = 0;
     for (let ki = 0; ki < keys.length; ki++) {
+      groqUse.get(model)?.push([Date.now(), besoin + maxTok]) ?? groqUse.set(model, [[Date.now(), besoin + maxTok]]);
       const res = await fetch(`${GROQ_BASE}/openai/v1/chat/completions`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${keys[ki]}` },
         body: JSON.stringify({
-          // l'offre gratuite compte max_tokens dans la limite par minute (≈ 12 000) : on plafonne la réponse
-          model, temperature: ctx.temperature ?? 0.6, max_tokens: maxTok(),
+          // l'offre gratuite compte max_tokens dans la limite par minute : on plafonne la réponse
+          model, temperature: ctx.temperature ?? 0.6, max_tokens: maxTok,
           ...(/gpt-oss/.test(model) && !noEffort ? { reasoning_effort: "low" } : {}), // réflexion courte : la réponse garde sa place
           ...(jsonOff ? {} : { response_format: { type: "json_object" } }),
           messages: [{ role: "system", content: sys }, { role: "user", content: user }],
         }),
-        signal: AbortSignal.timeout(Math.max(15000, Math.min(ctx.timeoutMs || 3 * 60 * 1000, (ctx.deadline ? ctx.deadline - Date.now() : Infinity) - 5000))),
+        signal: AbortSignal.timeout(Math.max(15000, Math.min(ctx.timeoutMs || 3 * 60 * 1000, left() - 5000))),
       }).catch((e) => ({ ok: false, status: 0, text: async () => e.message, headers: new Map() }));
       if (res.status === 429) {
-        wait = Math.max(wait, Math.min(60, Number(res.headers.get("retry-after")) || 15 * (round + 1)));
-        lastErr = new Error("Groq : limite de débit (429)");
-        console.log(`  Groq (clé ${ki + 1}/${keys.length}) : limite atteinte → clé suivante`);
-        continue;
+        const t = await res.text().catch(() => "");
+        const jour = /per day|\bTPD\b|\bRPD\b|daily/i.test(t);
+        const ra = Number(res.headers.get?.("retry-after")) || Number((t.match(/try again in (?:(\d+)m)?([\d.]+)s/i) || [])[2]) || 20;
+        lastErr = new Error(`Groq ${model} : limite ${jour ? "du jour" : "par minute"} (429)`);
+        if (++limitees < keys.length) { console.log(`  Groq ${model} (clé ${ki + 1}/${keys.length}) : limite atteinte → clé suivante`); continue; }
+        groqCool.set(model, Date.now() + (jour ? 6 * 3600e3 : (ra + 2) * 1000));
+        console.log(`  Groq ${model} : limite ${jour ? "du JOUR" : "par minute"} atteinte → autre modèle Groq`);
+        break;
       }
       if (res.status === 413) {
         // trop gros pour CE modèle : on retient sa vraie limite et on passe au modèle suivant qui peut le contenir
         const t = await res.text().catch(() => "");
         const lim = Number((t.match(/Limit\s*(\d+)/i) || [])[1]);
         if (lim) groqCap.set(model, lim);
-        const suivants = ordre.slice(mi + 1).filter(tient);
+        exclus.add(model);
         lastErr = new Error(`Groq ${model} : texte trop long pour l'offre gratuite (413)`);
-        if (!suivants.length) throw new Error(`Groq : texte trop long pour tous les modèles gratuits (${besoin} jetons) — à découper`);
-        mi = ordre.indexOf(suivants[0]); model = suivants[0];
-        console.log(`  Groq : texte trop long → modèle plus large : ${model}`); ki--; continue;
+        console.log(`  Groq ${model} : texte trop long → modèle plus large`);
+        break;
       }
       if (!res.ok) {
         const full = await res.text(), body = full.slice(0, 180);
         // mode JSON strict de Groq : réponse un peu hors format refusée. Le texte produit est dans « failed_generation » :
-        // on le rend (plan.mjs le répare/valide) ; sinon on redemande sans le mode strict.
+        // on le rend (il sera réparé/validé) ; sinon on redemande sans le mode strict.
         if (res.status === 400 && /json_validate_failed/.test(full)) {
           let fg = ""; try { fg = JSON.parse(full)?.error?.failed_generation || ""; } catch {}
           if (fg.length > 20) { console.log(`  Groq ${model} : JSON imparfait récupéré (sera vérifié)`); return fg; }
@@ -301,18 +334,14 @@ export async function callGroq(sys, user, ctx = {}) {
         }
         lastErr = new Error(`Groq ${model} : HTTP ${res.status} ${body}`); console.log(`  ${lastErr.message}`);
         if (res.status === 400 && /reasoning_effort/i.test(body) && !noEffort) { noEffort = true; ki--; continue; }
-        if ((res.status === 404 || res.status === 400) && /model|decommission|not exist|not found/i.test(body) && mi < ordre.length - 1) {
-          model = ordre[++mi]; console.log(`  Groq : modèle suivant → ${model}`); ki--; // même clé, autre modèle
-        }
+        if ((res.status === 404 || res.status === 400) && /model|decommission|not exist|not found/i.test(body)) { exclus.add(model); break; }
         continue;
       }
       const d = await res.json();
       console.log(`  Groq : modèle utilisé = ${model} (clé ${ki + 1}/${keys.length})`);
       return d.choices?.[0]?.message?.content || "";
     }
-    if (!wait) break;
-    console.log(`  Groq : toutes les clés limitées, pause ${wait}s...`);
-    await sleep(wait * 1000);
+    if (!limitees && !exclus.has(model)) exclus.add(model);       // erreur non liée au quota sur toutes les clés : autre modèle
   }
   throw lastErr;
 }
