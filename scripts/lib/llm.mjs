@@ -14,6 +14,17 @@ const jitter = (ms) => sleep(ms + Math.random() * ms * 0.25);
 const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
 const GROQ_BASE = process.env.GROQ_BASE_URL || "https://api.groq.com";
 
+// RÉPONSE COUPÉE (limite de longueur atteinte) : on ne redemande JAMAIS tout. On renvoie au modèle ce qu'il a déjà écrit
+// et on lui demande UNIQUEMENT LA SUITE, puis on recolle (sans doublon au point de jonction). Vaut pour tous les modèles.
+const SUITE = "Ta réponse précédente a été coupée par la limite de longueur. Écris UNIQUEMENT la suite, en reprenant exactement au caractère où elle s'arrête : ne répète rien, n'ajoute ni introduction, ni explication, ni balise de code.";
+export function jonction(a, b) {
+  b = String(b || "").replace(/^\s*```(?:json)?\s*/i, "");
+  const max = Math.min(400, a.length, b.length);
+  for (let k = max; k >= 6; k--) if (a.endsWith(b.slice(0, k))) return a + b.slice(k);   // le modèle a répété la fin : retirée
+  return a + b;
+}
+const MAX_SUITES = 4;
+
 export function keysOf(...names) {
   const all = names.flatMap((n) => String(process.env[n] || "").split(/[\s,;]+/)).map((k) => k.trim()).filter(Boolean);
   return [...new Set(all)];
@@ -180,10 +191,32 @@ async function callGemini0(sys, user, ctx = {}) {
           const d = await res.json();
           const fin = d.candidates?.[0]?.finishReason;
           const txt = (d.candidates?.[0]?.content?.parts || []).filter((x) => !x.thought).map((x) => x.text || "").join("");
-          if (fin === "MAX_TOKENS") {
-            // les modèles "qui réfléchissent" consomment le budget de sortie : réponse coupée → on redemande avec plus de place
-            if (Math.max(ctx.maxTokens || 8192, Number(process.env.GEMINI_MIN_OUT || 32768)) < 60000) { console.log(`  ${tag} : réponse coupée (MAX_TOKENS) → nouvel essai avec plus de place`); ctx = { ...ctx, maxTokens: 65536 }; ki--; continue; }
-            console.log(`  ${tag} : réponse coupée même avec 65 536 jetons`);
+          if (fin === "MAX_TOKENS" && txt) {
+            // réponse coupée : on demande SEULEMENT LA SUITE au même modèle (même clé), jamais tout le texte à nouveau
+            let acc = txt, n = 0, f = fin;
+            while (f === "MAX_TOKENS" && n++ < MAX_SUITES && left() > 30000) {
+              console.log(`  ${tag} : réponse coupée → demande de la suite seulement (${n}/${MAX_SUITES})`);
+              const r2 = await fetch(`${GEMINI_BASE}/v1beta/models/${m}:generateContent`, {
+                method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": keys[ki] },
+                body: JSON.stringify({ systemInstruction: { parts: [{ text: sys }] },
+                  contents: [{ role: "user", parts: [...(ctx.audio ? [ctx.audio] : []), ...(Array.isArray(ctx.parts) ? ctx.parts : []), { text: user }] }, { role: "model", parts: [{ text: acc }] }, { role: "user", parts: [{ text: SUITE }] }],
+                  generationConfig: { temperature: ctx.temperature ?? 0.7, responseMimeType: "text/plain", maxOutputTokens: 65536,
+                    ...(thinking !== undefined ? { thinkingConfig: { thinkingBudget: thinking } } : {}) } }),
+                signal: AbortSignal.timeout(Math.max(15000, Math.min(4 * 60 * 1000, left() - 5000))),
+              }).catch(() => null);
+              if (!r2?.ok) break;
+              const d2 = await r2.json().catch(() => ({}));
+              const t2 = (d2.candidates?.[0]?.content?.parts || []).filter((x) => !x.thought).map((x) => x.text || "").join("");
+              if (!t2) break;
+              acc = jonction(acc, t2); f = d2.candidates?.[0]?.finishReason;
+            }
+            health.good = m;
+            console.log(`  Gemini : modèle utilisé = ${m} (clé ${ki + 1}/${keys.length}), réponse complétée par la suite`);
+            return acc;
+          }
+          if (fin === "MAX_TOKENS" && !txt && thinking === undefined) {
+            // tout le budget est parti en « réflexion », rien d'écrit : rien à continuer → nouvel essai avec réflexion courte
+            console.log(`  ${tag} : réflexion trop longue, rien d'écrit → nouvel essai avec réflexion courte`); thinking = 2048; ki--; continue;
           }
           if (!txt) { lastErr = new Error(`${tag} : réponse vide (${d.candidates?.[0]?.finishReason || d.promptFeedback?.blockReason || "?"})`); console.log(`  ${lastErr.message}`); continue; }
           health.good = m;
@@ -338,8 +371,27 @@ export async function callGroq(sys, user, ctx = {}) {
         continue;
       }
       const d = await res.json();
-      console.log(`  Groq : modèle utilisé = ${model} (clé ${ki + 1}/${keys.length})`);
-      return d.choices?.[0]?.message?.content || "";
+      let acc = d.choices?.[0]?.message?.content || "", f = d.choices?.[0]?.finish_reason, n = 0;
+      // réponse coupée : SEULEMENT LA SUITE, sur le même modèle et la même clé
+      while (f === "length" && acc && n++ < MAX_SUITES && left() > 30000) {
+        console.log(`  Groq ${model} : réponse coupée → demande de la suite seulement (${n}/${MAX_SUITES})`);
+        const msgs = [{ role: "system", content: sys }, { role: "user", content: user }, { role: "assistant", content: acc }, { role: "user", content: SUITE }];
+        const need2 = jetons(sys) + jetons(user) + jetons(acc) + 400, mt2 = Math.max(512, Math.min(veut, capOf(model) - need2));
+        if (capOf(model) - need2 < 512) break;
+        groqUse.get(model)?.push([Date.now(), need2 + mt2]);
+        const r2 = await fetch(`${GROQ_BASE}/openai/v1/chat/completions`, {
+          method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${keys[ki]}` },
+          body: JSON.stringify({ model, temperature: ctx.temperature ?? 0.6, max_tokens: mt2, ...(/gpt-oss/.test(model) && !noEffort ? { reasoning_effort: "low" } : {}), messages: msgs }),
+          signal: AbortSignal.timeout(Math.max(15000, Math.min(3 * 60 * 1000, left() - 5000))),
+        }).catch(() => null);
+        if (!r2?.ok) break;
+        const d2 = await r2.json().catch(() => ({}));
+        const t2 = d2.choices?.[0]?.message?.content || "";
+        if (!t2) break;
+        acc = jonction(acc, t2); f = d2.choices?.[0]?.finish_reason;
+      }
+      console.log(`  Groq : modèle utilisé = ${model} (clé ${ki + 1}/${keys.length})${n ? ", réponse complétée par la suite" : ""}`);
+      return acc;
     }
     if (!limitees && !exclus.has(model)) exclus.add(model);       // erreur non liée au quota sur toutes les clés : autre modèle
   }
@@ -356,7 +408,22 @@ export async function callClaude(sys, user, ctx = {}) {
   });
   if (!res.ok) throw new Error(`Claude : HTTP ${res.status} ${(await res.text()).slice(0, 180)}`);
   const data = await res.json();
-  return (data.content || []).map((c) => c.text || "").join("");
+  let acc = (data.content || []).map((c) => c.text || "").join(""), stop = data.stop_reason, n = 0;
+  // réponse coupée : Claude reprend exactement où il s'est arrêté (son propre texte lui est rendu en début de réponse)
+  while (stop === "max_tokens" && acc && n++ < MAX_SUITES) {
+    const r2 = await fetch(process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model, max_tokens: ctx.maxTokens || 6000, system: sys, messages: [{ role: "user", content: user }, { role: "assistant", content: acc.replace(/\s+$/, "") }] }),
+      signal: AbortSignal.timeout(ctx.timeoutMs || 4 * 60 * 1000),
+    }).catch(() => null);
+    if (!r2?.ok) break;
+    const d2 = await r2.json().catch(() => ({}));
+    const t2 = (d2.content || []).map((c) => c.text || "").join("");
+    if (!t2) break;
+    acc = acc.replace(/\s+$/, "") + t2; stop = d2.stop_reason;
+  }
+  return acc;
 }
 
 /** Liste des fournisseurs configurés, dans l'ordre d'essai. */
