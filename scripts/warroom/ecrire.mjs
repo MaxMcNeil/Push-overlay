@@ -516,7 +516,9 @@ const plat2 = (x) => plat(x).replace(/[-.]/g, " ");
 const estReconnu = (nom) => { const n = ` ${plat2(nom)} `; return RECONNUS.some((r) => n.includes(` ${plat2(r)} `)); };
 function seuleSource(g) {
   const noms = [...new Set(g.items.map((x) => String(x.source || "").trim()).filter(Boolean))];
-  if (g.officiel || g.revendication || noms.some(estReconnu)) return null;
+  if (g.officiel || g.revendication) return null;
+  if (g.nb_sources === 1) return noms.slice(0, 1);          // UNE seule source, même un grand média : toujours dit à l'antenne
+  if (noms.some(estReconnu)) return null;
   return noms.slice(0, 2);
 }
 const listeNoms = (n) => (n.length > 1 ? `${n.slice(0, -1).join(", ")} et ${n[n.length - 1]}` : n[0] || "un seul site");
@@ -706,7 +708,7 @@ ${g.texte}`, { maxTokens: 3000, depart, temperature: 0.3 });
     aVerifier: !v.ok, _src: g.texte, _victimes: victimes, _seule: seule,
     categorie: n.categorie, choc: Number(n.choc) || 0, gravite: Math.max(1, Math.min(5, Number(j.gravite) || Math.round((Number(n.choc) || 5) / 2))),
     titre: LATIN(String((titreOk && j.titre_ecran) || (fr ? titreArticle() : (!ACCUSE.test(j.titre_ecran || "") && j.titre_ecran)) || titreArticle())).slice(0, 70), lieu: String(j.lieu || [n.ville, n.pays].filter(Boolean).join(", ")).slice(0, 60),
-    pays: n.pays || "", faits, chiffre: cle, texte, teaser: String(j.accroche_teaser || "").slice(0, 120), revendication: !!rev, rumeur,
+    pays: n.pays || "", faits, chiffre: cle, texte, teaser: String(j.accroche_teaser || "").slice(0, 120), revendication: !!rev, rumeur, unique: seule ? seule.length : 0,
     sources: [...new Map([...g.items.filter((x) => x.source).map((x) => [x.source, { nom: x.source, url: x.url || "" }]), ...(g.autres || []).filter((x) => texte.includes(x.nom)).map((x) => [x.nom, x])]).values()].slice(0, 8),
   };
 }
@@ -934,7 +936,11 @@ async function main() {
   const notes = await trier(groupes);
   // les articles « fourre-tout » (« Ce qu'il faut retenir », « L'essentiel », « En direct »…) ne font pas un sujet
   const FOURRE_TOUT = /ce qu.il faut (savoir|retenir)|l.essentiel de l.actu|les infos? (du jour|à retenir)|^\s*(en )?direct\b|le point sur l.actu|what we know|live updates|news (wrap|roundup)/i;
-  const solides = notes.filter((g) => (g.nb_sources >= 2 || g.officiel || g.revendication) && !FOURRE_TOUT.test(g.items[0]?.titre || ""));
+  // une info d'UNE SEULE source n'est pas supprimée si elle est vraiment chaude (choc ≥ 8) : elle passe, annoncée comme telle
+  // (« seule X le rapporte »), au conditionnel, avec le tampon « SOURCE UNIQUE · NON CONFIRMÉ » à l'écran
+  const chaudeUnique = (g) => g.nb_sources === 1 && Number(g.note?.choc) >= Number(process.env.WARROOM_SEUIL_UNIQUE || 8);
+  const solides = notes.filter((g) => (g.nb_sources >= 2 || g.officiel || g.revendication || chaudeUnique(g)) && !FOURRE_TOUT.test(g.items[0]?.titre || ""));
+  if (solides.some(chaudeUnique)) log(`  ${solides.filter(chaudeUnique).length} info(s) très chaude(s) d'une seule source gardée(s), annoncée(s) comme non confirmée(s)`);
   // AUDIENCE FRANÇAISE : la France d'abord ; l'international seulement s'il mérite vraiment l'attention des Français (≥ 7/10),
   // et jamais plus de 40 % des dossiers
   const enFrance = (g) => /^france$/i.test(String(g.note.pays || "").trim());

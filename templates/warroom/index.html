@@ -134,7 +134,7 @@ window.init=async function(spec){
   if(dos){const T=$("titre");T.textContent=nb(s.titre);T.className=s.titre.length>60?"xl":s.titre.length>38?"l":"";
     $("chiffre").style.display=s.chiffre?"flex":"none";if(s.chiffre){$("chiffre").querySelector(".v").textContent=s.chiffre.valeur;$("chiffre").querySelector(".l").textContent=s.chiffre.libelle}
     $("faits").innerHTML=(s.faits||[]).map(f=>`<div class="fait">${esc(f)}</div>`).join("");$("faits").style.cssText="display:flex;flex-direction:column;gap:12px";
-    const st=s.revendication?"REVENDICATION NON CONFIRMÉE":s.rumeur?"CE QUI CIRCULE · VÉRIFIÉ":"";$("stamp").style.display=st?"":"none";$("stamp").textContent=st;
+    const st=s.revendication?"REVENDICATION NON CONFIRMÉE":s.rumeur?"CE QUI CIRCULE · VÉRIFIÉ":s.unique===1?"SOURCE UNIQUE · NON CONFIRMÉ":s.unique?"PEU DE SOURCES · NON CONFIRMÉ":"";$("stamp").style.display=st?"":"none";$("stamp").textContent=st;
     $("src").textContent=(s.sources||[]).length?"SOURCES : "+s.sources.map(x=>x.nom).slice(0,4).join(" · "):"";
     /* trop de texte : on réduit jusqu'à ce que tout tienne (jamais de débordement) */
     await document.fonts.ready;const B=$("bas");let k=1;while(B.scrollHeight>B.clientHeight+1&&k>.6){k-=.04;B.style.zoom=k}
