@@ -130,7 +130,8 @@ window.init=async function(spec){
   if(att){$("cd").querySelector(".a").textContent=s.type==="pause"?"RETOUR DANS":"LE LIVE COMMENCE DANS";
     $("cd").querySelector(".b").textContent=s.type==="pause"?"COURTE PAUSE":`${s.total} DOSSIERS · FAITS SOURCÉS`;
     document.querySelector("#cam .lbl").style.display="none"}
-  if(dos){const T=$("titre");T.textContent=s.titre;T.className=s.titre.length>60?"xl":s.titre.length>38?"l":"";
+  const nb=(x)=>String(x||"").replace(/\s+([:;!?»])/g,"\u00a0$1").replace(/«\s+/g,"«\u00a0");   /* jamais « : » seul en début de ligne */
+  if(dos){const T=$("titre");T.textContent=nb(s.titre);T.className=s.titre.length>60?"xl":s.titre.length>38?"l":"";
     $("chiffre").style.display=s.chiffre?"flex":"none";if(s.chiffre){$("chiffre").querySelector(".v").textContent=s.chiffre.valeur;$("chiffre").querySelector(".l").textContent=s.chiffre.libelle}
     $("faits").innerHTML=(s.faits||[]).map(f=>`<div class="fait">${esc(f)}</div>`).join("");$("faits").style.cssText="display:flex;flex-direction:column;gap:12px";
     const st=s.revendication?"REVENDICATION NON CONFIRMÉE":s.rumeur?"CE QUI CIRCULE · VÉRIFIÉ":"";$("stamp").style.display=st?"":"none";$("stamp").textContent=st;
@@ -144,7 +145,7 @@ window.init=async function(spec){
   /* bandeau du bas FIXE et lisible : le dossier suivant (rien sur l'écran de fin ; texte posé à part pour l'attente) */
   run=null;const R=document.querySelector("#tick .run");
   $("tick").querySelector(".lab").textContent=s.type==="attente"?"AU MENU":s.type==="pause"?"PAUSE":"À SUIVRE";
-  R.textContent=s.type==="pause"?"Le décryptage reprend dans un instant":(s.suivant||"");R.style.left=($("tick").querySelector(".lab").offsetWidth+24)+"px";
+  R.textContent=s.type==="pause"?"Le décryptage reprend dans un instant":nb(s.suivant||"");R.style.left=($("tick").querySelector(".lab").offsetWidth+24)+"px";
   $("tick").style.display=s.type==="cloture"?"none":"";
   await document.fonts.ready;
   await seek(0);return{P,scenes:[]}};

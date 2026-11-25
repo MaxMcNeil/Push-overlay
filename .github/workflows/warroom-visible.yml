@@ -4,8 +4,6 @@ name: War Room visible (toi plein écran)
 # catégorie, bandeau « À SUIVRE ») sont posés par-dessus, semi-transparents. Lancement À LA MAIN uniquement.
 # Par défaut, reprend le script du dernier War Room de moins de 18 h (aucun quota IA dépensé) ; sinon en écrit un nouveau.
 on:
-  push:                        # ESSAI TEMPORAIRE (branche seulement, retiré avant main)
-    branches: [warroom-visible]
   workflow_dispatch:
     inputs:
       script:

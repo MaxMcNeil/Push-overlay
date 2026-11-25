@@ -315,7 +315,22 @@ function autresPour(g, pool) {
 
 // étiquettes de plan que certains modèles écrivent dans le texte (« Mini-hook : », « Punchline : », « Question ouverte : »…) : retirées
 const ETIQ = /(^|[.!?…]\s+)(?:mini[\s‑-]?hook|hook|accroche|punchline|chute|question ouverte|question au public|d[ée]cryptage|analyse|angle|les faits|faits|conclusion)\s*:\s*/gi;
-const sansEtiquettes = (t) => String(t).replace(ETIQ, "$1").replace(/(^|[.!?…]\s+)(\p{Ll})/gu, (m, a, c) => a + c.toUpperCase());
+// majuscule après un point… sauf après une initiale ou une abréviation (« Florian M. soit jugé », « M. Dupont », « Mme. »)
+const ABREV = /(?:^|\s)(?:\p{Lu}|M|Mme|Mlle|Dr|Pr|St|Ste|av|J\.-C|etc)\.\s+$/u;
+const sansEtiquettes = (t) => { const x = String(t).replace(ETIQ, "$1");
+  return x.replace(/(^|[.!?…]\s+)(\p{Ll})/gu, (m, a, c, i) => (a && ABREV.test(x.slice(Math.max(0, i - 12), i + a.length)) ? m : a + c.toUpperCase())); };
+// un titre d'article recopié en tête de phrase SANS point (« … dès janvier 2027 Le 24 novembre, … ») : le point est remis ;
+// et une majuscule mise à tort après une initiale (« Florian M. Soit jugé ») est corrigée
+function recoller(texte, titres = []) {
+  let t = String(texte);
+  for (const ti of titres) {
+    const x = String(ti || "").replace(/\s+[-–—|]\s+[^-–—|]{2,40}$/, "").trim();
+    if (x.split(/\s+/).length < 4) continue;
+    const k = t.indexOf(x);
+    if (k >= 0 && /^\s+\p{Lu}/u.test(t.slice(k + x.length))) t = t.slice(0, k + x.length).replace(/[,;:]$/, "") + "." + t.slice(k + x.length);
+  }
+  return t.replace(/(\s\p{Lu}\.\s+)(Soit|Est|A|Sera|Avait|Aurait|Devra|Doit|Qui|Que|Dont|Et|Ou|Mais|Pour|Dans|Sur|Avec)\b/gu, (m, a, w) => a + w.toLowerCase());
+}
 
 // ---------------------------------------------------------------- 3bis) garde-fous contre l'invention
 // a) une citation entre guillemets qui ne figure pas dans les sources = phrase retirée (les expressions courtes, ≤ 3 mots, restent)
@@ -503,10 +518,30 @@ const ANGLES = [               // des ANGLES D'ANALYSE (opinion assumée) — ja
   "le détail le plus frappant DES SOURCES",
 ];
 const QUEMANDE = /\b(likez|liker|partagez|abonnez|abonnez-vous|mettez un pouce|lâchez un like)\b|[ée]crivez\s+\S+\s+(dans le chat\s+)?si\b|tapez\s+\S+\s+si\b/i;
-const chiffres = (s) => (String(s).match(/\d[\d\s.,]*\d|\d/g) || []).map((n) => n.replace(/[\s.,]/g, "")).filter((n) => n.length >= 2);
+// nombres ÉCRITS EN LETTRES (« trois mille », « deux mille seize ») convertis en chiffres avant tout contrôle : sinon un chiffre
+// inventé écrit en toutes lettres passerait la vérification. « million(s) / milliard(s) » restent des mots (« 3 millions »).
+const NB = { zero: 0, "zéro": 0, un: 1, une: 1, deux: 2, trois: 3, quatre: 4, cinq: 5, six: 6, sept: 7, huit: 8, neuf: 9, dix: 10, onze: 11, douze: 12, treize: 13,
+  quatorze: 14, quinze: 15, seize: 16, vingt: 20, vingts: 20, trente: 30, quarante: 40, cinquante: 50, soixante: 60, cent: 100, cents: 100, mille: 1000 };
+const RE_NB = new RegExp(`(?<![\\p{L}])(?:${Object.keys(NB).join("|")})(?:(?:[\\s-]+(?:et[\\s-]+(?=(?:un|une|onze)(?![\\p{L}])))?)(?:${Object.keys(NB).join("|")}))*(?![\\p{L}])`, "giu");
+function enChiffres(s) {
+  return String(s).replace(RE_NB, (m) => {
+    const w = m.toLowerCase().split(/[\s-]+/).filter((x) => x !== "et");
+    if (w.length === 1 && NB[w[0]] < 10) return m;          // « un », « deux »… seuls : laissés (articles, « les deux pays »)
+    let total = 0, cur = 0, prev = 0;
+    for (const x of w) { const v = NB[x];
+      if (v === 100) cur = (cur || 1) * 100;
+      else if (v === 1000) { total += (cur || 1) * 1000; cur = 0; }
+      else if (v === 20 && prev === 4) cur += 76;            // quatre-vingt(s)
+      else cur += v;
+      prev = v; }
+    return String(total + cur);
+  });
+}
+const chiffres = (s) => (String(enChiffres(s)).match(/\d[\d\s.,]*\d|\d/g) || []).map((n) => n.replace(/[\s.,]/g, "")).filter((n) => n.length >= 2);
 function chiffresSurs(texte, source) {
   const ok = new Set(chiffres(source));
-  return chiffres(texte).every((n) => ok.has(n) || /^(19|20)\d\d$/.test(n) || n.length < 2);
+  const an = String(new Date().getFullYear());
+  return chiffres(texte).every((n) => ok.has(n) || n === an || n.length < 2);      // une autre année que l'année en cours doit être dans les sources
 }
 async function ecrireDossier(g, rang = 0, depart = 0) {
   try { return await ecrireDossier0(g, rang, depart); }
@@ -632,6 +667,7 @@ ${g.texte}`, { maxTokens: 3000, depart, temperature: 0.3 });
     const w = s.split(/\s+/); if (w.length > 9) s = w.slice(0, 8).join(" ").replace(/[,;:]$/, "") + "…";
     return s.replace(/^["«»“”\s]+|["«»“”\s]+$/g, "");
   };
+  texte = recoller(texte, g.items.map((x) => x.titre));
   if (texte.split(/\s+/).length < 60) throw new Error("dossier trop court après contrôle");
   return {
     aVerifier: !v.ok, _src: g.texte, _victimes: victimes, _seule: seule,
@@ -910,6 +946,10 @@ async function main() {
   const pseudo = [{ titre: "OUVERTURE", texte: hab.ouverture, sources: [] }, ...hab.transitions.map((x, i) => ({ titre: `TRANSITION ${i}`, texte: x, sources: [] })), { titre: "CLÔTURE", texte: hab.cloture, sources: [] }];
   await relire(pseudo.filter((x) => x.texte), { doublons: false });
   hab.ouverture = pseudo[0].texte; hab.transitions = pseudo.slice(1, -1).map((x) => x.texte); hab.cloture = pseudo[pseudo.length - 1].texte;
+  // la relecture peut avoir vidé ou raccourci l'ouverture / la clôture : jamais de partie vide au prompteur
+  if (!/Bienvenue dans le Journal du NON/i.test(hab.ouverture)) hab.ouverture = `${hab.ouverture} Bienvenue dans le Journal du NON, et la réponse est Non.`.trim();
+  if (hab.ouverture.split(/\s+/).length < 40) hab.ouverture = `Au programme ce soir : ${hab.ordre.slice(0, 4).map((d) => d.titre.replace(/[.…]+$/, "")).join(" ; ")}. Et un dernier dossier, gardé pour la fin. ${hab.ouverture}`.replace(/\s{2,}/g, " ").trim();
+  if (String(hab.cloture || "").split(/\s+/).filter(Boolean).length < 12) hab.cloture = `${hab.cloture || ""} Voilà pour ce tour de la War Room. Les faits sont sourcés, les avis sont assumés : à vous de juger. Et vous, quel dossier de ce soir vous a le plus révolté ? À très vite pour le prochain live.`.replace(/\s{2,}/g, " ").trim();
   const { ordre, ouverture, transitions, cloture } = hab;
   // minutage (débit de lecture) + prompteur avec repères
   let t = 0;
