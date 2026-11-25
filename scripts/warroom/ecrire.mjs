@@ -191,7 +191,7 @@ async function enrichir(g) {
     if (autres.length) g.texte += `\n\nAUTRES LECTURES (presse étrangère et indépendante — à citer avec leur nom) :\n` + autres.map((x) => `• ${x.source} : ${x.titre}${x.resume ? ` — ${x.resume}` : ""}`).join("\n");
     const jugee = /condamn|verdict|jugement|prison ferme|cour d.assises|tribunal|relax|acquitt/.test(plat(g.items.map((x) => `${x.titre} ${x.resume || ""}`).join(" ")));
     g.precedents = jugee ? [] : precedentsPour(g);       // affaire déjà jugée / fait divers : jamais de parallèle historique plaqué
-    if (!jugee && g.precedents.length < 2 && ["GÉOPOLITIQUE", "GUERRE", "CYBER", "POLITIQUE", "CORRUPTION", "RÉVÉLATION"].includes(g.note?.categorie)) { try { g.precedents.push(...await precedentsDyn(g, 2 - g.precedents.length)); } catch (e) { log(`    précédents hors catalogue impossibles (${String(e.message).slice(0, 80)})`); } }
+    if (!jugee && !g.precedents.length && ["GÉOPOLITIQUE", "GUERRE", "CYBER", "POLITIQUE", "CORRUPTION", "RÉVÉLATION"].includes(g.note?.categorie)) { try { g.precedents.push(...await precedentsDyn(g, 2 - g.precedents.length)); } catch (e) { log(`    précédents hors catalogue impossibles (${String(e.message).slice(0, 80)})`); } }
     if (g.precedents.length) g.texte += `\n\nPRÉCÉDENTS HISTORIQUES AVÉRÉS RETENUS POUR CE DOSSIER :\n` + g.precedents.map((f) => `• ${f.fait} (Ce précédent illustre : ${f.type}.)`).join("\n");
     g.autres = autres.map((x) => ({ nom: x.source, url: x.url || "" }));
   }
@@ -242,13 +242,13 @@ async function precedentsDyn(g, n) {
     `Dossier d'actualité :
 ${dossier}
 
-Propose 0 à 3 précédents historiques RÉELS, célèbres, documentés, qui ont le MÊME MÉCANISME que ce dossier (une « preuve » ou une accusation
+Propose 0 à 2 précédents historiques RÉELS, célèbres, documentés, qui ont le MÊME MÉCANISME que ce dossier (une « preuve » ou une accusation
 démentie ensuite, un démenti officiel suivi d'un aveu, une alerte minimisée, un incident monté en épingle, une attribution hâtive, etc.).
 Le mécanisme doit être le même : pas un simple point commun de lieu, de pays ou de thème. Si rien ne colle vraiment, réponds [].
 ${deja.length ? `Déjà retenus (ne pas les redonner) : ${deja.join(" ; ")}.\n` : ""}Pour chacun : "article" = titre EXACT de son article Wikipédia (français ou anglais), "mecanisme" = le mécanisme commun en une phrase.
 Réponds : {"precedents": [{"article": "…", "mecanisme": "…"}]}`, { maxTokens: 700, temperature: 0.2, tours: 2 });
   const out = [];
-  for (const c of (prop.precedents || []).slice(0, 3)) {
+  for (const c of (prop.precedents || []).slice(0, 2)) {
     if (out.length >= n) break;
     const w = await wiki(String(c.article || "").trim());
     if (!w || deja.some((d) => plat(d) === plat(w.titre))) continue;
