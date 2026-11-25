@@ -6,7 +6,7 @@
 //      de l'écran War Room (titre, faits clés, chiffre clé, lieu, gravité, sources) ; tout chiffre absent des sources est retiré ;
 //   4) ordre « démarrer fort, finir encore plus fort », ouverture, transitions, clôture → prompteur + plan de l'écran.
 // Sorties (output/warroom) : prompteur.txt, warroom.json (pour l'écran), sources.md, journal des choix.
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync } from "fs";
 import { providers, parseJson } from "../lib/llm.mjs";
 import { collecter, deshtml, GOLFE } from "./collect.mjs";
 
@@ -51,6 +51,10 @@ const T0 = Date.now(), BUDGET = Number(process.env.WARROOM_BUDGET_MIN || 120) * 
 const reste = () => BUDGET - (Date.now() - T0);
 const dormir = (s) => new Promise((r) => setTimeout(r, s * 1000));
 const log = (...a) => console.log(...a);
+// édition faible (IA surchargée, temps épuisé…) : jamais livrée en silence → avertissement en tête du prompteur et du résumé
+const ALERTES = [];
+const alerte = (x) => { if (!ALERTES.includes(x)) ALERTES.push(x); };
+let TR_RATES = 0;
 
 // ---------------------------------------------------------------- IA patiente (surcharge = attendre, jamais abandonner tôt)
 async function ia(sys, user, { tours = 4, maxTokens = 6000, depart = 0, temperature = 0.6 } = {}) {
@@ -880,7 +884,7 @@ ${ordre.map((d, i) => `${i + 1}. [${d.categorie}] ${d.titre} — ${phrases(d.tex
   const base = ordre.map((d, i) => `### ${i + 1}. ${d.titre}\n${d.faits.join(". ")}\n${d.texte}`).join("\n\n");
   const st = aVerif.length ? await verifierPhrases(aVerif.map((x) => x[2]), base, 1, ordre.some((d) => d._victimes)) : { sorties: [] };
   if (st) aVerif.forEach(([k, m], i) => { parts[k][m] = st.sorties[i]; });
-  else aVerif.forEach(([k, m, p]) => { if (!/\?\s*$/.test(p)) parts[k][m] = null; });      // vérification impossible : seules les questions restent
+  else { alerte("ouverture et clôture non vérifiables (IA indisponible) : réduites"); aVerif.forEach(([k, m, p]) => { if (!/\?\s*$/.test(p)) parts[k][m] = null; }); }      // vérification impossible : seules les questions restent
   if (st?.retirees) log(`  habillage : ${st.retirees} phrase(s) d'accroche ou de transition retirée(s) (fait non prouvé)`);
   const recoller = (ps) => ps.filter(Boolean).join(" ").trim();
   let ouverture = recoller(parts[0]);
@@ -997,6 +1001,7 @@ Réponds : {"ar": "…"}\n\n${textes[i]}`, { maxTokens: 6000, temperature: 0.2, 
       const ar = String(j.ar || "").trim();
       if (arabeOk(textes[i], ar) || !out[i]) out[i] = ar || out[i];
     } catch {}
+    if (!arabeOk(textes[i], out[i])) TR_RATES++;
     if (!arabeOk(textes[i], out[i])) log(`  ⚠ traduction arabe à relire (texte ${i + 1} : nombres, mots latins ou longueur) : « ${String(textes[i]).slice(0, 60)}… »`);
   }
   return out.map((x, i) => x || String(textes[i] || ""));
@@ -1004,7 +1009,7 @@ Réponds : {"ar": "…"}\n\n${textes[i]}`, { maxTokens: 6000, temperature: 0.2, 
 // relecture ORTHOGRAPHIQUE de l'arabe des dossiers (fautes des modèles de secours : « نفت » pour « نفط »…). Acceptée seulement si
 // le sens reste identique au contrôle (mêmes nombres que le français, pas de latin) et la longueur à ±15 % ; sinon l'original reste.
 async function relireAr(ordre) {
-  if (reste() < 6 * 60e3) { log("  relecture arabe : pas le temps → texte gardé tel quel"); return; }
+  if (reste() < 6 * 60e3) { log("  relecture arabe : pas le temps → texte gardé tel quel"); alerte("relecture orthographique de l'arabe sautée (temps épuisé)"); return; }
   let n = 0;
   for (const d of ordre) {
     if (reste() < 4 * 60e3) break;
@@ -1152,11 +1157,13 @@ async function main() {
     const ps = phrases(hab.cloture || ""), q = ps.length && /\?\s*$/.test(ps[ps.length - 1]) ? ps.pop() : "";
     hab.cloture = [...ps, sig, q].filter(Boolean).join(" ");
     log(`  clôture : « ${ED.signature} » retirée par la vérification → phrase de repli sur le dernier dossier`);
+    alerte(`« ${ED.signature} » de repli (la vraie a été retirée par la vérification)`);
   }
   if (GOLFE) {
     log("Traduction en arabe standard (fusha)…");
     const T = [hab.ouverture, hab.cloture, ...hab.transitions, ...hab.ordre.flatMap((d) => [d.texte, d.titre, d.lieu || "", d.chiffre?.libelle || "", ...(d.faits || [])])];
     const A = await traduireAr(T);
+    if (TR_RATES) alerte(`${TR_RATES} texte(s) de la traduction arabe à relire (voir le journal)`);
     let k = 0;
     const SIG_AR = /\s*خلاصة القول اليوم\s*[:：،,]?\s*/g;
     const sansSig = (x) => String(x || "").replace(SIG_AR, " ").replace(/\s{2,}/g, " ").trim();
@@ -1173,6 +1180,7 @@ async function main() {
     await relireAr(hab.ordre);
   }
   const { ordre, ouverture, transitions, cloture } = hab;
+  if (ordre.length < Math.min(5, MAX_DOSSIERS)) alerte(`seulement ${ordre.length} dossier(s)`);
   // minutage (débit de lecture) + prompteur avec repères
   let t = 0;
   const P = [`WAR ROOM${GOLFE ? " GOLFE" : ""} — ${new Date().toLocaleDateString(GOLFE ? "ar" : "fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}`, "", "▶ OUVERTURE", "", ouverture, ""];
@@ -1186,7 +1194,8 @@ async function main() {
   segs.push({ type: "cloture", t0: t, t1: (t += duree(cloture)) });
   P.push(`▶ CLÔTURE · ${mmss(segs[segs.length - 1].t0)}`, "", cloture, "");
   const spec = { version: 1, lang: GOLFE ? "ar" : "fr", edition: GOLFE ? "golfe" : "france", date: new Date().toISOString(), wpm: WPM, duree: t, segments: segs, ticker: ordre.map((d) => d.titre) };
-  writeFileSync(`${OUT}/prompteur.txt`, P.join("\n"));
+  const tete = () => ALERTES.length ? [`⚠ ÉDITION INCOMPLÈTE (IA surchargée ou temps épuisé) — relance conseillée plus tard :`, ...ALERTES.map((x) => `  • ${x}`), "(ces lignes ne sont pas à lire à l'antenne)", ""] : [];
+  writeFileSync(`${OUT}/prompteur.txt`, [P[0], "", ...tete(), ...P.slice(2)].join("\n"));
   { let yt = await youtube(GOLFE ? ordre.map((d) => ({ ...d, titre: d.titre_fr || d.titre, texte: d.texte_fr || d.texte })) : ordre);
     if (GOLFE) {   // ligne par ligne : un seul gros texte revenait réduit au titre
       const L = yt.split("\n");
@@ -1198,11 +1207,17 @@ async function main() {
       if (idx.some((i) => !/[\u0600-\u06FF]/.test(L[i]) && LATIN_RESTE(L[i]).length > 1)) {
         log("  ⚠ youtube.txt : traduction incomplète → version arabe de secours (titres arabes des dossiers)");
         yt = youtubeSecoursAr(ordre);
+        alerte("youtube.txt : version arabe de secours (titres simples, à retoucher)");
       }
     }
     writeFileSync(`${OUT}/youtube.txt`, yt); }
   writeFileSync(`${OUT}/warroom.json`, JSON.stringify(spec, null, 1));
   writeFileSync(`${OUT}/sources.md`, ["# Sources — War Room du jour", "", ...ordre.flatMap((d, i) => [`## ${i + 1}. ${d.titre}`, ...d.sources.map((s) => `- ${s.nom}${s.url ? ` — ${s.url}` : ""}`), ""])].join("\n"));
+  if (ALERTES.length) {   // youtube.txt peut ajouter une alerte : le prompteur est réécrit avec la liste complète
+    writeFileSync(`${OUT}/prompteur.txt`, [P[0], "", ...tete(), ...P.slice(2)].join("\n"));
+    console.log(`::warning::ÉDITION INCOMPLÈTE — relance conseillée plus tard : ${ALERTES.join(" ; ")}`);
+    if (process.env.GITHUB_STEP_SUMMARY) try { appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## ⚠ Édition incomplète — relance conseillée plus tard\n\n${ALERTES.map((x) => `- ${x}`).join("\n")}\n`); } catch {}
+  }
   log(`\nWar Room prête : ${ordre.length} dossiers, ≈ ${Math.round(t / 60)} min de lecture (${WPM} mots/min). Sources : ${JSON.stringify(etat)}`);
 }
 
