@@ -1001,6 +1001,37 @@ Réponds : {"ar": "…"}\n\n${textes[i]}`, { maxTokens: 6000, temperature: 0.2, 
   }
   return out.map((x, i) => x || String(textes[i] || ""));
 }
+// relecture ORTHOGRAPHIQUE de l'arabe des dossiers (fautes des modèles de secours : « نفت » pour « نفط »…). Acceptée seulement si
+// le sens reste identique au contrôle (mêmes nombres que le français, pas de latin) et la longueur à ±15 % ; sinon l'original reste.
+async function relireAr(ordre) {
+  if (reste() < 6 * 60e3) { log("  relecture arabe : pas le temps → texte gardé tel quel"); return; }
+  let n = 0;
+  for (const d of ordre) {
+    if (reste() < 4 * 60e3) break;
+    try {
+      const j = await ia(ARABE_SYS, `Corrige SEULEMENT l'orthographe, la grammaire et les mots tronqués de ce texte arabe (ex. « نفت » → « نفط »). Ne change ni le sens,
+ni l'ordre, ni les noms, ni les nombres ; ne résume rien, n'ajoute rien. Une phrase incomplète (un nom seul, sans verbe) est supprimée.
+Corrige aussi le TITRE de la même façon.
+Réponds : {"titre": "…", "ar": "…"}\n\nTITRE : ${d.titre}\n\nTEXTE : ${d.texte}`, { maxTokens: 6000, temperature: 0.1 });
+      const ar = String(j.ar || "").trim(), m0 = d.texte.split(/\s+/).length, m1 = ar.split(/\s+/).length;
+      if (ar && m1 >= 0.85 * m0 && m1 <= 1.15 * m0 && arabeOk(d.texte_fr || "", ar)) { if (ar !== d.texte) n++; d.texte = ar; }
+      const ti = String(j.titre || "").trim();
+      if (/[\u0600-\u06FF]/.test(ti) && !LATIN_RESTE(ti).length && ti.length <= 1.5 * d.titre.length + 5) d.titre = ti;
+    } catch {}
+  }
+  log(`  relecture arabe : ${n} dossier(s) corrigé(s)`);
+}
+function youtubeSecoursAr(ordre) {
+  const t = ordre.map((d) => String(d.titre || "").replace(/[«»]/g, "").trim()).filter((x) => /[\u0600-\u06FF]/.test(x));
+  const tags = [...new Set([...t.filter((x) => !/[,،:]/.test(x) && x.length <= 30),
+    ...ordre.flatMap((d) => String(d.lieu || "").split(/[,،]/)).map((x) => x.trim()).filter((x) => /[\u0600-\u06FF]/.test(x)),
+    "الخليج", "السعودية", "الإمارات", "قطر", "الكويت", "عُمان", "البحرين", "تحليل جيوسياسي", "Gulf Think-Tank"])].slice(0, 40);
+  const desc = [`${ordre.length} ملفات الليلة. وقائع موثّقة وآراء صريحة: والحكم لكم.`, "", "البرنامج:", ...t.slice(0, -1).map((x) => `▶ ${x}`),
+    "… وملف أخير محفوظ للنهاية.", "", "جميع المصادر مذكورة على الهواء. كل شخص متهم بريء حتى تثبت إدانته.", "",
+    "برأيكم، أي ملف من ملفات الليلة يطرح السؤال الأخطر؟", "", `الوسوم: ${tags.join("، ")}`, "", "#الخليج #السعودية #الإمارات #قطر #تحليل #GulfThinkTank"];
+  return ["العنوان (اختر واحداً):", ...t.slice(0, 2).map((x) => `- ${x}… والسؤال الذي لا يطرحه أحد`), "", "الوصف:", ...desc, "",
+    "الوسوم (للصق في خانة Tags في YouTube Studio):", tags.join(", "), ""].join("\n");
+}
 const CAT_AR = { CATASTROPHE: "كارثة", ACCIDENT: "حادث", SCANDALE: "فضيحة", CORRUPTION: "فساد", POLITIQUE: "سياسة", "GÉOPOLITIQUE": "جيوسياسة",
   GUERRE: "حرب", "RÉVÉLATION": "كشف", CYBER: "سيبراني", "FAIT DIVERS": "حوادث", INSOLITE: "غرائب", RUMEUR: "شائعة" };
 
@@ -1076,7 +1107,7 @@ async function main() {
   // plafond facultatif de dossiers d'une seule source (WARROOM_MAX_UNIQUE) ; par défaut aucun, comme l'édition française
   const MAX_UNIQUE = Number(process.env.WARROOM_MAX_UNIQUE || 1e9);
   async function voie(v) {
-    while (suivant < retenus.length && ok < MAX_DOSSIERS && reste() > 8 * 60e3) {
+    while (suivant < retenus.length && ok < MAX_DOSSIERS && reste() > (GOLFE ? 20 : 8) * 60e3) {   // Golfe : 20 min gardées pour habillage + traduction + YouTube
       const i = suivant++, g = retenus[i];
       await enrichir(g);
       if (sujetAutolyse(g)) { log(`  ✗ ${g.items[0].titre.slice(0, 80)} : suicide ou automutilation → jamais dans le live`); continue; }
@@ -1113,6 +1144,15 @@ async function main() {
   if (!hab.ouverture.includes(ED.accueil.split(/[,.]/)[0])) hab.ouverture = `${hab.ouverture} ${ED.accueil}`.trim();
   if (hab.ouverture.split(/\s+/).length < 40) hab.ouverture = `Au programme ce soir : ${hab.ordre.slice(0, 4).map((d) => d.titre.replace(/[.…]+$/, "")).join(" ; ")}. Et un dernier dossier, gardé pour la fin. ${hab.ouverture}`.replace(/\s{2,}/g, " ").trim();
   if (String(hab.cloture || "").split(/\s+/).filter(Boolean).length < 12) hab.cloture = `${hab.cloture || ""} Voilà pour ce tour de la War Room. Les faits sont sourcés, les avis sont assumés : à vous de juger. Et vous, quel dossier de ce soir vous a le plus révolté ? À très vite pour le prochain live.`.replace(/\s{2,}/g, " ").trim();
+  // la vérification (IA surchargée) peut avoir retiré la phrase signature : jamais de clôture sans elle
+  if (!phrases(hab.cloture || "").some((p) => SIGN.test(p))) {
+    const bombe = String(hab.ordre[hab.ordre.length - 1]?.titre || "").replace(/[.…]+$/, "");
+    const sig = GOLFE ? `La position du jour : sur « ${bombe} », les faits sont sourcés, les versions officielles se contredisent, et le public a droit à la vérité entière, pas à un communiqué.`
+      : `Le NON du jour : NON à l'opacité sur « ${bombe} » : les faits sont sourcés, les versions officielles se contredisent, et vous avez droit à la vérité entière.`;
+    const ps = phrases(hab.cloture || ""), q = ps.length && /\?\s*$/.test(ps[ps.length - 1]) ? ps.pop() : "";
+    hab.cloture = [...ps, sig, q].filter(Boolean).join(" ");
+    log(`  clôture : « ${ED.signature} » retirée par la vérification → phrase de repli sur le dernier dossier`);
+  }
   if (GOLFE) {
     log("Traduction en arabe standard (fusha)…");
     const T = [hab.ouverture, hab.cloture, ...hab.transitions, ...hab.ordre.flatMap((d) => [d.texte, d.titre, d.lieu || "", d.chiffre?.libelle || "", ...(d.faits || [])])];
@@ -1130,6 +1170,7 @@ async function main() {
       d.faits = (d.faits || []).map(() => A[k++]);
       d.categorie_ar = CAT_AR[d.categorie] || d.categorie;
     }
+    await relireAr(hab.ordre);
   }
   const { ordre, ouverture, transitions, cloture } = hab;
   // minutage (débit de lecture) + prompteur avec repères
@@ -1153,6 +1194,11 @@ async function main() {
       const tr = await traduireAr(idx.map((i) => L[i]));
       idx.forEach((i, k) => { L[i] = tr[k] || L[i]; });
       yt = L.join("\n");
+      // une ligne restée en français (IA épuisée) : jamais de youtube.txt à moitié français → version arabe de secours
+      if (idx.some((i) => !/[\u0600-\u06FF]/.test(L[i]) && LATIN_RESTE(L[i]).length > 1)) {
+        log("  ⚠ youtube.txt : traduction incomplète → version arabe de secours (titres arabes des dossiers)");
+        yt = youtubeSecoursAr(ordre);
+      }
     }
     writeFileSync(`${OUT}/youtube.txt`, yt); }
   writeFileSync(`${OUT}/warroom.json`, JSON.stringify(spec, null, 1));
