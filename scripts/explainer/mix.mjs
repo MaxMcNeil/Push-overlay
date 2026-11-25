@@ -45,6 +45,47 @@ function wav(buf, file) {
   writeFileSync(file, b);
 }
 
+/** RESPIRATIONS (option « respirations », atténuées par défaut) : entre deux mots (horaires de la transcription), le son
+ *  restant (inspiration, bruit de bouche) est baissé de ~16 dB avec des fondus de 15 ms. La durée ne change PAS (le montage
+ *  reste calé au centième). Garde-fous : rien n'est touché à moins de 40 ms après un mot ni 30 ms avant le suivant, ni
+ *  autour d'un son aussi fort que la parole (mot mal horodaté) ; un creux de moins de 80 ms est laissé tel quel. */
+function respirations(file) {
+  const MODE_R = (process.env.EXPLAINER_RESPIRATIONS || "atténuées").toLowerCase();
+  if (/gard|non|off/.test(MODE_R)) return;
+  const T = process.env.EXPLAINER_TRANSCRIPT || "content/transcript.json";
+  let words = [];
+  try { words = (JSON.parse(readFileSync(T, "utf8")).words || []).filter((w) => isFinite(w.t0) && isFinite(w.t1) && w.t1 >= w.t0).sort((a, b) => a.t0 - b.t0); } catch {}
+  if (words.length < 10) { console.log("  respirations : transcription absente, voix laissée telle quelle"); return; }
+  const raw = `${file}.raw`;
+  try {
+    execFileSync("ffmpeg", ["-y", "-v", "error", "-i", file, "-ac", "1", "-ar", String(SR), "-f", "s16le", raw]);
+    const b = readFileSync(raw), x = new Int16Array(b.buffer, b.byteOffset, b.length >> 1), F = SR / 100, n = Math.floor(x.length / F);
+    const env = new Float32Array(n), dr = new Float32Array(n);   // dr = part des aigus (souffle, « h » d'inspiration) : haut = son non voisé
+    for (let k = 0; k < n; k++) { let e = 0, d = 0; for (let q = k * F; q < (k + 1) * F; q++) { e += x[q] * x[q]; if (q) d += (x[q] - x[q - 1]) ** 2; } env[k] = Math.sqrt(e / F); dr[k] = e ? d / e : 0; }
+    const speech = Float32Array.from(env).sort()[Math.floor(n * 0.7)] || 0;
+    if (!speech) { rmSync(raw, { force: true }); return; }
+    const loud = speech * 0.35, prot = new Uint8Array(n), cut = new Uint8Array(n);
+    // protégé = son voisé aussi fort que la parole (une voyelle d'un mot mal horodaté), ou tout son presque au niveau de la parole ;
+    // une inspiration (non voisée) reste atténuable même assez forte
+    for (let k = 0; k < n; k++) if (env[k] > loud && (dr[k] < 0.15 || env[k] > speech * 0.9)) for (let j = Math.max(0, k - 3); j <= Math.min(n - 1, k + 6); j++) prot[j] = 1;
+    const zone = (a, b2) => { a = Math.max(0, Math.ceil(a * 100)); b2 = Math.min(n - 1, Math.floor(b2 * 100));
+      for (let k = a; k <= b2; k++) { if (prot[k]) continue; let r = k; while (r + 1 <= b2 && !prot[r + 1]) r++; if (r - k + 1 >= 8) cut.fill(1, k, r + 1); k = r; } };
+    zone(0, words[0].t0 - 0.05);
+    for (let i = 0; i + 1 < words.length; i++) { const a = words[i].t1 + 0.04, b2 = words[i + 1].t0 - 0.03; if (b2 - a >= 0.08) zone(a, b2); }
+    zone(words[words.length - 1].t1 + 0.06, n / 100);
+    const G = 0.15, step = 1 / (0.015 * SR);
+    let g = 1, tot = 0;
+    for (let k = 0; k < n; k++) { if (cut[k]) tot++; const tg = cut[k] ? G : 1;
+      for (let q = k * F; q < (k + 1) * F; q++) { g = g < tg ? Math.min(tg, g + step) : Math.max(tg, g - step); if (g !== 1) x[q] = Math.round(x[q] * g); } }
+    writeFileSync(raw, b);
+    const tmpR = `${file}.resp.wav`;
+    execFileSync("ffmpeg", ["-y", "-v", "error", "-f", "s16le", "-ar", String(SR), "-ac", "1", "-i", raw, "-c:a", "pcm_s16le", tmpR]);
+    renameSync(tmpR, file);
+    console.log(`  respirations : ${(tot / 100).toFixed(0)} s de creux entre les mots atténués (−16 dB), durée inchangée`);
+  } catch (e) { console.log(`  respirations : traitement impossible (${String(e.message).slice(0, 120)}), voix laissée telle quelle`); }
+  rmSync(raw, { force: true });
+}
+
 /** Retard (s) du son traité par rapport à l'original : corrélation des enveloppes (1 ms) sur la première minute. */
 function latency(a, b) {
   try {
@@ -138,6 +179,7 @@ function main() {
     renameSync(tmpA, norm);
     console.log(`  décalage du traitement compensé : ${(lag * 1000).toFixed(0)} ms`);
   }
+  respirations(norm);
   const outI = ebu(norm);
   console.log(`Voix : ${isFinite(inI) ? inI.toFixed(1) : "?"} LUFS à l'origine${far ? " (voix lointaine ou faible : remontée de " + pre.toFixed(0) + " dB)" : ""} → ${isFinite(outI) ? outI.toFixed(1) : "?"} LUFS (cible ${target}, référence YouTube −14)`);
   // vidéos « à écouter » : la voix est découpée autour d'elles (elle attend pendant la vidéo, puis reprend)

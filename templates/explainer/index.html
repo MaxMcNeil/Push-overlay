@@ -381,7 +381,7 @@ const BUILD={
       :word?`<div class="big" ${A("pop",.35)}>${esc(word.split(/\s+/).slice(0,3).join(" "))}</div>`:"";
     return `<div class="aside"><div class="glow" data-a="breath"></div><div class="ring" ${A("pop",.05)}>${ring}</div>${core}</div>`},
   shot:(d,sc)=>{const M=(d.media&&d.media.length?d.media:[{kind:"img",image:d.image,iw:d.iw,ih:d.ih,crop:d.crop}]),m0=M[0],c0=m0.crop||{x:0,y:0,w:1,h:1},
-    ar=(c0.w*(m0.iw||1))/(c0.h*(m0.ih||1)),vert=H>W,big=sc&&sc.big,R=big?clamp(ar,.5,1.9):clamp(ar,vert?.95:1.25,vert?1.78:1.9);
+    ar=(c0.w*(m0.iw||1))/(c0.h*(m0.ih||1)),vert=H>W,big=sc&&sc.big,R=big?clamp(ar,.5,1.9):clamp(ar,vert?.95:1.25,m0.kind==="vid"?(vert?1.78:1.9):3.2);   /* image large (capture d'article) : le cadre prend sa forme, jamais de texte rogné sur les côtés */
     const med=M.map((m,k)=>{const c=m.crop||{x:0,y:0,w:1,h:1};return `<img ${m.kind==="vid"?`data-dir="${esc(m.dir)}" data-n="${m.n|0}" data-fps="${m.fps||30}" src="${esc(m.dir)}/00001.jpg"`:`src="${esc(m.image)}"`} data-a="media" data-k="${k}" data-m="${M.length}" data-c="${[c.x,c.y,c.w,c.h].join(",")}" data-iw="${m.iw||0}" data-ih="${m.ih||0}">`}).join("");
     if(big&&sc.medal&&m0.subs&&m0.subs.length){                 /* un extrait sur deux : médaillon doré + cartouche */
       const iw=m0.iw||1,ih=m0.ih||1,c=m0.crop||{x:0,y:0,w:1,h:1},pw=c.w*iw,ph=c.h*ih,side=Math.min(pw,ph);
@@ -522,9 +522,14 @@ function animate(s,lt,t){
         const k=+n.dataset.k,m=+n.dataset.m,T=Math.max(.5,s.sc.span||(s.sc.t1-s.sc.t0)),slot=T/m,ls=lt-k*slot;
         st.opacity=m===1?1:clamp(k===0?1:seg(ls,-.2,.2))*(k===m-1?1:1-seg(ls,slot-.2,slot+.2));st.zIndex=k+1;
         if(ls<-.3||ls>slot+.3){if(m>1)break}
-        const [cx,cy,cw,ch]=n.dataset.c.split(",").map(Number),z=Math.max(fw/(cw*iw),fh/(ch*ih)),q=E.io(seg(ls,.3,Math.max(1.2,slot)));
-        st.width=iw*z+"px";st.height=ih*z+"px";const ox=cw*iw*z-fw,oy=ch*ih*z-fh,vid=n.dataset.dir;
-        st.transform=`translate3d(${-(cx*iw*z)-ox*(ox>oy?(RTL?1-q:q):.5)}px,${-(cy*ih*z)-oy*(oy>=ox?q:.5)}px,0) scale(${vid?1:1.02+.05*q})`;st.transformOrigin=`${(cx+cw/2)*100}% ${(cy+ch/2)*100}%`;
+        const [cx,cy,cw,ch]=n.dataset.c.split(",").map(Number),vid=n.dataset.dir,q=E.io(seg(ls,.3,Math.max(1.2,slot)));
+        if(!vid){ /* image (capture, article, photo) : toujours en PLEINE LARGEUR (aucun mot rogné à gauche ni à droite), sans zoom ;
+                     plus haute que le cadre = lent défilement vertical ; plus basse = centrée */
+          const z=fw/(cw*iw),oy=ch*ih*z-fh;st.width=iw*z+"px";st.height=ih*z+"px";
+          st.transform=`translate3d(${-(cx*iw*z)}px,${-(cy*ih*z)-(oy>0?oy*q:oy/2)}px,0)`;st.transformOrigin="0 0";break}
+        const z=Math.max(fw/(cw*iw),fh/(ch*ih));
+        st.width=iw*z+"px";st.height=ih*z+"px";const ox=cw*iw*z-fw,oy=ch*ih*z-fh;
+        st.transform=`translate3d(${-(cx*iw*z)-ox*(ox>oy?(RTL?1-q:q):.5)}px,${-(cy*ih*z)-oy*(oy>=ox?q:.5)}px,0) scale(1)`;st.transformOrigin=`${(cx+cw/2)*100}% ${(cy+ch/2)*100}%`;
         if(vid){const N=+n.dataset.n,fr=Math.max(1,Math.min(N,Math.floor(Math.max(0,ls)*(+n.dataset.fps))%Math.max(1,s.sc.big?1e9:N)+1)),u=`${vid}/${String(fr).padStart(5,"0")}.jpg`;
           if(n.dataset.cur!==u){n.dataset.cur=u;n.src=u;PENDING.push(n.decode().catch(()=>{}))}}
         break}

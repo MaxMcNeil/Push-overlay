@@ -48,6 +48,11 @@ on:
         type: choice
         options: [fort (IA), léger]
         default: fort (IA)
+      respirations:
+        description: "Tes respirations entre les phrases : atténuées (défaut, baissées sans changer la durée) ou gardées"
+        type: choice
+        options: ["atténuées", "gardées"]
+        default: "atténuées"
       extraits:
         description: "Extraits de tes vidéos jointes (comme Montage LV) : ouverture choc + rythme régulier + « إسمع / écoutez »"
         type: choice
@@ -326,6 +331,7 @@ jobs:
           EXPLAINER_VOICE: ${{ startsWith(inputs.voix, 'naturel') && 'naturel' || 'radio' }}
           EXPLAINER_VOLUME: ${{ endsWith(inputs.voix, 'très fort') && 'tres-fort' || endsWith(inputs.voix, '+ fort') && 'fort' || 'auto' }}
           EXPLAINER_DEBRUITAGE: ${{ inputs.debruitage || 'fort (IA)' }}
+          EXPLAINER_RESPIRATIONS: ${{ inputs.respirations || 'atténuées' }}
           MATRIX: ${{ needs.plan.outputs.matrix }}
         run: |
           set -euo pipefail
