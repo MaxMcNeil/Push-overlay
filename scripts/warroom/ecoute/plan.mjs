@@ -50,6 +50,7 @@ async function trouverFlux(c) {
   const pays = { fr: ["FR", "US"], en: ["US", "GB"], ar: ["SA", "AE", "US"] }[c.langue] || ["FR", "US"];
   let best = null;
   for (const p of pays) {
+    await dormir(1500);
     const j = await get(`https://itunes.apple.com/search?media=podcast&limit=15&country=${p}&term=${encodeURIComponent(c.nom)}`, { json: true });
     for (const r of j?.results || []) {
       if (!r.feedUrl) continue;
@@ -62,7 +63,7 @@ async function trouverFlux(c) {
       if (!best || sc > best.sc || (sc === best.sc && t > best.t)) best = { sc, t, flux: r.feedUrl, titre: r.collectionName, auteur: r.artistName };
     }
     if (best?.sc === 3) break;
-    await dormir(800);
+    await dormir(3000);             // annuaire limité à ~20 requêtes/min : on reste en dessous
   }
   return best;
 }

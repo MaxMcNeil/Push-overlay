@@ -9,7 +9,7 @@ const ALARME = {
   en: "war attack strike bomb missile drone nuclear invasion troops military nato explosion killed dead casualties massacre genocide crisis collapse bankrupt crash inflation shortage scandal corruption fraud cover-up censorship leak leaked secret lie lied threat warning emergency danger disaster outbreak virus pandemic cyberattack hacked arrest jailed coup riot insurrection crackdown sanction embargo blockade hostage terror escalat",
   ar: "حرب هجوم قصف غارة صاروخ مسيرة نووي غزو جيش عسكري انفجار قتلى قتيل ضحايا مجزرة إبادة أزمة انهيار إفلاس تضخم نقص فضيحة فساد احتيال مؤامرة رقابة تسريب سري كذب تهديد تحذير طوارئ خطر كارثة وباء فيروس اختراق اعتقال سجن انقلاب احتجاج قمع عقوبات حصار رهائن إرهاب تصعيد",
 };
-const PUB = /sponsor|brought to you|promo code|discount|use code|code promo|abonnez|soutenez|patreon|tipeee|merch|إعلان/i;
+const PUB = /sponsor|brought to you|promo code|discount|use code|code promo|abonnez|soutenez|patreon|tipeee|merch|إعلان|welcome to|bienvenue (dans|sur)|disclaimer/i;
 const LEX = Object.fromEntries(Object.entries(ALARME).map(([k, v]) => [k, v.split(/\s+/)]));
 const plat = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
@@ -35,8 +35,11 @@ export function sujetsRadios(dossier = "output/warroom/ecoute/transcriptions", {
     const notes = pass.filter((p) => p.txt.length > 200 && !PUB.test(p.txt)).map((p) => ({ ...p, s: score(p.txt, e.langue) })).filter((p) => p.s >= 3)
       .sort((a, b) => b.s - a.s).slice(0, parEpisode);
     for (const p of notes) {
-      const ph = p.txt.split(/(?<=[.!?؟])\s+/).filter((x) => x.length >= 40);
-      const titre = (ph.sort((a, b) => score(b, e.langue) - score(a, e.langue))[0] || p.txt).slice(0, 220);
+      // titre = la phrase la plus alarmante du passage + la suivante (le tri des sujets ne lit que le titre), attribuée au média
+      const ph = p.txt.split(/(?<=[.!?؟])\s+/).filter(Boolean);
+      let k = 0; ph.forEach((x, i) => { if (x.length >= 30 && score(x, e.langue) > score(ph[k], e.langue)) k = i; });
+      const coeur = [ph[k], ph[k + 1]].filter(Boolean).join(" ").slice(0, 260);
+      const titre = `${e.media} : « ${coeur || p.txt.slice(0, 260)} »`;
       const mm = `${Math.floor(p.t0 / 60)} min`;
       out.push({ titre, url: e.lien || "", source: `${e.media} (émission du ${fmtDate(e.date, "fr")}, à ${mm})`, date: e.date,
         resume: `Passage mot pour mot de l'émission « ${e.titre} » (${e.media}, transcription automatique) : « ${p.txt.slice(0, 1200)} »`,
