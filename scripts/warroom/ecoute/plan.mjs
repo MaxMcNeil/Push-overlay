@@ -5,10 +5,11 @@
 import { readFileSync, writeFileSync, mkdirSync, appendFileSync } from "fs";
 
 const OUT = "output/warroom/ecoute";
-const FENETRE_H = Number(process.env.ECOUTE_FENETRE_H || 36);
+const FENETRE_H = Number(process.env.ECOUTE_FENETRE_H || 72);   // les émissions indépendantes sortent souvent 2-3 fois par semaine
 const MIN_EP = Number(process.env.ECOUTE_MIN_EPISODE || 40);       // minutes écoutées au plus par épisode
 const MIN_MACHINE = Number(process.env.ECOUTE_MIN_MACHINE || 60);  // minutes d'audio par machine
-const MACHINES = Math.min(20, Number(process.env.ECOUTE_MACHINES || 12));
+const MACHINES = Math.min(20, Number(process.env.ECOUTE_MACHINES || 20));
+const MIN_DIRECT = Number(process.env.ECOUTE_MIN_DIRECT || 20);  // minutes enregistrées en direct sur une radio
 const LANGUES = String(process.env.ECOUTE_LANGUES || "fr,en,ar").split(/[,\s]+/).filter(Boolean);
 const log = (...a) => console.log(...a);
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -32,8 +33,8 @@ async function get(url, { json = false, timeout = 25000 } = {}) {
 
 export function lireCatalogue() {
   const src = readFileSync(new URL("./catalogue.md", import.meta.url), "utf8");
-  const L = src.split("\n").map((l) => l.match(/^-\s*(fr|en|ar)\s*:\s*(.+?)\s*(?:=\s*(https?:\/\/\S+))?\s*$/i)).filter(Boolean)
-    .map((m) => ({ langue: m[1].toLowerCase(), nom: m[2].trim(), flux: m[3] || "" }));
+  const L = src.split("\n").map((l) => l.match(/^-\s*(fr|en|ar)\s*:\s*(.+?)\s*(?:=\s*(direct\s+)?(https?:\/\/\S+))?\s*$/i)).filter(Boolean)
+    .map((m) => ({ langue: m[1].toLowerCase(), nom: m[2].trim(), flux: m[4] || "", direct: !!m[3] }));
   // ajouts libres du workflow : « nom », « langue : nom » ou une adresse de flux, séparés par retour à la ligne, « ; » ou « , »
   for (const x of String(process.env.ECOUTE_PLUS || "").split(/[\n;,]+/).map((s) => s.trim()).filter(Boolean)) {
     const m = x.match(/^(fr|en|ar)\s*:\s*(.+)$/i);
@@ -45,20 +46,21 @@ export function lireCatalogue() {
 
 // annuaire public des podcasts (Apple, sans clé) : le flux dont le nom colle le mieux, le plus récemment mis à jour
 async function trouverFlux(c) {
-  const mots = plat(c.nom).split(" ").filter((w) => w.length >= 2);
+  const ph = ` ${plat(c.nom)} `;
   const pays = { fr: ["FR", "US"], en: ["US", "GB"], ar: ["SA", "AE", "US"] }[c.langue] || ["FR", "US"];
   let best = null;
   for (const p of pays) {
     const j = await get(`https://itunes.apple.com/search?media=podcast&limit=15&country=${p}&term=${encodeURIComponent(c.nom)}`, { json: true });
     for (const r of j?.results || []) {
       if (!r.feedUrl) continue;
-      const nom = plat(`${r.collectionName} ${r.artistName}`);
-      const sc = mots.length ? mots.filter((w) => nom.split(" ").includes(w) || nom.includes(w)).length / mots.length : 0;
-      if (sc < 0.75) continue;
+      // le nom doit figurer TEL QUEL (mots entiers) dans le titre du podcast, ou être exactement le nom de l'auteur
+      const col = ` ${plat(r.collectionName)} `, aut = ` ${plat(r.artistName)} `;
+      const sc = col === ph ? 3 : col.includes(ph) ? 2 : aut === ph ? 1.5 : 0;
+      if (!sc) continue;
       const t = Date.parse(r.releaseDate || 0) || 0;
       if (!best || sc > best.sc || (sc === best.sc && t > best.t)) best = { sc, t, flux: r.feedUrl, titre: r.collectionName, auteur: r.artistName };
     }
-    if (best?.sc === 1) break;
+    if (best?.sc === 3) break;
     await dormir(800);
   }
   return best;
@@ -88,6 +90,10 @@ export async function planifier() {
   const cat = lireCatalogue();
   const eps = [], sautes = [];
   for (const c of cat) {
+    if (c.direct) {       // radio en DIRECT : enregistrée pendant le lancement (ce qui passe à l'antenne à ce moment-là)
+      eps.push({ nom: c.nom, media: c.nom, langue: c.langue || "fr", titre: `${c.nom} en direct`, date: new Date().toISOString(), audio: c.flux, lien: "", minutes: MIN_DIRECT, direct: true, flux: c.flux });
+      log(`  ✓ ${c.nom} : direct, ${MIN_DIRECT} min enregistrées pendant le lancement`); continue;
+    }
     let flux = c.flux, info = "";
     if (!flux) {
       const f = await trouverFlux(c);
@@ -105,7 +111,7 @@ export async function planifier() {
   eps.sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
   const lots = [];
   for (const e of eps) {
-    const m = Math.min(MIN_EP, e.minutes || MIN_EP);
+    const m = e.direct ? MIN_DIRECT : Math.min(MIN_EP, e.minutes || MIN_EP);
     let lot = lots.find((l) => l.minutes + m <= MIN_MACHINE);
     if (!lot && lots.length < MACHINES) lots.push((lot = { minutes: 0, eps: [] }));
     if (!lot) { log(`  (plafond d'écoute atteint : ${e.nom} non écouté)`); continue; }

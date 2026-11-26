@@ -3,6 +3,8 @@
 # Usage : python transcrire.py plan.json <n° de lot> <dossier de sortie>
 import json, os, subprocess, sys, tempfile, time
 
+import numpy as np
+
 plan, lot, sortie = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 os.makedirs(sortie, exist_ok=True)
 eps = json.load(open(plan, encoding="utf-8"))["lots"][lot]
@@ -16,17 +18,23 @@ print(f"modèle {MODELE} chargé en {time.time() - t0:.0f} s", flush=True)
 for k, e in enumerate(eps):
     nom = f"{lot:02d}-{k:02d}"
     with tempfile.TemporaryDirectory() as d:
-        wav = os.path.join(d, "a.wav")
+        wav = os.path.join(d, "a.raw")
         t1 = time.time()
         # ffmpeg lit le flux et s'arrête tout seul après la durée voulue : jamais le fichier entier
-        r = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-user_agent", "Mozilla/5.0", "-reconnect", "1", "-reconnect_delay_max", "5",
-                            "-t", str(int(e["ecoute"] * 60)), "-i", e["audio"], "-vn", "-ac", "1", "-ar", "16000", wav], capture_output=True, text=True, timeout=900)
+        try:
+            r = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-user_agent", "Mozilla/5.0", "-reconnect", "1", "-reconnect_delay_max", "5",
+                                "-t", str(int(e["ecoute"] * 60)), "-i", e["audio"], "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", wav], capture_output=True, text=True, timeout=int(e["ecoute"] * 60) + 600)
+        except Exception as x:  # noqa: BLE001  (délai dépassé…) : épisode sauté
+            print(f"  ✗ {e['nom']} : audio injoignable ({x})", flush=True)
+            continue
         if r.returncode or not os.path.exists(wav) or os.path.getsize(wav) < 100000:
             print(f"  ✗ {e['nom']} : audio illisible ({(r.stderr or '').strip()[:160]})", flush=True)
             continue
         t2 = time.time()
         try:
-            segs, info = model.transcribe(wav, language=e.get("langue") or None, vad_filter=True, beam_size=1, condition_on_previous_text=False)
+            # audio passé directement en tableau (jamais décodé par PyAV, dont les versions récentes cassent faster-whisper)
+            audio = np.frombuffer(open(wav, "rb").read(), dtype=np.int16).astype(np.float32) / 32768.0
+            segs, info = model.transcribe(audio, language=e.get("langue") or None, vad_filter=True, beam_size=1, condition_on_previous_text=False)
             segments = [[round(s.start), s.text.strip()] for s in segs if s.text.strip()]
         except Exception as x:  # noqa: BLE001
             print(f"  ✗ {e['nom']} : transcription impossible ({x})", flush=True)

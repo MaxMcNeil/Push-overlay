@@ -2,11 +2,20 @@
 
 Une ligne par média : `- langue : nom` (langue = fr, en ou ar). Le flux podcast est trouvé tout seul à partir du nom
 (annuaire public des podcasts). Pour forcer un flux précis : `- langue : nom = https://…/flux.xml`.
-Un média introuvable, payant ou sans épisode des dernières 36 h est simplement sauté (une ligne dans le journal).
+Pour une radio écoutée EN DIRECT pendant le lancement (20 min) : `- langue : nom = direct https://…/flux-audio`.
+Un média introuvable, payant ou sans épisode des dernières 72 h est simplement sauté (une ligne dans le journal).
 Tu peux ajouter des noms ici, ou dans le champ « émissions en plus » du workflow, sans aucune règle de nom.
 
+## Radios en direct (enregistrées pendant le lancement)
+- fr : Sud Radio (direct) = direct https://start-sud.ice.infomaniak.ch/start-sud-high.mp3
+- fr : Radio Courtoisie (direct) = direct https://radiocourtoisie.ice.infomaniak.ch/radiocourtoisie-high.mp3
+- ar : مونت كارلو الدولية (direct) = direct https://montecarlodoualiya128k.ice.infomaniak.ch/mc-doualiya.mp3
+- ar : BBC عربي (direct) = direct http://stream.live.vc.bbcmedia.co.uk/bbc_arabic_radio
+- en : BBC World Service (direct) = direct http://stream.live.vc.bbcmedia.co.uk/bbc_world_service
+
 ## Français
-- fr : Sud Radio
+- fr : André Bercoff
+- fr : Sud Radio Média
 - fr : Bercoff dans tous ses états
 - fr : Les Vraies Voix
 - fr : Radio Courtoisie
@@ -32,6 +41,7 @@ Tu peux ajouter des noms ici, ou dans le champ « émissions en plus » du workf
 - en : Redacted News
 - en : Judging Freedom
 - en : The Duran
+- en : The Duran Podcast
 - en : The Alex Jones Show
 - en : The Tucker Carlson Show
 - en : System Update Glenn Greenwald
@@ -53,6 +63,10 @@ Tu peux ajouter des noms ici, ou dans le champ « émissions en plus » du workf
 - ar : Kerning Cultures
 - ar : درج
 - ar : الجزيرة بودكاست
+- ar : أثير
+- ar : عربي بوست
+- ar : عربي21
+- ar : ميدل إيست آي
 - ar : العربي الجديد
 - ar : مونت كارلو الدولية
 - ar : بي بي سي عربي
