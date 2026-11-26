@@ -41,7 +41,7 @@ creer
 # « passage en cours » : la War Room ne supprime jamais la release pendant que le téléphone y dépose des sons
 date > "$D/en-cours.txt"; envoyer "$D/en-cours.txt" || true
 
-YT="yt-dlp --no-warnings --js-runtimes node --socket-timeout 30"
+YT="timeout 600 yt-dlp --no-warnings --js-runtimes node --socket-timeout 30"
 n=0
 while IFS='|' read -r langue nom url; do
   langue=$(echo "$langue" | xargs); nom=$(echo "$nom" | xargs); url=$(echo "$url" | xargs)
@@ -73,6 +73,7 @@ while IFS='|' read -r langue nom url; do
     rm -f "$f" "$D/tmp/yt-$id.json"
     break        # une vidéo par chaîne et par passage : la plus récente
   done
+  envoyer "$J" || true          # journal à jour après chaque chaîne (visible même si le passage est coupé)
 done <<< "$LISTE"
 
 tail -n 3000 "$VUS" > "$VUS.n" && mv "$VUS.n" "$VUS"
