@@ -115,8 +115,9 @@ export async function planifier() {
   const lots = [];
   for (const e of eps) {
     const m = e.direct ? MIN_DIRECT : Math.min(MIN_EP, e.minutes || MIN_EP);
-    let lot = lots.find((l) => l.minutes + m <= MIN_MACHINE);
-    if (!lot && lots.length < MACHINES) lots.push((lot = { minutes: 0, eps: [] }));
+    // un direct dure en temps réel (20 min d'enregistrement) : chacun a sa propre machine, jamais à la suite d'un autre
+    let lot = e.direct ? null : lots.find((l) => !l.direct && l.minutes + m <= MIN_MACHINE);
+    if (!lot && lots.length < MACHINES) lots.push((lot = { minutes: 0, eps: [], direct: !!e.direct }));
     if (!lot) { log(`  (plafond d'écoute atteint : ${e.nom} non écouté)`); continue; }
     lot.minutes += m; lot.eps.push({ ...e, ecoute: m });
   }
