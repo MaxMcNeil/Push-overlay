@@ -48,7 +48,13 @@ while IFS='|' read -r langue nom url; do
   case "$langue" in fr|en|ar) ;; *) continue ;; esac
   [ "$n" -ge "$MAX_PAR_PASSAGE" ] && { log "plafond de $MAX_PAR_PASSAGE vidéos atteint pour ce passage"; break; }
   ids=$($YT --flat-playlist --playlist-end 3 --print "%(id)s" "$url/videos" 2>/dev/null)
-  [ -n "$ids" ] || { log "✗ $nom : chaîne introuvable ou YouTube refuse ($url)"; continue; }
+  if [ -z "$ids" ]; then       # adresse fausse : la chaîne est cherchée par son nom (recherche YouTube filtrée sur les chaînes)
+    q=$(printf '%s' "$nom" | jq -sRr @uri)
+    trouve=$($YT --flat-playlist --playlist-end 1 --print "%(url)s" "https://www.youtube.com/results?search_query=$q&sp=EgIQAg%253D%253D" 2>/dev/null | head -1)
+    [ -n "$trouve" ] && ids=$($YT --flat-playlist --playlist-end 3 --print "%(id)s" "$trouve/videos" 2>/dev/null)
+    [ -n "$ids" ] || { log "✗ $nom : chaîne introuvable ($url)"; continue; }
+    log "→ $nom : adresse corrigée par recherche : $trouve"
+  fi
   for id in $ids; do
     grep -qx "$id" "$VUS" && continue
     meta=$($YT -j --skip-download "https://www.youtube.com/watch?v=$id" 2>/dev/null) || { log "✗ $nom : vidéo $id illisible"; continue; }
