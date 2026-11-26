@@ -3,7 +3,7 @@
 # la modifier ici suffit, rien à toucher sur le téléphone. Une chaîne introuvable est notée dans le journal et sautée.
 # Adresses vérifiées depuis le téléphone le 26/11/2026.
 fr | TV Libertés | https://www.youtube.com/@tvlibertes
-fr | Livre Noir | https://www.youtube.com/channel/UCysox6U9HnqgCiJ-Pd-Jy_w
+fr | Frontières | https://www.youtube.com/@FrontieresMedia
 fr | Front Populaire | https://www.youtube.com/channel/UCfidGlehytwCvV3qlsX5uVQ
 fr | France-Soir | https://www.youtube.com/channel/UC0AuOxCr9TZ0TtEgL1zpIgA
 fr | Élucid | https://www.youtube.com/@Elucid
