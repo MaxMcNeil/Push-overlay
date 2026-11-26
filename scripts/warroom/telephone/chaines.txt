@@ -1,0 +1,25 @@
+# Chaînes YouTube écoutées par le téléphone (agent Termux, toutes les 6 h).
+# Une ligne par chaîne : langue | nom | adresse de la chaîne. Le téléphone relit cette liste à chaque passage :
+# la modifier ici suffit, rien à toucher sur le téléphone. Une chaîne introuvable est notée dans le journal et sautée.
+fr | TV Libertés | https://www.youtube.com/@tvlibertes
+fr | Livre Noir | https://www.youtube.com/@LivreNoir
+fr | Front Populaire | https://www.youtube.com/@FrontPopulaire
+fr | France-Soir | https://www.youtube.com/@FranceSoir
+fr | Élucid | https://www.youtube.com/@Elucid
+fr | Thinkerview | https://www.youtube.com/@thinkerview
+fr | Omerta | https://www.youtube.com/@OmertaOfficiel
+fr | Blast | https://www.youtube.com/@blastinfo
+fr | Le Média | https://www.youtube.com/@LeMediaTV
+fr | Off Investigation | https://www.youtube.com/@OffInvestigation
+fr | Sud Radio | https://www.youtube.com/@SudRadio
+fr | Géopolitique Profonde | https://www.youtube.com/@GeopolitiqueProfonde
+en | Redacted | https://www.youtube.com/@RedactedNews
+en | The Grayzone | https://www.youtube.com/@TheGrayzone
+en | Judging Freedom | https://www.youtube.com/@judgingfreedom
+en | The Duran | https://www.youtube.com/@theduran
+en | Breaking Points | https://www.youtube.com/@breakingpoints
+ar | عربي بوست | https://www.youtube.com/@ArabiPost
+ar | رصيف22 | https://www.youtube.com/@Raseef22
+ar | ميدل إيست آي | https://www.youtube.com/@MiddleEastEyeArabic
+ar | العربي الجديد | https://www.youtube.com/@alaraby
+ar | عربي21 | https://www.youtube.com/@Arabi21News

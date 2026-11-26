@@ -6,6 +6,9 @@ on:
     branches: [radios]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   plan:
     runs-on: ubuntu-24.04
@@ -17,6 +20,8 @@ jobs:
       - uses: actions/setup-node@v5
         with: { node-version: 22 }
       - id: p
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: node scripts/warroom/ecoute/plan.mjs
       - uses: actions/upload-artifact@v6
         with: { name: ecoute-plan, path: output/warroom/ecoute/plan.json, retention-days: 1 }
@@ -59,4 +64,11 @@ jobs:
         with: { pattern: "transcription-*", merge-multiple: true, path: output/warroom/ecoute/transcriptions }
       - uses: actions/setup-node@v5
         with: { node-version: 22 }
+      - uses: actions/download-artifact@v5
+        continue-on-error: true
+        with: { name: ecoute-plan, path: output/warroom/ecoute }
       - run: ls output/warroom/ecoute/transcriptions 2>/dev/null | wc -l; node scripts/warroom/ecoute/radios.mjs output/warroom/ecoute/transcriptions
+      - name: Nettoyage des sons du téléphone écoutés
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/warroom/ecoute/nettoyer.mjs

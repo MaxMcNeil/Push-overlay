@@ -87,6 +87,30 @@ async function dernierEpisode(c, flux) {
   return { raison: vu ? "aucun épisode récent" : "aucun épisode audio dans le flux" };
 }
 
+// sons YouTube déposés par l'agent du TÉLÉPHONE (release temporaire « out-ecoute-telephone ») : lus ici, puis supprimés
+// définitivement par nettoyer.mjs une fois la War Room écrite. Sans release ou sans réseau : rien, la War Room continue.
+const TAG_TEL = "out-ecoute-telephone";
+async function telephone() {
+  const repo = process.env.GITHUB_REPOSITORY || "MaxMcNeil/Push-overlay";
+  const h = { "user-agent": "warroom", accept: "application/vnd.github+json", ...(process.env.GH_TOKEN ? { authorization: `Bearer ${process.env.GH_TOKEN}` } : {}) };
+  let rel = null;
+  try { const r = await fetch(`https://api.github.com/repos/${repo}/releases/tags/${TAG_TEL}`, { headers: h, signal: AbortSignal.timeout(20000) }); if (r.ok) rel = await r.json(); } catch {}
+  if (!rel) { log("  téléphone : aucun son déposé (agent pas installé, ou rien de neuf)"); return { eps: [], perimes: [] }; }
+  const A = rel.assets || [], eps = [], perimes = [];
+  for (const j of A.filter((a) => /^yt-.+\.json$/.test(a.name))) {
+    const m = await get(j.browser_download_url, { json: true });
+    const son = m && A.find((a) => a.name === m.fichier);
+    if (!m || !son) { perimes.push(j.id); continue; }
+    if (Date.now() - Date.parse(m.date) > FENETRE_H * 3600e3) { perimes.push(j.id, son.id); continue; }
+    eps.push({ nom: m.nom, media: m.media || m.nom, langue: m.langue || "fr", titre: String(m.titre || "").slice(0, 200), date: m.date, audio: son.browser_download_url,
+      lien: m.lien || "", minutes: Number(m.minutes) || MIN_EP, flux: `telephone:${son.id}`, assets: [j.id, son.id] });
+  }
+  const orphelins = A.filter((a) => /^yt-/.test(a.name) && !/\.json$/.test(a.name) && !A.some((j) => j.name === a.name.replace(/\.[^.]+$/, ".json")));
+  perimes.push(...orphelins.map((a) => a.id));
+  log(`  téléphone : ${eps.length} vidéo(s) YouTube déposée(s)${perimes.length ? `, ${perimes.length} fichier(s) périmé(s) à supprimer` : ""}`);
+  return { eps, perimes };
+}
+
 export async function planifier() {
   mkdirSync(OUT, { recursive: true });
   const cat = lireCatalogue();
@@ -110,6 +134,9 @@ export async function planifier() {
     log(`  ✓ ${c.nom}${info} [${flux}] : « ${r.ep.titre.slice(0, 80)} » (${r.ep.date.slice(0, 16).replace("T", " ")}, ${r.ep.minutes || "?"} min)`);
   }
   for (const s of sautes) log(`  – ${s}`);
+  const tel = await telephone();
+  for (const e of tel.eps) log(`  ✓ ${e.media} : « ${e.titre.slice(0, 80)} » (${e.date.slice(0, 16).replace("T", " ")}, ${e.minutes} min)`);
+  eps.push(...tel.eps);
   // répartition : les plus récents d'abord, 45 min max par épisode, 90 min par machine, au plus MACHINES machines
   eps.sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
   const lots = [];
@@ -121,7 +148,9 @@ export async function planifier() {
     if (!lot) { log(`  (plafond d'écoute atteint : ${e.nom} non écouté)`); continue; }
     lot.minutes += m; lot.eps.push({ ...e, ecoute: m });
   }
-  const plan = { date: new Date().toISOString(), episodes: eps.length, lots: lots.map((l) => l.eps) };
+  // à supprimer après la War Room : les sons du téléphone écoutés + les périmés (jamais un son pas encore écouté)
+  const supprimer = [...tel.perimes, ...lots.flatMap((l) => l.eps.flatMap((e) => e.assets || []))];
+  const plan = { date: new Date().toISOString(), episodes: eps.length, lots: lots.map((l) => l.eps), telephone: { tag: TAG_TEL, supprimer } };
   writeFileSync(`${OUT}/plan.json`, JSON.stringify(plan, null, 1));
   log(`\nÉcoute : ${cat.length} médias au catalogue, ${eps.length} épisode(s) des ${FENETRE_H} dernières heures, ${lots.length} machine(s), ${lots.reduce((s, l) => s + l.minutes, 0)} min d'audio.`);
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `matrice=${JSON.stringify(lots.map((_, i) => i))}\n`);

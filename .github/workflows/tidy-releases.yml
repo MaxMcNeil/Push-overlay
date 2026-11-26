@@ -34,6 +34,7 @@ jobs:
               case "$t" in
                 renders) r="🎬 résultat Build Video";; out-shorts) r="✂️ résultat Shorts";;
                 out-chaine-*) r="🔗 shorts d'une chaîne (supprimés après 2 jours)";;
+                out-ecoute-telephone) r="📻 sons YouTube du téléphone pour la War Room (supprimés après usage)";;
                 [Ss]hort*) r="📥 vidéo déposée pour les Shorts";; *) r="📥 vidéo déposée pour Build Video";;
               esac
               echo "| \`$t\` — $n | $r |"
