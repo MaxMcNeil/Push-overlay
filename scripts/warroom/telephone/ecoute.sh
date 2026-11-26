@@ -35,6 +35,8 @@ LISTE=$(curl -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/warroom
 
 gh release view "$TAG" -R "$REPO" >/dev/null 2>&1 || gh release create "$TAG" -R "$REPO" --prerelease \
   --title "Écoute téléphone (temporaire)" --notes "Sons déposés par l'agent d'écoute du téléphone. Supprimés automatiquement par la War Room après usage." >/dev/null 2>&1
+# « passage en cours » : la War Room ne supprime jamais la release pendant que le téléphone y dépose des sons
+date > "$D/en-cours.txt"; gh release upload "$TAG" "$D/en-cours.txt" -R "$REPO" --clobber >/dev/null 2>&1 || true
 
 YT="yt-dlp --no-warnings --js-runtimes node --socket-timeout 30"
 n=0
@@ -73,3 +75,4 @@ done <<< "$LISTE"
 tail -n 3000 "$VUS" > "$VUS.n" && mv "$VUS.n" "$VUS"
 log "fin du passage : $n vidéo(s) envoyée(s)"
 gh release upload "$TAG" "$J" -R "$REPO" --clobber >/dev/null 2>&1 || true
+gh release delete-asset "$TAG" en-cours.txt -R "$REPO" -y >/dev/null 2>&1 || true

@@ -18,6 +18,8 @@ const r = await api(`/releases/tags/${telephone.tag}`);
 if (!r.ok) process.exit(0);
 const rel = await r.json();
 const reste = (rel.assets || []).filter((a) => /^yt-/.test(a.name));
+const enCours = (rel.assets || []).find((a) => a.name === "en-cours.txt" && Date.now() - Date.parse(a.updated_at) < 3 * 3600e3);
+if (enCours) { console.log("nettoyage : le téléphone est en train de déposer des sons → release gardée (vidée au prochain passage de la War Room)"); process.exit(0); }
 if (reste.length) { console.log(`nettoyage : ${reste.length} fichier(s) arrivé(s) pendant la War Room gardé(s) pour la prochaine fois`); process.exit(0); }
 await api(`/releases/${rel.id}`, { method: "DELETE" });
 await api(`/git/refs/tags/${telephone.tag}`, { method: "DELETE" });
