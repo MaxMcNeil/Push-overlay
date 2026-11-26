@@ -1,25 +1,26 @@
 # Chaînes YouTube écoutées par le téléphone (agent Termux, toutes les 6 h).
 # Une ligne par chaîne : langue | nom | adresse de la chaîne. Le téléphone relit cette liste à chaque passage :
 # la modifier ici suffit, rien à toucher sur le téléphone. Une chaîne introuvable est notée dans le journal et sautée.
+# Adresses vérifiées depuis le téléphone le 26/11/2026.
 fr | TV Libertés | https://www.youtube.com/@tvlibertes
-fr | Livre Noir | https://www.youtube.com/@LivreNoir
-fr | Front Populaire | https://www.youtube.com/@FrontPopulaire
-fr | France-Soir | https://www.youtube.com/@FranceSoir
+fr | Livre Noir | https://www.youtube.com/channel/UCysox6U9HnqgCiJ-Pd-Jy_w
+fr | Front Populaire | https://www.youtube.com/channel/UCfidGlehytwCvV3qlsX5uVQ
+fr | France-Soir | https://www.youtube.com/channel/UC0AuOxCr9TZ0TtEgL1zpIgA
 fr | Élucid | https://www.youtube.com/@Elucid
 fr | Thinkerview | https://www.youtube.com/@thinkerview
-fr | Omerta | https://www.youtube.com/@OmertaOfficiel
+fr | Omerta | https://www.youtube.com/channel/UC3lacWBPVK-JfmGyyHx4AAw
 fr | Blast | https://www.youtube.com/@blastinfo
-fr | Le Média | https://www.youtube.com/@LeMediaTV
+fr | Le Média | https://www.youtube.com/channel/UCT67YOMntJxfRnO_9bXDpvw
 fr | Off Investigation | https://www.youtube.com/@OffInvestigation
-fr | Sud Radio | https://www.youtube.com/@SudRadio
-fr | Géopolitique Profonde | https://www.youtube.com/@GeopolitiqueProfonde
+fr | Sud Radio | https://www.youtube.com/channel/UCESTwDXpoMgiYBHipMdKTkQ
+fr | Géopolitique Profonde | https://www.youtube.com/channel/UCwAS7bowP5S5P44eP_f7W0Q
 en | Redacted | https://www.youtube.com/@RedactedNews
-en | The Grayzone | https://www.youtube.com/@TheGrayzone
+en | The Grayzone | https://www.youtube.com/channel/UCEXR8pRTkE2vFeJePNe9UcQ
 en | Judging Freedom | https://www.youtube.com/@judgingfreedom
 en | The Duran | https://www.youtube.com/@theduran
 en | Breaking Points | https://www.youtube.com/@breakingpoints
-ar | عربي بوست | https://www.youtube.com/@ArabiPost
+ar | عربي بوست | https://www.youtube.com/channel/UCdUp5vHINCdtZS31flL_prg
 ar | رصيف22 | https://www.youtube.com/@Raseef22
-ar | ميدل إيست آي | https://www.youtube.com/@MiddleEastEyeArabic
-ar | العربي الجديد | https://www.youtube.com/@alaraby
-ar | عربي21 | https://www.youtube.com/@Arabi21News
+en | Middle East Eye | https://www.youtube.com/channel/UCR0fZh5SBxxMNYdg0VzRFkg
+ar | العربي الجديد | https://www.youtube.com/channel/UCQ2BzTiRUbL3z4K22dTB5dg
+ar | عربي21 | https://www.youtube.com/channel/UC42kkXz2n8M9Tr7jM2_cRlg
