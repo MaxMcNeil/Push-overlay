@@ -33,10 +33,13 @@ LISTE=$(curl -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/warroom
   || curl -fsSL "https://raw.githubusercontent.com/$REPO/radios/scripts/warroom/telephone/chaines.txt" 2>/dev/null)
 [ -n "$LISTE" ] || { log "✗ liste des chaînes injoignable (pas de réseau ?)"; exit 0; }
 
-gh release view "$TAG" -R "$REPO" >/dev/null 2>&1 || gh release create "$TAG" -R "$REPO" --prerelease \
-  --title "Écoute téléphone (temporaire)" --notes "Sons déposés par l'agent d'écoute du téléphone. Supprimés automatiquement par la War Room après usage." >/dev/null 2>&1
+creer() { gh release view "$TAG" -R "$REPO" >/dev/null 2>&1 || gh release create "$TAG" -R "$REPO" --prerelease \
+  --title "Écoute téléphone (temporaire)" --notes "Sons déposés par l'agent d'écoute du téléphone. Supprimés automatiquement par la War Room après usage." >/dev/null 2>&1; }
+# envoi ; si la release a été vidée et supprimée entre-temps par la War Room, elle est recréée et l'envoi refait une fois
+envoyer() { gh release upload "$TAG" "$@" -R "$REPO" --clobber >/dev/null 2>&1 || { creer; gh release upload "$TAG" "$@" -R "$REPO" --clobber >/dev/null 2>&1; }; }
+creer
 # « passage en cours » : la War Room ne supprime jamais la release pendant que le téléphone y dépose des sons
-date > "$D/en-cours.txt"; gh release upload "$TAG" "$D/en-cours.txt" -R "$REPO" --clobber >/dev/null 2>&1 || true
+date > "$D/en-cours.txt"; envoyer "$D/en-cours.txt" || true
 
 YT="yt-dlp --no-warnings --js-runtimes node --socket-timeout 30"
 n=0
@@ -61,7 +64,7 @@ while IFS='|' read -r langue nom url; do
     minutes=$(( duree > 2700 ? 45 : duree / 60 ))
     echo "$meta" | jq --arg nom "$nom" --arg langue "$langue" --arg date "$date" --arg m "$minutes" --arg f "$(basename "$f")" \
       '{nom: $nom, media: ($nom + " (YouTube)"), langue: $langue, titre: (.title // ""), date: $date, lien: (.webpage_url // ""), minutes: ($m | tonumber), fichier: $f}' > "$D/tmp/yt-$id.json"
-    if gh release upload "$TAG" "$f" "$D/tmp/yt-$id.json" -R "$REPO" --clobber >/dev/null 2>&1; then
+    if envoyer "$f" "$D/tmp/yt-$id.json"; then
       echo "$id" >> "$VUS"; n=$((n + 1))
       log "✓ $nom : « $(echo "$meta" | jq -r '.title' | cut -c1-80) » ($minutes min, $(du -k "$f" | cut -f1) Ko)"
     else
@@ -74,5 +77,5 @@ done <<< "$LISTE"
 
 tail -n 3000 "$VUS" > "$VUS.n" && mv "$VUS.n" "$VUS"
 log "fin du passage : $n vidéo(s) envoyée(s)"
-gh release upload "$TAG" "$J" -R "$REPO" --clobber >/dev/null 2>&1 || true
+envoyer "$J" || true
 gh release delete-asset "$TAG" en-cours.txt -R "$REPO" -y >/dev/null 2>&1 || true

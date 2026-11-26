@@ -1,7 +1,7 @@
 // War Room — après usage : supprime DÉFINITIVEMENT les sons du téléphone qui ont été écoutés (et les périmés), puis la release
 // temporaire « out-ecoute-telephone » et son tag dès qu'elle ne contient plus aucun son. Un son déposé pendant la War Room (pas encore
 // écouté) est gardé pour la prochaine fois. Ne touche à AUCUNE autre release.
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, readdirSync } from "fs";
 
 const repo = process.env.GITHUB_REPOSITORY, token = process.env.GH_TOKEN;
 const P = "output/warroom/ecoute/plan.json";
@@ -11,8 +11,12 @@ if (!telephone || telephone.tag !== "out-ecoute-telephone") { console.log("netto
 const h = { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": "warroom" };
 const api = (u, o = {}) => fetch(`https://api.github.com/repos/${repo}${u}`, { headers: h, signal: AbortSignal.timeout(30000), ...o });
 
+// seuls les sons vraiment TRANSCRITS (ou périmés) sont supprimés : un son dont l'écoute a échoué reste pour la prochaine fois
+const T = "output/warroom/ecoute/transcriptions", faits = new Set();
+if (existsSync(T)) for (const f of readdirSync(T)) { try { const x = JSON.parse(readFileSync(`${T}/${f}`, "utf8")); for (const id of x.assets || []) faits.add(id); } catch {} }
+const ecoutes = (telephone.ecoutes || []).filter((ids) => ids.some((id) => faits.has(id))).flat();
 let n = 0;
-for (const id of new Set(telephone.supprimer || [])) { const r = await api(`/releases/assets/${id}`, { method: "DELETE" }); if (r.ok || r.status === 404) n++; }
+for (const id of new Set([...(telephone.perimes || []), ...ecoutes])) { const r = await api(`/releases/assets/${id}`, { method: "DELETE" }); if (r.ok || r.status === 404) n++; }
 console.log(`nettoyage : ${n} fichier(s) du téléphone supprimé(s) définitivement`);
 const r = await api(`/releases/tags/${telephone.tag}`);
 if (!r.ok) process.exit(0);

@@ -149,8 +149,8 @@ export async function planifier() {
     lot.minutes += m; lot.eps.push({ ...e, ecoute: m });
   }
   // à supprimer après la War Room : les sons du téléphone écoutés + les périmés (jamais un son pas encore écouté)
-  const supprimer = [...tel.perimes, ...lots.flatMap((l) => l.eps.flatMap((e) => e.assets || []))];
-  const plan = { date: new Date().toISOString(), episodes: eps.length, lots: lots.map((l) => l.eps), telephone: { tag: TAG_TEL, supprimer } };
+  const ecoutes = lots.flatMap((l) => l.eps.filter((e) => e.assets).map((e) => e.assets));
+  const plan = { date: new Date().toISOString(), episodes: eps.length, lots: lots.map((l) => l.eps), telephone: { tag: TAG_TEL, perimes: tel.perimes, ecoutes } };
   writeFileSync(`${OUT}/plan.json`, JSON.stringify(plan, null, 1));
   log(`\nÉcoute : ${cat.length} médias au catalogue, ${eps.length} épisode(s) des ${FENETRE_H} dernières heures, ${lots.length} machine(s), ${lots.reduce((s, l) => s + l.minutes, 0)} min d'audio.`);
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `matrice=${JSON.stringify(lots.map((_, i) => i))}\n`);
