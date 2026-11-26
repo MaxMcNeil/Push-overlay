@@ -8,19 +8,16 @@ Tu peux ajouter des noms ici, ou dans le champ « émissions en plus » du workf
 
 ## Radios en direct (enregistrées pendant le lancement)
 - fr : Sud Radio (direct) = direct https://start-sud.ice.infomaniak.ch/start-sud-high.mp3
-- fr : Radio Courtoisie (direct) = direct https://radiocourtoisie.ice.infomaniak.ch/radiocourtoisie-high.mp3
 - ar : مونت كارلو الدولية (direct) = direct https://montecarlodoualiya128k.ice.infomaniak.ch/mc-doualiya.mp3
 - ar : BBC عربي (direct) = direct http://stream.live.vc.bbcmedia.co.uk/bbc_arabic_radio
 - en : BBC World Service (direct) = direct http://stream.live.vc.bbcmedia.co.uk/bbc_world_service
 
 ## Français
 - fr : André Bercoff
-- fr : Sud Radio Média
 - fr : Bercoff dans tous ses états
 - fr : Les Vraies Voix
 - fr : Radio Courtoisie
 - fr : Radio Libertaire
-- fr : Le Média
 - fr : Blast le souffle de l'info
 - fr : Élucid
 - fr : Thinkerview
@@ -35,13 +32,12 @@ Tu peux ajouter des noms ici, ou dans le champ « émissions en plus » du workf
 - fr : Radio Ici et Maintenant
 
 ## Anglais
-- en : No Agenda
+- en : No Agenda = http://feed.nashownotes.com/rss.xml
 - en : Breaking Points
 - en : The Grayzone
 - en : Redacted News
 - en : Judging Freedom
 - en : The Duran
-- en : The Duran Podcast
 - en : The Alex Jones Show
 - en : The Tucker Carlson Show
 - en : System Update Glenn Greenwald
@@ -59,11 +55,14 @@ Tu peux ajouter des noms ici, ou dans le champ « émissions en plus » du workf
 - ar : رصيف22
 - ar : صوت بودكاست
 - ar : ثمانية
-- ar : فنجان
+- ar : فنجان مع عبدالرحمن أبومالح
 - ar : Kerning Cultures
 - ar : درج
 - ar : الجزيرة بودكاست
-- ar : أثير
+- ar : Raseef22
+- en : Middle East Eye
+- en : The Cradle
+- en : Electronic Intifada
 - ar : عربي بوست
 - ar : عربي21
 - ar : ميدل إيست آي

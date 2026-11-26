@@ -22,13 +22,15 @@ for k, e in enumerate(eps):
         t1 = time.time()
         # ffmpeg lit le flux et s'arrête tout seul après la durée voulue : jamais le fichier entier
         try:
-            r = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-user_agent", "Mozilla/5.0", "-reconnect", "1", "-reconnect_delay_max", "5",
-                                "-t", str(int(e["ecoute"] * 60)), "-i", e["audio"], "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", wav], capture_output=True, text=True, timeout=int(e["ecoute"] * 60) + 600)
-        except Exception as x:  # noqa: BLE001  (délai dépassé…) : épisode sauté
+            r = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-user_agent", "Mozilla/5.0", "-reconnect", "1", "-reconnect_delay_max", "5", "-rw_timeout", "20000000",
+                                "-t", str(int(e["ecoute"] * 60)), "-i", e["audio"], "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", wav], capture_output=True, text=True, timeout=int(e["ecoute"] * 60) + 240)
+        except subprocess.TimeoutExpired:  # flux qui traîne : on garde ce qui a déjà été enregistré
+            r = None
+        except Exception as x:  # noqa: BLE001
             print(f"  ✗ {e['nom']} : audio injoignable ({x})", flush=True)
             continue
-        if r.returncode or not os.path.exists(wav) or os.path.getsize(wav) < 100000:
-            print(f"  ✗ {e['nom']} : audio illisible ({(r.stderr or '').strip()[:160]})", flush=True)
+        if not os.path.exists(wav) or os.path.getsize(wav) < 320000 or (r is not None and r.returncode and os.path.getsize(wav) < 320000 * 30):
+            print(f"  ✗ {e['nom']} : audio illisible ({((r.stderr if r else 'délai dépassé') or '').strip()[:160]})", flush=True)
             continue
         t2 = time.time()
         try:

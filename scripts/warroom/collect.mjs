@@ -6,7 +6,7 @@
 //   catastrophes : USGS (séismes), GDACS (catastrophes, alertes orange/rouge)
 //   rumeurs : vérifications des fact-checkeurs (ce qui circule, et ce qui est vrai)
 // Sortie : output/warroom/brut.json = [{ titre, url, source, date, resume, origine, officiel, revendication? }]
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, writeFileSync, existsSync } from "fs";
 
 const OUT = "output/warroom";
 const H24 = 26 * 3600 * 1000;                       // fenêtre : 26 h (marge de fuseau)
@@ -395,11 +395,27 @@ async function catastrophes() {
   return out;
 }
 
+// ---------------------------------------------------------------- 📻 radios et émissions (menu du workflow, « non » par défaut)
+// Les transcriptions sont faites AVANT, en parallèle, par les machines d'écoute (scripts/warroom/ecoute) ; ici on ne fait que les lire.
+let _radios = null;
+const radios = () => _radios || (_radios = lireRadios());
+async function lireRadios() {
+  const dir = "output/warroom/ecoute/transcriptions";
+  if (!existsSync(dir)) return [];
+  const { sujetsRadios } = await import("./ecoute/radios.mjs");
+  const out = sujetsRadios(dir);
+  etat.radios = out.length;
+  console.log(`  radios et émissions : ${out.length} passage(s) alarmant(s) retenu(s)`);
+  return out;
+}
+
 export async function collecter() {
   mkdirSync(OUT, { recursive: true });
   const contre = await autresLectures().catch(() => []);
+  // les émissions indépendantes servent aussi de contre-lectures (toujours citées avec leur nom)
+  try { contre.push(...(await radios()).map((x) => ({ source: x.source, titre: x.titre, resume: x.resume.slice(0, 400), url: x.url }))); } catch {}
   writeFileSync(`${OUT}/autres.json`, JSON.stringify(contre, null, 1));
-  const parts = await Promise.all([presseFr(), googleNews(), gdelt(), cyber(), catastrophes(), declarations()].map((p) => p.catch((e) => { console.log(`  source en panne : ${e.message}`); return []; })));
+  const parts = await Promise.all([presseFr(), googleNews(), gdelt(), cyber(), catastrophes(), declarations(), radios()].map((p) => p.catch((e) => { console.log(`  source en panne : ${e.message}`); return []; })));
   const tout = parts.flat();
   // doublons exacts (même lien ou même titre)
   const vus = new Set(), uniq = [];

@@ -1,13 +1,13 @@
 // War Room — 📻 Radios et émissions, étape 1 : trouver les flux podcast du catalogue, garder le dernier épisode des 36 h,
-// et répartir l'écoute sur plusieurs machines (au plus 60 min d'audio chacune, 40 min max par épisode : le début d'une
+// et répartir l'écoute sur plusieurs machines (au plus 90 min d'audio chacune, 45 min max par épisode : le début d'une
 // émission porte ses sujets forts). Rien de payant, aucune clé : annuaire public des podcasts + flux RSS des médias.
 // Sortie : output/warroom/ecoute/plan.json, et « matrice » / « plan » pour GitHub Actions.
 import { readFileSync, writeFileSync, mkdirSync, appendFileSync } from "fs";
 
 const OUT = "output/warroom/ecoute";
 const FENETRE_H = Number(process.env.ECOUTE_FENETRE_H || 72);   // les émissions indépendantes sortent souvent 2-3 fois par semaine
-const MIN_EP = Number(process.env.ECOUTE_MIN_EPISODE || 40);       // minutes écoutées au plus par épisode
-const MIN_MACHINE = Number(process.env.ECOUTE_MIN_MACHINE || 60);  // minutes d'audio par machine
+const MIN_EP = Number(process.env.ECOUTE_MIN_EPISODE || 45);       // minutes écoutées au plus par épisode
+const MIN_MACHINE = Number(process.env.ECOUTE_MIN_MACHINE || 90);  // minutes d'audio par machine
 const MACHINES = Math.min(20, Number(process.env.ECOUTE_MACHINES || 20));
 const MIN_DIRECT = Number(process.env.ECOUTE_MIN_DIRECT || 20);  // minutes enregistrées en direct sur une radio
 const LANGUES = String(process.env.ECOUTE_LANGUES || "fr,en,ar").split(/[,\s]+/).filter(Boolean);
@@ -55,7 +55,8 @@ async function trouverFlux(c) {
       if (!r.feedUrl) continue;
       // le nom doit figurer TEL QUEL (mots entiers) dans le titre du podcast, ou être exactement le nom de l'auteur
       const col = ` ${plat(r.collectionName)} `, aut = ` ${plat(r.artistName)} `;
-      const sc = col === ph ? 3 : col.includes(ph) ? 2 : aut === ph ? 1.5 : 0;
+      const tous = (x) => ph.trim().split(" ").every((w) => x.includes(` ${w} `));       // tous les mots, dans le désordre
+      const sc = col === ph ? 3 : col.includes(ph) ? 2 : aut === ph ? 1.5 : tous(col) ? 1 : 0;
       if (!sc) continue;
       const t = Date.parse(r.releaseDate || 0) || 0;
       if (!best || sc > best.sc || (sc === best.sc && t > best.t)) best = { sc, t, flux: r.feedUrl, titre: r.collectionName, auteur: r.artistName };
@@ -101,13 +102,14 @@ export async function planifier() {
       flux = f.flux; info = ` → « ${f.titre} » (${f.auteur})`;
       if (!c.langue) c.langue = "fr";
     }
+    if (eps.some((e) => e.flux === flux)) { log(`  = ${c.nom} : même flux qu'un média déjà retenu`); continue; }
     const r = await dernierEpisode(c, flux);
-    if (!r.ep) { sautes.push(`${c.nom}${info} : ${r.raison}`); continue; }
+    if (!r.ep) { sautes.push(`${c.nom}${info} [${flux}] : ${r.raison}`); continue; }
     eps.push({ ...r.ep, flux });
-    log(`  ✓ ${c.nom}${info} : « ${r.ep.titre.slice(0, 80)} » (${r.ep.date.slice(0, 16).replace("T", " ")}, ${r.ep.minutes || "?"} min)`);
+    log(`  ✓ ${c.nom}${info} [${flux}] : « ${r.ep.titre.slice(0, 80)} » (${r.ep.date.slice(0, 16).replace("T", " ")}, ${r.ep.minutes || "?"} min)`);
   }
   for (const s of sautes) log(`  – ${s}`);
-  // répartition : les plus récents d'abord, 40 min max par épisode, 60 min par machine, au plus MACHINES machines
+  // répartition : les plus récents d'abord, 45 min max par épisode, 90 min par machine, au plus MACHINES machines
   eps.sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
   const lots = [];
   for (const e of eps) {
