@@ -1163,7 +1163,11 @@ async function main() {
   const ajout = reserve.filter((g) => !radioDeja.some((r) => memeSujet(r, g))).slice(0, Math.max(0, maxRadio - radioDeja.length) * 3)
     .filter(prendreRadio).slice(0, Math.max(0, maxRadio - radioDeja.length));
   const base = pris.filter((g) => !radioSeule(g)).slice(0, Math.max(0, MAX_DOSSIERS + 6 - radioDeja.length - ajout.length));
-  const retenus = [...base, ...radioDeja, ...ajout].sort((a, b) => (b.impose ? 1 : 0) - (a.impose ? 1 : 0) || score(b) - score(a)).slice(0, MAX_DOSSIERS + 6);
+  const tries = [...base, ...radioDeja, ...ajout].sort((a, b) => (b.impose ? 1 : 0) - (a.impose ? 1 : 0) || score(b) - score(a)).slice(0, MAX_DOSSIERS + 6);
+  // les places gardées aux émissions sont ESSAYÉES pour de vrai : placées avant les sujets de secours (sinon, classées en fin de liste
+  // à cause du bonus de sources, elles n'étaient jamais écrites dès que les premiers dossiers suffisaient)
+  const rad = tries.filter(radioSeule), autres = tries.filter((g) => !radioSeule(g)), avant = Math.max(0, MAX_DOSSIERS - rad.length);
+  const retenus = [...autres.slice(0, avant), ...rad, ...autres.slice(avant)];
   const nR = retenus.filter(radioSeule).length;
   if (nR) log(`  📻 ${nR} sujet(s) venu(s) uniquement des radios / émissions retenu(s), annoncé(s) comme non confirmé(s)`);   // quelques réserves si un dossier ne tient pas
   log(`  ${retenus.filter(enFrance).length} sujets France, ${retenus.filter((g) => !enFrance(g)).length} internationaux qui concernent la France`);
