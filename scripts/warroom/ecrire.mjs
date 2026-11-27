@@ -1105,10 +1105,29 @@ async function main() {
     const ma = new Set(mots(a.note.evenement || a.items[0].titre)), mb = new Set(mots(b.note.evenement || b.items[0].titre)); let k = 0; for (const w of ma) if (mb.has(w)) k++; return k / Math.max(3, Math.min(ma.size, mb.size)) >= 0.6; };
   const uniques = [...imposes, ...(await fusionner(candidats)).filter((g) => !imposes.some((i) => memeSujet(i, g)))];
   const maxMonde = Math.max(2, Math.floor((MAX_DOSSIERS + 6) * 0.4));
-  let nMonde = 0, nRadio = 0;
+  let nMonde = 0;
   const maxRadio = Math.max(0, Number(process.env.WARROOM_MAX_RADIO ?? 3));
-  const retenus = uniques.filter((g) => g.impose || !radioSeule(g) || nRadio++ < maxRadio).filter((g) => g.impose || enFrance(g) || nMonde++ < maxMonde).slice(0, MAX_DOSSIERS + 6);
-  if (nRadio) log(`  ${Math.min(nRadio, maxRadio)} sujet(s) venu(s) uniquement des radios / émissions, annoncé(s) comme non confirmé(s)`);   // quelques réserves si un dossier ne tient pas
+  // 📻 RÉSERVE ÉMISSIONS : sans elle, une info dite dans une seule émission perd toujours contre la presse (bonus
+  // « nombre de sources ») et n'arrive jamais à l'antenne. Jusqu'à 3 places lui sont gardées : les plus chaudes
+  // (≥ 7/10) qui concernent le public, toujours attribuées et annoncées NON CONFIRMÉES.
+  const enRadio = notes.filter(radioSeule);
+  if (enRadio.length) {
+    const ok = enRadio.filter((g) => g.note.actuel !== false && Number(g.note.choc) >= Number(process.env.WARROOM_SEUIL_RADIO || 7) && interet(g) >= 7);
+    log(`  📻 émissions : ${enRadio.length} sujet(s) venu(s) seulement d'elles, ${ok.length} assez chaud(s) (≥ 7/10) et qui concernent le public`
+      + ` — notes : ${enRadio.slice(0, 12).map((g) => `${g.note.choc}/${interet(g)}`).join(" ")}`);
+  }
+  const resCands = solides.filter((g) => radioSeule(g) && g.note.actuel !== false
+    && Number(g.note.choc) >= Number(process.env.WARROOM_SEUIL_RADIO || 7) && interet(g) >= 7).sort((a, b) => score(b) - score(a)).slice(0, 8);
+  const reserve = (resCands.length > 1 ? await fusionner(resCands) : resCands)
+    .filter((g) => !uniques.some((u) => memeSujet(u, g) && !radioSeule(u))).slice(0, maxRadio);
+  let nRadio = 0;
+  const pris = uniques.filter((g) => g.impose || !radioSeule(g) || nRadio++ < maxRadio).filter((g) => g.impose || enFrance(g) || nMonde++ < maxMonde);
+  const radioDeja = pris.filter(radioSeule);
+  const ajout = reserve.filter((g) => !radioDeja.some((r) => memeSujet(r, g))).slice(0, Math.max(0, maxRadio - radioDeja.length));
+  const base = pris.filter((g) => !radioSeule(g)).slice(0, Math.max(0, MAX_DOSSIERS + 6 - radioDeja.length - ajout.length));
+  const retenus = [...base, ...radioDeja, ...ajout].sort((a, b) => (b.impose ? 1 : 0) - (a.impose ? 1 : 0) || score(b) - score(a)).slice(0, MAX_DOSSIERS + 6);
+  const nR = retenus.filter(radioSeule).length;
+  if (nR) log(`  📻 ${nR} sujet(s) venu(s) uniquement des radios / émissions retenu(s), annoncé(s) comme non confirmé(s)`);   // quelques réserves si un dossier ne tient pas
   log(`  ${retenus.filter(enFrance).length} sujets France, ${retenus.filter((g) => !enFrance(g)).length} internationaux qui concernent la France`);
   log(`${solides.length} sujets solides (≥ 2 sources ou source officielle), ${retenus.length} assez choc retenus`);
   // ÉCRITURE EN PARALLÈLE : WARROOM_VOIES dossiers à la fois (3 par défaut), répartis entre fournisseurs (Gemini / Groq) ;
