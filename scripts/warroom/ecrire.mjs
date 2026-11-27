@@ -102,6 +102,7 @@ function regrouper(items) {
 async function trier(groupes) {
   const notes = new Map();
   const file = [];
+  let oublies_total = 0;
   for (let k = 0; k < groupes.length; k += 60) file.push(groupes.slice(k, k + 60));
   while (file.length) {
     const lot = file.shift();
@@ -130,12 +131,16 @@ Réponds : {"sujets": [{"id": 12, "choc": 8, "interet_fr": 9, "actuel": true, "c
 
 ${liste}`, { maxTokens: 6000 });
       for (const s of j.sujets || []) if (s && isFinite(s.id)) notes.set(Number(s.id), s);
+      // réponse incomplète (coupée ou sujets sautés par l'IA) : seuls les sujets OUBLIÉS sont renvoyés, une fois, jamais tout le paquet
+      const oublies = lot.filter((g) => !notes.has(g.id) && !g._renvoye);
+      if (oublies.length) { for (const g of oublies) g._renvoye = true; oublies_total += oublies.length; for (let k = 0; k < oublies.length; k += 30) file.push(oublies.slice(k, k + 30)); }
     } catch (e) {
       // paquet trop long ou IA saturée : coupé en deux et retenté (plus petit = accepté par plus de modèles, moins de quota par appel)
       if (lot.length > 8 && reste() > 10 * 60e3) { log(`  tri de ${lot.length} sujets impossible (${String(e.message).slice(0, 80)}) : coupé en deux`); file.unshift(lot.slice(0, lot.length >> 1), lot.slice(lot.length >> 1)); }
       else log(`  tri de ${lot.length} sujets impossible (${e.message}) : ces sujets sont écartés`);
     }
   }
+  if (oublies_total) log(`  ${oublies_total} sujet(s) sauté(s) par l'IA dans sa réponse → renvoyé(s) seuls ; ${notes.size}/${groupes.length} sujets notés au total`);
   // doublons signalés par l'IA : fusionnés dans le sujet le plus fourni
   for (const g of groupes) {
     const n = notes.get(g.id), d = n && Number(n.doublon_de);
