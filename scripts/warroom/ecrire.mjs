@@ -211,18 +211,19 @@ async function lire(url) {
   } catch { return ""; }
 }
 // Sources en arabe (émissions transcrites, presse arabophone) : la vérification des faits retrouve chaque preuve mot pour mot dans les
-// sources, ce qui est impossible entre une phrase française et un texte arabe. Une traduction française FIDÈLE (sans résumé ni ajout)
-// est donc ajoutée aux sources, signalée comme telle ; les preuves sont prises dedans. Un chiffre absent de l'original = traduction rejetée.
+// sources, ce qui est impossible entre une phrase française et un texte arabe. Une traduction ANGLAISE FIDÈLE (l'arabe → anglais est la
+// paire la plus sûre des IA ; l'anglais est déjà vérifiable comme toute source étrangère) est ajoutée aux sources, signalée comme telle ;
+// les preuves sont prises dedans. Un chiffre absent de l'original = traduction rejetée.
 const ARABE = /[\u0600-\u06FF]/g;
 async function traduireSources(g) {
   const t = String(g.texte || "");
   if ((t.match(ARABE) || []).length < 150) return;
   const blocs = t.split(/\n+/).filter((l) => (l.match(ARABE) || []).length >= 20).join("\n").slice(0, 6000);
-  const j = await ia("Tu es traducteur assermenté arabe → français. Réponds en JSON valide.",
-    `Traduis en français, FIDÈLEMENT et INTÉGRALEMENT, le texte arabe ci-dessous (transcription automatique d'émissions ou articles de presse).
-Règles : ne résume pas, n'ajoute rien, n'interprète pas ; garde tous les noms propres (en graphie française usuelle : Ankara, Benghazi…) et
-tous les chiffres tels quels ; un passage incompréhensible devient « [inaudible] » ; garde les noms de médias et la ponctuation des citations.
-Réponds : {"traduction": "…"}
+  const j = await ia("You are a certified Arabic → English translator. Answer in valid JSON.",
+    `Translate the Arabic text below into English, FAITHFULLY and COMPLETELY (automatic transcription of broadcasts, or press articles).
+Rules: do not summarise, add or interpret anything; keep every proper name (usual English spelling: Ankara, Benghazi…) and every number
+exactly as given (write digits, never words); an unintelligible passage becomes "[inaudible]"; keep media names and quotation marks.
+Answer: {"traduction": "…"}
 
 ${blocs}`, { temperature: 0.1, maxTokens: 5000 });
   const fr = String(j?.traduction || "").trim();
@@ -231,8 +232,8 @@ ${blocs}`, { temperature: 0.1, maxTokens: 5000 });
   const orig = nums(blocs), inv = [...nums(fr)].filter((n) => !orig.has(n));
   if (inv.length) throw new Error(`chiffre(s) absent(s) de l'original : ${inv.slice(0, 3).join(", ")}`);
   // traduction EN TÊTE : si le dossier est réécrit avec des sources raccourcies (première moitié gardée), elle reste
-  g.texte = `TRADUCTION FRANÇAISE FIDÈLE (automatique) DES PASSAGES EN ARABE CI-DESSOUS — même source, à attribuer pareil :\n${fr}\n\nORIGINAL :\n${t}`.slice(0, 15000);
-  log(`    sources en arabe traduites en français pour la vérification (${fr.split(/\s+/).length} mots)`);
+  g.texte = `FAITHFUL ENGLISH TRANSLATION (automatic) OF THE ARABIC PASSAGES BELOW — same source, attribute it the same way :\n${fr}\n\nORIGINAL :\n${t}`.slice(0, 15000);
+  log(`    sources en arabe traduites en anglais pour la vérification (${fr.split(/\s+/).length} mots)`);
 }
 async function enrichir(g) {
   const urls = [...new Set(g.items.map((x) => x.url).filter((u) => u && !/news\.google\.com/.test(u)))].slice(0, 3);
