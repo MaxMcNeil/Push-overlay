@@ -100,7 +100,9 @@ jobs:
         with: { path: ~/.cache/huggingface, key: whisper-small-turbo-v1 }
       - name: Outils
         run: |
-          command -v ffmpeg || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
+          # un dépôt tiers du runner en panne (ex. packages.microsoft.com 403) ne doit pas empêcher d'installer ffmpeg
+          for i in 1 2 3; do command -v ffmpeg >/dev/null && break; sudo apt-get update -qq || true; sudo apt-get install -y -qq ffmpeg || sleep 10; done
+          command -v ffmpeg >/dev/null || echo "::warning::ffmpeg introuvable après 3 essais : les émissions de cette machine seront sautées (le reste de l'édition continue)"
           pip install -q faster-whisper
       - name: Écoute et transcription (gratuit, en local)
         run: python scripts/warroom/ecoute/transcrire.py output/warroom/ecoute/plan.json ${{ matrix.lot }} output/warroom/ecoute/transcriptions
