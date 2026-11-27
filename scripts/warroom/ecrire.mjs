@@ -732,9 +732,11 @@ ${g.texte}`, { maxTokens: 3000, depart, temperature: 0.3 });
   // un titre d'écran n'accuse JAMAIS (présomption d'innocence) : « taupe », « coupable », « meurtrier »… → titre réel de l'article
   const ACCUSE = /\b(taupe|tra[îi]tre|coupable|meurtri[eè]re?|assassin|violeur|p[ée]dophile|escroc|menteur|menteuse|corrompue?|voleur|voleuse|criminel(le)?|mafieux|complice)s?\b/i;
   const titreOk = j.titre_ecran && !ACCUSE.test(j.titre_ecran) && (() => { const m = motsDe(j.titre_ecran), r = new Set(motsDe(ref)); return m.length > 0 && m.filter((w) => r.has(w)).length >= Math.ceil(m.length * 0.5); })();
-  const fr = g.items.find((x) => x.langue === "fr" || /[éèàùçêâîô]|\b(le|la|les|des|du|une|est|dans|pour)\b/i.test(x.titre));
+  // un passage de radio/émission (« Média : « phrase » ») ne fait pas un bon titre : on prend d'abord un vrai titre d'article
+  const titrables = g.items.filter((x) => x.origine !== "radio").length ? g.items.filter((x) => x.origine !== "radio") : g.items;
+  const fr = titrables[0]?.origine === "radio" ? undefined : titrables.find((x) => x.langue === "fr" || /[éèàùçêâîô]|\b(le|la|les|des|du|une|est|dans|pour)\b/i.test(x.titre));
   const titreArticle = () => {           // titre réel de l'article, rendu lisible : sans « DIRECT. », sans nom du média, coupé sur un mot
-    let s = (fr || g.items[0]).titre.replace(/\s+[-–—|]\s+[^-–—|]{2,40}$/, "").replace(/^\s*(DIRECT|VIDÉO|VIDEO|INFO [^.:]{1,25}|EXCLUSIF|PHOTOS?|ENQUÊTE|TÉMOIGNAGE)\s*[.:]\s*/i, "");
+    let s = (fr || titrables[0]).titre.replace(/\s+[-–—|]\s+[^-–—|]{2,40}$/, "").replace(/^\s*(DIRECT|VIDÉO|VIDEO|INFO [^.:]{1,25}|EXCLUSIF|PHOTOS?|ENQUÊTE|TÉMOIGNAGE)\s*[.:]\s*/i, "");
     const [av, ap] = s.split(/\s+:\s+/);
     if (ap && av.split(/\s+/).length >= 3) s = av; else if (ap && ap.split(/\s+/).length >= 3) s = ap;
     const w = s.split(/\s+/); if (w.length > 9) s = w.slice(0, 8).join(" ").replace(/[,;:]$/, "") + "…";
