@@ -64,8 +64,10 @@ while IFS='|' read -r langue nom url; do
     date=$(echo "$meta" | jq -r 'if .timestamp then (.timestamp | todate) else (.upload_date // "" | if length == 8 then "\(.[0:4])-\(.[4:6])-\(.[6:8])T12:00:00Z" else "" end) end')
     age=$(( ( $(date +%s) - $(date -d "$date" +%s 2>/dev/null || echo 0) ) / 3600 ))
     if [ -z "$date" ] || [ "$age" -gt 72 ] || [ "$duree" -lt 240 ]; then echo "$id" >> "$VUS"; continue; fi   # trop ancienne ou trop courte
-    $YT -f "139/249/250/140/bestaudio" --download-sections "*0-2700" -o "$D/tmp/yt-$id.%(ext)s" "https://www.youtube.com/watch?v=$id" >/dev/null 2>&1
-    f=$(ls "$D/tmp/yt-$id".* 2>/dev/null | head -1)
+    # son le plus léger (≈ 20 Mo/h), téléchargé directement (bien plus rapide que le découpage par ffmpeg) ;
+    # trop long (coupé à 10 min) : la partie déjà reçue (le début, celui qui compte) est gardée
+    $YT -f "139/249/250/140/bestaudio" --no-part -o "$D/tmp/yt-$id.%(ext)s" "https://www.youtube.com/watch?v=$id" >/dev/null 2>&1
+    f=$(ls "$D/tmp/yt-$id".* 2>/dev/null | grep -v '\.json$' | head -1)
     [ -s "$f" ] || { log "✗ $nom : téléchargement refusé ($id)"; continue; }
     minutes=$(( duree > 2700 ? 45 : duree / 60 ))
     echo "$meta" | jq --arg nom "$nom" --arg langue "$langue" --arg date "$date" --arg m "$minutes" --arg f "$(basename "$f")" \
