@@ -1143,8 +1143,9 @@ async function main() {
   // « nombre de sources ») et n'arrive jamais à l'antenne. Jusqu'à 3 places lui sont gardées : les plus chaudes
   // (≥ 7/10) qui concernent le public, toujours attribuées et annoncées NON CONFIRMÉES.
   const enRadio = notes.filter(radioSeule);
+  let chaudesRadio = [];
   if (enRadio.length) {
-    const ok = enRadio.filter((g) => g.note.actuel !== false && Number(g.note.choc) >= Number(process.env.WARROOM_SEUIL_RADIO || 7) && interet(g) >= 7);
+    const ok = chaudesRadio = enRadio.filter((g) => g.note.actuel !== false && Number(g.note.choc) >= Number(process.env.WARROOM_SEUIL_RADIO || 7) && interet(g) >= 7);
     log(`  📻 émissions : ${enRadio.length} sujet(s) venu(s) seulement d'elles, ${ok.length} assez chaud(s) (≥ 7/10) et qui concernent le public`
       + ` — notes : ${enRadio.slice(0, 12).map((g) => `${g.note.choc}/${interet(g)}`).join(" ")}`);
   }
@@ -1169,7 +1170,18 @@ async function main() {
   const rad = tries.filter(radioSeule), autres = tries.filter((g) => !radioSeule(g)), avant = Math.max(0, MAX_DOSSIERS - rad.length);
   const retenus = [...autres.slice(0, avant), ...rad, ...autres.slice(avant)];
   const nR = retenus.filter(radioSeule).length;
-  if (nR) log(`  📻 ${nR} sujet(s) venu(s) uniquement des radios / émissions retenu(s), annoncé(s) comme non confirmé(s)`);   // quelques réserves si un dossier ne tient pas
+  if (nR) log(`  📻 ${nR} sujet(s) venu(s) uniquement des radios / émissions retenu(s), annoncé(s) comme non confirmé(s)`);
+  // diagnostic : ce que devient chaque passage d'émission assez chaud (pour comprendre une édition sans dossier radio)
+  const urls = (g) => new Set(g.items.map((x) => x.url || x.titre));
+  const dedans = (liste, g) => { const u = urls(g); return liste.some((r) => r.items.some((x) => u.has(x.url || x.titre))); };
+  for (const g of chaudesRadio.slice(0, 6)) {
+    const pourquoi = dedans(retenus.filter(radioSeule), g) ? "retenu"
+      : g.note?.categorie === "RUMEUR" ? "écarté : classé RUMEUR (théorie, récit, info invérifiable)"
+      : !solides.includes(g) ? "écarté : titre fourre-tout ou sujet tabou"
+      : uniques.some((u) => !radioSeule(u) && memeSujet(u, g)) || dedans(retenus.filter((r) => !radioSeule(r)), g) ? "déjà traité par la presse (le dossier presse le couvre)"
+      : "écarté : même émission qu'un autre sujet retenu, ou places émissions déjà prises";
+    log(`    📻 « ${String(g.note?.evenement || g.items[0]?.titre || "").slice(0, 90)} » (${g.items[0]?.source || "?"}, ${g.note?.choc}/10) → ${pourquoi}`);
+  }   // quelques réserves si un dossier ne tient pas
   log(`  ${retenus.filter(enFrance).length} sujets France, ${retenus.filter((g) => !enFrance(g)).length} internationaux qui concernent la France`);
   log(`${solides.length} sujets solides (≥ 2 sources ou source officielle), ${retenus.length} assez choc retenus`);
   // ÉCRITURE EN PARALLÈLE : WARROOM_VOIES dossiers à la fois (3 par défaut), répartis entre fournisseurs (Gemini / Groq) ;
