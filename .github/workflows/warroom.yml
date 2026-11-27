@@ -23,7 +23,7 @@ on:
         options: ["15", "10", "25", "35"]
         default: "15"
       radios:
-        description: "📻 Radios et émissions hors système (facultatif, +20 à 40 min) ▸ non = comme avant ▸ oui = la War Room écoute aussi les dernières émissions de médias indépendants (FR, EN, arabe : podcasts des 72 h + radios en direct pendant 20 min), les transcrit gratuitement (sans quota IA) et ajoute leurs passages les plus alarmants aux sujets, toujours attribués (« selon l'émission X »). Liste modifiable : scripts/warroom/ecoute/catalogue.md"
+        description: "📻 Radios et émissions hors système (facultatif, +20 à 40 min) ▸ non = comme avant ▸ oui = la War Room écoute aussi les dernières émissions de médias indépendants (FR, EN, arabe : podcasts des 72 h + radios en direct pendant 20 min), les transcrit gratuitement (sans quota IA) et ajoute leurs passages les plus alarmants aux sujets, toujours attribués (« selon l'émission X »), + les vidéos YouTube déposées par l'agent Termux de ton téléphone. Une info dite seulement dans ces émissions peut faire un dossier (au plus 3, annoncés « NON CONFIRMÉ »). Liste modifiable : scripts/warroom/ecoute/catalogue.md"
         type: choice
         options: ["non", "oui"]
         default: "non"

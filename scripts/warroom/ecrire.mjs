@@ -1086,7 +1086,10 @@ async function main() {
   const FOURRE_TOUT = /ce qu.il faut (savoir|retenir)|l.essentiel de l.actu|les infos? (du jour|à retenir)|^\s*(en )?direct\b|le point sur l.actu|what we know|live updates|news (wrap|roundup)/i;
   // une info d'UNE SEULE source n'est pas supprimée si elle est vraiment chaude (choc ≥ 8) : elle passe, annoncée comme telle
   // (« seule X le rapporte »), au conditionnel, avec le tampon « SOURCE UNIQUE · NON CONFIRMÉ » à l'écran
-  const chaudeUnique = (g) => g.nb_sources === 1 && Number(g.note?.choc) >= Number(process.env.WARROOM_SEUIL_UNIQUE || 8);
+  // une émission « hors système » (📻 Radios = oui) passe dès 7/10 : c'est une parole publique enregistrée, toujours attribuée
+  // (« selon X, dans son émission du… »), annoncée NON CONFIRMÉE, et au plus 3 par édition (WARROOM_MAX_RADIO)
+  const radioSeule = (g) => g.items.length > 0 && g.items.every((x) => x.origine === "radio");
+  const chaudeUnique = (g) => g.nb_sources === 1 && Number(g.note?.choc) >= Number(radioSeule(g) ? (process.env.WARROOM_SEUIL_RADIO || 7) : (process.env.WARROOM_SEUIL_UNIQUE || 8));
   const solides = notes.filter((g) => !(GOLFE && g.note?.tabou_golfe === true) && (g.nb_sources >= 2 || g.officiel || g.revendication || chaudeUnique(g)) && !FOURRE_TOUT.test(g.items[0]?.titre || ""));
   if (solides.some(chaudeUnique)) log(`  ${solides.filter(chaudeUnique).length} info(s) très chaude(s) d'une seule source gardée(s), annoncée(s) comme non confirmée(s)`);
   // AUDIENCE FRANÇAISE : la France d'abord ; l'international seulement s'il mérite vraiment l'attention des Français (≥ 7/10),
@@ -1102,8 +1105,10 @@ async function main() {
     const ma = new Set(mots(a.note.evenement || a.items[0].titre)), mb = new Set(mots(b.note.evenement || b.items[0].titre)); let k = 0; for (const w of ma) if (mb.has(w)) k++; return k / Math.max(3, Math.min(ma.size, mb.size)) >= 0.6; };
   const uniques = [...imposes, ...(await fusionner(candidats)).filter((g) => !imposes.some((i) => memeSujet(i, g)))];
   const maxMonde = Math.max(2, Math.floor((MAX_DOSSIERS + 6) * 0.4));
-  let nMonde = 0;
-  const retenus = uniques.filter((g) => g.impose || enFrance(g) || nMonde++ < maxMonde).slice(0, MAX_DOSSIERS + 6);   // quelques réserves si un dossier ne tient pas
+  let nMonde = 0, nRadio = 0;
+  const maxRadio = Math.max(0, Number(process.env.WARROOM_MAX_RADIO ?? 3));
+  const retenus = uniques.filter((g) => g.impose || !radioSeule(g) || nRadio++ < maxRadio).filter((g) => g.impose || enFrance(g) || nMonde++ < maxMonde).slice(0, MAX_DOSSIERS + 6);
+  if (nRadio) log(`  ${Math.min(nRadio, maxRadio)} sujet(s) venu(s) uniquement des radios / émissions, annoncé(s) comme non confirmé(s)`);   // quelques réserves si un dossier ne tient pas
   log(`  ${retenus.filter(enFrance).length} sujets France, ${retenus.filter((g) => !enFrance(g)).length} internationaux qui concernent la France`);
   log(`${solides.length} sujets solides (≥ 2 sources ou source officielle), ${retenus.length} assez choc retenus`);
   // ÉCRITURE EN PARALLÈLE : WARROOM_VOIES dossiers à la fois (3 par défaut), répartis entre fournisseurs (Gemini / Groq) ;
