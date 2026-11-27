@@ -210,6 +210,30 @@ async function lire(url) {
     return texteArticle(await r.text());
   } catch { return ""; }
 }
+// Sources en arabe (émissions transcrites, presse arabophone) : la vérification des faits retrouve chaque preuve mot pour mot dans les
+// sources, ce qui est impossible entre une phrase française et un texte arabe. Une traduction française FIDÈLE (sans résumé ni ajout)
+// est donc ajoutée aux sources, signalée comme telle ; les preuves sont prises dedans. Un chiffre absent de l'original = traduction rejetée.
+const ARABE = /[\u0600-\u06FF]/g;
+async function traduireSources(g) {
+  const t = String(g.texte || "");
+  if ((t.match(ARABE) || []).length < 150) return;
+  const blocs = t.split(/\n+/).filter((l) => (l.match(ARABE) || []).length >= 20).join("\n").slice(0, 6000);
+  const j = await ia("Tu es traducteur assermenté arabe → français. Réponds en JSON valide.",
+    `Traduis en français, FIDÈLEMENT et INTÉGRALEMENT, le texte arabe ci-dessous (transcription automatique d'émissions ou articles de presse).
+Règles : ne résume pas, n'ajoute rien, n'interprète pas ; garde tous les noms propres (en graphie française usuelle : Ankara, Benghazi…) et
+tous les chiffres tels quels ; un passage incompréhensible devient « [inaudible] » ; garde les noms de médias et la ponctuation des citations.
+Réponds : {"traduction": "…"}
+
+${blocs}`, { temperature: 0.1, maxTokens: 5000 });
+  const fr = String(j?.traduction || "").trim();
+  if (fr.split(/\s+/).length < 30) throw new Error("traduction trop courte");
+  const nums = (x) => new Set((String(x).replace(/[\u0660-\u0669]/g, (c) => String(c.charCodeAt(0) - 0x660)).match(/\d+/g) || []).filter((n) => n.length >= 2));
+  const orig = nums(blocs), inv = [...nums(fr)].filter((n) => !orig.has(n));
+  if (inv.length) throw new Error(`chiffre(s) absent(s) de l'original : ${inv.slice(0, 3).join(", ")}`);
+  // traduction EN TÊTE : si le dossier est réécrit avec des sources raccourcies (première moitié gardée), elle reste
+  g.texte = `TRADUCTION FRANÇAISE FIDÈLE (automatique) DES PASSAGES EN ARABE CI-DESSOUS — même source, à attribuer pareil :\n${fr}\n\nORIGINAL :\n${t}`.slice(0, 15000);
+  log(`    sources en arabe traduites en français pour la vérification (${fr.split(/\s+/).length} mots)`);
+}
 async function enrichir(g) {
   const urls = [...new Set(g.items.map((x) => x.url).filter((u) => u && !/news\.google\.com/.test(u)))].slice(0, 3);
   if (urls.length < 2) {                // presse trouvée par Google News : liens directs cherchés via GDELT (mêmes mots-clés)
@@ -224,6 +248,7 @@ async function enrichir(g) {
   const textes = (await Promise.all(urls.map(lire))).filter(Boolean);
   g.texte = [g.items.map((x) => `• ${x.titre}${x.resume ? ` — ${x.resume}` : ""} (${x.source})`).join("\n"), ...textes].join("\n\n").slice(0, 9000);
   g.nb_sources = new Set(g.items.map((x) => (x.source || "").toLowerCase().replace(/^www\./, ""))).size;
+  try { await traduireSources(g); } catch (e) { log(`    traduction des sources en arabe impossible (${String(e.message).slice(0, 80)}) : dossier écrit sur l'original`); }
   try { const ctx = await contexteWiki(g); if (ctx) g.texte += `\n\nCONTEXTE (Wikipédia, article « ${ctx.titre} ») :\n${ctx.extrait}`; } catch {}
   if (CONTRE_CATS.includes(g.note?.categorie)) {
     const autres = autresPour(g, POOL_AUTRES);

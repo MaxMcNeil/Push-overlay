@@ -21,6 +21,10 @@ function score(t, langue) {
   return s;
 }
 
+// un passage où les mêmes mots tournent en boucle est une invention de la transcription (musique, jingle), pas une information
+const varie = (t) => { const w = plat(t).split(/\s+/).filter((x) => x.length > 2); return w.length >= 20 && new Set(w).size / w.length >= 0.35; };
+// coupe propre : jamais au milieu d'un mot (l'arabe transcrit a souvent peu de ponctuation)
+const coupe = (t, n = 260) => { t = String(t || "").trim(); if (t.length <= n) return t; const c = t.slice(0, n); const i = c.lastIndexOf(" "); return (i > n * 0.6 ? c.slice(0, i) : c).replace(/[\s,;:،]+$/, "") + "…"; };
 const fmtDate = (d, langue) => new Date(d).toLocaleDateString(langue === "en" ? "en-GB" : langue === "ar" ? "ar" : "fr-FR", { day: "numeric", month: "long" });
 
 export function sujetsRadios(dossier = "output/warroom/ecoute/transcriptions", { parEpisode = 3, total = 45 } = {}) {
@@ -32,17 +36,17 @@ export function sujetsRadios(dossier = "output/warroom/ecoute/transcriptions", {
     // passages d'environ 90 s
     const pass = [];
     for (const [t, x] of segs) { const last = pass[pass.length - 1]; if (!last || t - last.t0 >= 90) pass.push({ t0: t, txt: x }); else last.txt += " " + x; }
-    const notes = pass.filter((p) => p.txt.length > 200 && !PUB.test(p.txt)).map((p) => ({ ...p, s: score(p.txt, e.langue) })).filter((p) => p.s >= 3)
+    const notes = pass.filter((p) => p.txt.length > 200 && !PUB.test(p.txt) && varie(p.txt)).map((p) => ({ ...p, s: score(p.txt, e.langue) })).filter((p) => p.s >= 3)
       .sort((a, b) => b.s - a.s).slice(0, parEpisode);
     for (const p of notes) {
       // titre = la phrase la plus alarmante du passage + la suivante (le tri des sujets ne lit que le titre), attribuée au média
       const ph = p.txt.split(/(?<=[.!?؟])\s+/).filter(Boolean);
       let k = 0; ph.forEach((x, i) => { if (x.length >= 30 && score(x, e.langue) > score(ph[k], e.langue)) k = i; });
-      const coeur = [ph[k], ph[k + 1]].filter(Boolean).join(" ").slice(0, 260);
-      const titre = `${e.media} : « ${coeur || p.txt.slice(0, 260)} »`;
+      const coeur = coupe([ph[k], ph[k + 1]].filter(Boolean).join(" ")) || coupe(p.txt);
+      const titre = `${e.media} : « ${coeur} »`;
       const mm = `${Math.floor(p.t0 / 60)} min`;
       out.push({ titre, url: e.lien || "", source: `${e.media} (émission du ${fmtDate(e.date, "fr")}, à ${mm})`, date: e.date,
-        resume: `Passage mot pour mot de l'émission « ${e.titre} » (${e.media}, transcription automatique) : « ${p.txt.slice(0, 1200)} »`,
+        resume: `Passage mot pour mot de l'émission « ${e.titre} » (${e.media}, transcription automatique) : « ${coupe(p.txt, 1200)} »`,
         origine: "radio", langue: e.langue, emission: e.media, independant: true, _score: p.s });
     }
   }

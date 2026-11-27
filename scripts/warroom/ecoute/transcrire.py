@@ -9,11 +9,43 @@ plan, lot, sortie = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 os.makedirs(sortie, exist_ok=True)
 eps = json.load(open(plan, encoding="utf-8"))["lots"][lot]
 MODELE = os.environ.get("ECOUTE_MODELE", "small")
+# l'arabe (et toute langue hors fr/en) est mal transcrit par « small » : modèle bien meilleur pour ces émissions-là seulement
+MODELE_AUTRE = os.environ.get("ECOUTE_MODELE_AR", "large-v3-turbo")
 
 from faster_whisper import WhisperModel  # noqa: E402
 t0 = time.time()
-model = WhisperModel(MODELE, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 4)
-print(f"modèle {MODELE} chargé en {time.time() - t0:.0f} s", flush=True)
+_modeles = {}
+
+
+def modele(langue):
+    nom = MODELE if (langue or "fr") in ("fr", "en") else MODELE_AUTRE
+    if nom not in _modeles:
+        t = time.time()
+        try:
+            _modeles[nom] = WhisperModel(nom, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 4)
+            print(f"modèle {nom} chargé en {time.time() - t:.0f} s", flush=True)
+        except Exception as x:  # noqa: BLE001
+            print(f"  ⚠ modèle {nom} indisponible ({str(x)[:120]}) → modèle {MODELE} à la place", flush=True)
+            _modeles[nom] = modele("fr") if nom != MODELE else None
+    return _modeles[nom]
+
+
+def propres(segs):
+    """Retire ce que Whisper invente sur la musique ou le silence : phrases répétées en boucle, segments incompréhensibles."""
+    out, faux = [], 0
+    for s in segs:
+        t = s.text.strip()
+        if not t:
+            continue
+        if s.compression_ratio > 2.4 or s.avg_logprob < -1.0 or (s.no_speech_prob > 0.6 and s.avg_logprob < -0.6):
+            faux += 1
+            continue
+        if len(out) >= 2 and out[-1][1] == t and out[-2][1] == t:
+            faux += 1
+            continue
+        out.append([round(s.start), t])
+    return out, faux
+
 
 for k, e in enumerate(eps):
     nom = f"{lot:02d}-{k:02d}"
@@ -36,8 +68,11 @@ for k, e in enumerate(eps):
         try:
             # audio passé directement en tableau (jamais décodé par PyAV, dont les versions récentes cassent faster-whisper)
             audio = np.frombuffer(open(wav, "rb").read(), dtype=np.int16).astype(np.float32) / 32768.0
+            model = modele(e.get("langue"))
             segs, info = model.transcribe(audio, language=e.get("langue") or None, vad_filter=True, beam_size=1, condition_on_previous_text=False)
-            segments = [[round(s.start), s.text.strip()] for s in segs if s.text.strip()]
+            segments, faux = propres(segs)
+            if faux:
+                print(f"    {faux} segment(s) douteux écarté(s) (répétitions ou passages incompréhensibles)", flush=True)
         except Exception as x:  # noqa: BLE001
             print(f"  ✗ {e['nom']} : transcription impossible ({x})", flush=True)
             continue

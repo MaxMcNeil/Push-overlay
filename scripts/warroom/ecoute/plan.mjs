@@ -142,17 +142,19 @@ export async function planifier() {
   const lots = [];
   for (const e of eps) {
     const m = e.direct ? MIN_DIRECT : Math.min(MIN_EP, e.minutes || MIN_EP);
+    // l'arabe est transcrit avec un modèle plus précis, environ 3 fois plus lent : il compte triple dans la charge d'une machine
+    const charge = m * (["fr", "en"].includes(e.langue || "fr") ? 1 : 3);
     // un direct dure en temps réel (20 min d'enregistrement) : chacun a sa propre machine, jamais à la suite d'un autre
-    let lot = e.direct ? null : lots.find((l) => !l.direct && l.minutes + m <= MIN_MACHINE);
-    if (!lot && lots.length < MACHINES) lots.push((lot = { minutes: 0, eps: [], direct: !!e.direct }));
+    let lot = e.direct ? null : lots.find((l) => !l.direct && l.minutes + charge <= MIN_MACHINE);
+    if (!lot && lots.length < MACHINES) lots.push((lot = { minutes: 0, audio: 0, eps: [], direct: !!e.direct }));
     if (!lot) { log(`  (plafond d'écoute atteint : ${e.nom} non écouté)`); continue; }
-    lot.minutes += m; lot.eps.push({ ...e, ecoute: m });
+    lot.minutes += charge; lot.audio += m; lot.eps.push({ ...e, ecoute: m });
   }
   // à supprimer après la War Room : les sons du téléphone écoutés + les périmés (jamais un son pas encore écouté)
   const ecoutes = lots.flatMap((l) => l.eps.filter((e) => e.assets).map((e) => e.assets));
   const plan = { date: new Date().toISOString(), episodes: eps.length, lots: lots.map((l) => l.eps), telephone: { tag: TAG_TEL, perimes: tel.perimes, ecoutes } };
   writeFileSync(`${OUT}/plan.json`, JSON.stringify(plan, null, 1));
-  log(`\nÉcoute : ${cat.length} médias au catalogue, ${eps.length} épisode(s) des ${FENETRE_H} dernières heures, ${lots.length} machine(s), ${lots.reduce((s, l) => s + l.minutes, 0)} min d'audio.`);
+  log(`\nÉcoute : ${cat.length} médias au catalogue, ${eps.length} épisode(s) des ${FENETRE_H} dernières heures, ${lots.length} machine(s), ${lots.reduce((s, l) => s + l.audio, 0)} min d'audio.`);
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `matrice=${JSON.stringify(lots.map((_, i) => i))}\n`);
   return plan;
 }
