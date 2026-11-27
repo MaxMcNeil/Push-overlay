@@ -106,7 +106,7 @@ async function trier(groupes) {
   for (let k = 0; k < groupes.length; k += 60) file.push(groupes.slice(k, k + 60));
   while (file.length) {
     const lot = file.shift();
-    const liste = lot.map((g) => `#${g.id} [${g.nb_sources} source(s)${g.officiel ? ", officiel" : ""}${g.revendication ? ", REVENDICATION non confirmée" : ""}] ${g.items.slice(0, 3).map((x) => x.titre).join(" | ").slice(0, 300)}`).join("\n");
+    const liste = lot.map((g) => `#${g.id} [${g.nb_sources} source(s)${g.officiel ? ", officiel" : ""}${g.revendication ? ", REVENDICATION non confirmée" : ""}] ${g.items.slice(0, 3).map((x) => x.origine === "radio" && x.episode ? `[extrait de l'émission « ${String(x.episode).slice(0, 90)} »] ${x.titre}` : x.titre).join(" | ").slice(0, 380)}`).join("\n");
     try {
       const j = await ia(`Tu es rédacteur en chef d'une émission d'actualité choc ${ED.public}. Réponds en JSON valide.`,
         `Pour chaque sujet ci-dessous (actualité des dernières 24 h), donne :
@@ -121,7 +121,8 @@ ${ED.interet || `- "interet_fr" : 0 à 10 = à quel point un Français moyen s'y
   puissances, menace mondiale, buzz mondial) = 7 à 10. Un événement lointain sans lien avec la France (petit pays, politique locale
   étrangère, fait divers à l'étranger) = 0 à 3, même s'il est grave, SAUF s'il est d'une ampleur exceptionnelle.`}
 - "actuel" : true si c'est un FAIT NOUVEAU des dernières 48 h ; false si c'est un récit du passé, un portrait, une rétrospective,
-  un anniversaire, un documentaire, une série, un livre, une analyse sans fait nouveau.
+  un anniversaire, un documentaire, une série, un livre, une analyse sans fait nouveau. Un [extrait de l'émission …] où l'on parle
+  d'histoire, d'un livre, d'ésotérisme ou d'une théorie générale, sans fait nouveau des dernières 48 h, est false.
 - "categorie" : CATASTROPHE, ACCIDENT, SCANDALE, CORRUPTION, POLITIQUE, GÉOPOLITIQUE, GUERRE, RÉVÉLATION, CYBER, FAIT DIVERS, INSOLITE ou RUMEUR.
 - "evenement" : l'événement en 3 à 8 mots, nommé de façon CANONIQUE (ex. « missile houthi sur gratte-ciel de Riyad »), pour repérer
   les doublons : deux sujets sur le même événement doivent recevoir la même formulation.
@@ -1147,14 +1148,20 @@ async function main() {
     log(`  📻 émissions : ${enRadio.length} sujet(s) venu(s) seulement d'elles, ${ok.length} assez chaud(s) (≥ 7/10) et qui concernent le public`
       + ` — notes : ${enRadio.slice(0, 12).map((g) => `${g.note.choc}/${interet(g)}`).join(" ")}`);
   }
-  const resCands = solides.filter((g) => radioSeule(g) && g.note.actuel !== false
+  // une émission seule ne fait un dossier que pour un FAIT d'actualité : pas pour une théorie de l'invité, un livre, un récit
+  // historique (catégorie RUMEUR ou « actuel » faux) ; et jamais deux dossiers tirés du même épisode
+  const radioOk = (g) => g.note?.actuel !== false && g.note?.categorie !== "RUMEUR";
+  const epVus = new Set(), episode = (g) => g.items[0]?.url || g.items[0]?.source || "";
+  const prendreRadio = (g) => { if (!radioOk(g) || epVus.has(episode(g))) return false; epVus.add(episode(g)); return true; };
+  const resCands = solides.filter((g) => radioSeule(g) && radioOk(g)
     && Number(g.note.choc) >= Number(process.env.WARROOM_SEUIL_RADIO || 7) && interet(g) >= 7).sort((a, b) => score(b) - score(a)).slice(0, 8);
   const reserve = (resCands.length > 1 ? await fusionner(resCands) : resCands)
     .filter((g) => !uniques.some((u) => memeSujet(u, g) && !radioSeule(u))).slice(0, maxRadio);
   let nRadio = 0;
-  const pris = uniques.filter((g) => g.impose || !radioSeule(g) || nRadio++ < maxRadio).filter((g) => g.impose || enFrance(g) || nMonde++ < maxMonde);
+  const pris = uniques.filter((g) => g.impose || !radioSeule(g) || (nRadio < maxRadio && prendreRadio(g) && ++nRadio)).filter((g) => g.impose || enFrance(g) || nMonde++ < maxMonde);
   const radioDeja = pris.filter(radioSeule);
-  const ajout = reserve.filter((g) => !radioDeja.some((r) => memeSujet(r, g))).slice(0, Math.max(0, maxRadio - radioDeja.length));
+  const ajout = reserve.filter((g) => !radioDeja.some((r) => memeSujet(r, g))).slice(0, Math.max(0, maxRadio - radioDeja.length) * 3)
+    .filter(prendreRadio).slice(0, Math.max(0, maxRadio - radioDeja.length));
   const base = pris.filter((g) => !radioSeule(g)).slice(0, Math.max(0, MAX_DOSSIERS + 6 - radioDeja.length - ajout.length));
   const retenus = [...base, ...radioDeja, ...ajout].sort((a, b) => (b.impose ? 1 : 0) - (a.impose ? 1 : 0) || score(b) - score(a)).slice(0, MAX_DOSSIERS + 6);
   const nR = retenus.filter(radioSeule).length;

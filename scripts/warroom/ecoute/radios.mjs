@@ -47,7 +47,7 @@ export function sujetsRadios(dossier = "output/warroom/ecoute/transcriptions", {
       const mm = `${Math.floor(p.t0 / 60)} min`;
       out.push({ titre, url: e.lien || "", source: `${e.media} (émission du ${fmtDate(e.date, "fr")}, à ${mm})`, date: e.date,
         resume: `Passage mot pour mot de l'émission « ${e.titre} » (${e.media}, transcription automatique) : « ${coupe(p.txt, 1200)} »`,
-        origine: "radio", langue: e.langue, emission: e.media, independant: true, _score: p.s });
+        origine: "radio", langue: e.langue, emission: e.media, episode: e.titre || "", independant: true, _score: p.s });
     }
   }
   return out.sort((a, b) => b._score - a._score).slice(0, total).map(({ _score, ...x }) => x);
