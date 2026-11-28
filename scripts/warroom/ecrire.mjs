@@ -999,7 +999,8 @@ const ARABE_SYS = `Tu es le traducteur et rédacteur en chef arabe de la chaîne
 en ARABE STANDARD MODERNE (فصحى) de grande chaîne d'information, phrases courtes, rythme oral, ton percutant ; tu gardes l'ironie mordante
 et l'humour noir là où ils sont, et EXACTEMENT les faits, noms, dates et attributions (« selon… », conditionnel = صيغة الاحتمال/« بحسب »).
 Les noms propres sont écrits en arabe (translittération usuelle). Tous les nombres en CHIFFRES OCCIDENTAUX (0-9). Aucun mot en lettres
-latines, sauf « Gulf Think-Tank » et les sigles (OTAN → الناتو de préférence). « La position du jour » se traduit EXACTEMENT « خلاصة القول اليوم », et SEULEMENT là où « La position du jour » figure : n'emploie JAMAIS
+latines : les noms de médias, de sites web et les sigles s'écrivent en lettres arabes tels qu'ils se prononcent (UAE News → يو إيه إي نيوز,
+thenationalnews.com → ذا ناشيونال نيوز, BBC → بي بي سي ; jamais l'adresse du site ; OTAN → الناتو) ; seule exception : « Gulf Think-Tank ». « La position du jour » se traduit EXACTEMENT « خلاصة القول اليوم », et SEULEMENT là où « La position du jour » figure : n'emploie JAMAIS
 « خلاصة القول اليوم » pour autre chose (« Précision importante » = « توضيح هام »). Traduis TOUT le texte, sans rien résumer ni couper. Réponds en JSON valide.`;
 const nombresDe = (t) => chiffres(t).filter((n) => n.length >= 2);
 const versOccidental = (t) => String(t).replace(/[٠-٩]/g, (c) => "٠١٢٣٤٥٦٧٨٩".indexOf(c)).replace(/[۰-۹]/g, (c) => "۰۱۲۳۴۵۶۷۸۹".indexOf(c));
@@ -1010,6 +1011,39 @@ function arabeOk(fr, ar) {
   const mFr = String(fr).split(/\s+/).filter(Boolean).length, mAr = String(ar).split(/\s+/).filter(Boolean).length;
   if (mFr >= 25 && mAr < 0.55 * mFr) return false;            // traduction tronquée ou résumée
   return nombresDe(fr).every((n) => nAr.has(n) || /^(19|20)\d\d$/.test(n) && nAr.has(n)) && LATIN_RESTE(ar).length <= 1;
+}
+// LECTURE AU PROMPTEUR : un mot en lettres latines au milieu de l'arabe inverse l'ordre de lecture de la ligne (il faut lire un bout,
+// revenir en arrière…). Tout ce qui reste en latin (sites, médias, sigles, « Gulf Think-Tank », mot à moitié traduit comme
+// « البallisticية », caractère chinois égaré) est réécrit en lettres arabes, tel qu'il se prononce. Repli sans IA : sigle épelé
+// (UAE → يو إيه إي) ; sinon le mot est isolé (marques Unicode) pour que la ligne garde son ordre de lecture.
+const ETRANGER = /[A-Za-zÀ-ÿ\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF]/;
+const RUN_ETRANGER = /[^\s«»"“”()\[\]،؛,;:!?؟]*[A-Za-zÀ-ÿ\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF][^\s«»"“”()\[\]،؛,;:!?؟]*(?:\s+[^\s«»"“”()\[\]،؛,;:!?؟]*[A-Za-zÀ-ÿ][^\s«»"“”()\[\]،؛,;:!?؟]*)*/g;
+const LETTRES_AR = { A: "إيه", B: "بي", C: "سي", D: "دي", E: "إي", F: "إف", G: "جي", H: "إتش", I: "آي", J: "جيه", K: "كيه", L: "إل", M: "إم",
+  N: "إن", O: "أو", P: "بي", Q: "كيو", R: "آر", S: "إس", T: "تي", U: "يو", V: "في", W: "دبليو", X: "إكس", Y: "واي", Z: "زد" };
+const nettoieRun = (r) => r.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+function arabiseSecours(r) {
+  const x = r.replace(/^(https?:\/\/)?(www\.)?/i, "").replace(/\.(com|net|org|info|news|ae|sa|qa|kw|om|bh|uk|fr|co)(\.[a-z]{2})?(\/\S*)?$/i, "");
+  if (/^[A-Z]{2,3}$/.test(x.replace(/\./g, "")))      // sigle court (CNN, BBC, UAE) : épelé ; un sigle long (OPEC, NATO) se prononce, il reste isolé
+    return x.replace(/\./g, "").split("").map((c) => LETTRES_AR[c]).join(" ");
+  return `\u2068${r}\u2069`;
+}
+async function arabiser(textes) {
+  const runs = [...new Set(textes.flatMap((t) => String(t || "").match(RUN_ETRANGER) || []).map(nettoieRun).filter((r) => ETRANGER.test(r)))];
+  if (!runs.length) return textes;
+  const map = {};
+  try {
+    const j = await ia(ARABE_SYS, `Ces mots restés en lettres latines (ou mal traduits) sont au milieu d'un texte arabe lu au prompteur. Écris chacun
+EN LETTRES ARABES, tel qu'il se prononce (translittération usuelle : UAE News → يو إيه إي نيوز, thenationalnews.com → ذا ناشيونال نيوز,
+UA.NEWS → يو إيه نيوز, Gulf Think-Tank → غلف ثينك تانك, BBC → بي بي سي). Pour un site web : le nom du média, jamais l'adresse.
+Un mot à moitié arabe (« البallisticية ») ou avec un caractère étranger : le mot arabe correct (« الباليستية »). Aucune lettre latine.
+Réponds : {"ar": {"<mot>": "<en arabe>", …}}\n\n${runs.slice(0, 120).map((r) => `- ${r}`).join("\n")}`, { maxTokens: 3000, temperature: 0.1 });
+    for (const [k, v] of Object.entries(j?.ar || {})) { const w = String(v || "").trim(); if (runs.includes(k) && /[\u0600-\u06FF]/.test(w) && !ETRANGER.test(w) && w.length <= 4 * k.length + 20) map[k] = w; }
+  } catch (e) { log(`  lettres latines : réécriture en arabe impossible (${String(e.message).slice(0, 60)}) → repli`); }
+  let ia_ = 0, secours = 0;
+  for (const r of runs) if (map[r]) ia_++; else { map[r] = arabiseSecours(r); secours++; }
+  const out = textes.map((t) => String(t || "").replace(RUN_ETRANGER, (m) => { const c = nettoieRun(m); return map[c] ? m.replace(c, map[c]) : m; }));
+  log(`  lettres latines dans l'arabe : ${ia_} mot(s) réécrit(s) en arabe${secours ? `, ${secours} en repli (sigle épelé ou mot isolé)` : ""} — ex. ${runs.slice(0, 3).map((r) => `${r} → ${map[r].replace(/[\u2068\u2069]/g, "")}`).join(" ; ")}`);
+  return out;
 }
 async function traduireAr(textes) {
   const out = new Array(textes.length).fill("");
@@ -1258,6 +1292,11 @@ async function main() {
       d.categorie_ar = CAT_AR[d.categorie] || d.categorie;
     }
     await relireAr(hab.ordre);
+    // plus aucune lettre latine dans ce qui est lu ou affiché à l'antenne (le youtube.txt garde « Gulf Think-Tank » et les mots-clés)
+    { const champs = [hab.ouverture, hab.cloture, ...hab.transitions, ...hab.ordre.flatMap((d) => [d.texte, d.titre, d.lieu || "", d.chiffre?.libelle || "", ...(d.faits || [])])];
+      const R = await arabiser(champs); let q = 0;
+      hab.ouverture = R[q++]; hab.cloture = R[q++]; hab.transitions = hab.transitions.map(() => R[q++]);
+      for (const d of hab.ordre) { d.texte = R[q++]; d.titre = R[q++]; const l = R[q++]; if (d.lieu) d.lieu = l; const c = R[q++]; if (d.chiffre) d.chiffre = { ...d.chiffre, libelle: c }; d.faits = (d.faits || []).map(() => R[q++]); } }
   }
   const { ordre, ouverture, transitions, cloture } = hab;
   if (ordre.length < Math.min(5, MAX_DOSSIERS)) alerte(`seulement ${ordre.length} dossier(s)`);
