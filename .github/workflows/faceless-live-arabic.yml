@@ -123,7 +123,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 6
         run: |
-          command -v tesseract >/dev/null || sudo apt-get install -y -qq --no-install-recommends tesseract-ocr tesseract-ocr-ara tesseract-ocr-fra >/dev/null \
+          command -v tesseract >/dev/null || timeout 600 sudo apt-get install -y -qq --no-install-recommends tesseract-ocr tesseract-ocr-ara tesseract-ocr-fra >/dev/null \
             || echo "::warning::Tesseract indisponible, repli = pose dans l'ordre"
 
       - name: Récupérer la voix et les médias (captures, photos, vidéos)
@@ -277,7 +277,7 @@ jobs:
 
       - name: Chrome et ffmpeg (préinstallés sur l'image ; installés seulement s'ils manquent)
         run: |
-          command -v ffmpeg >/dev/null || { for i in 1 2 3; do sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg && break; sleep 10; done; }
+          command -v ffmpeg >/dev/null || { for i in 1 2 3; do { timeout 180 sudo apt-get update -qq || true; } && timeout 600 sudo apt-get install -y -qq --no-install-recommends ffmpeg && break; sleep 10; done; }
           ffmpeg -version | head -1
           for c in /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium /usr/bin/chromium-browser; do [ -x "$c" ] && { echo "Chrome : $c ($($c --version 2>/dev/null || true))"; exit 0; }; done
           echo "::warning::Chrome absent de l'image : téléchargement"

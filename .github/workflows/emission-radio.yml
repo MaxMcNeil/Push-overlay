@@ -139,7 +139,7 @@ jobs:
       - name: Compiler whisper.cpp (si pas en cache)
         if: needs.etat.outputs.etape == 'analyse' && steps.whisper-cache.outputs.cache-hit != 'true'
         run: |
-          sudo apt-get install -y -qq --no-install-recommends cmake build-essential >/dev/null
+          timeout 600 sudo apt-get install -y -qq --no-install-recommends cmake build-essential >/dev/null
           git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
           cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release \
             -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
@@ -196,7 +196,7 @@ jobs:
       - name: Compiler whisper.cpp (si pas en cache)
         if: steps.whisper-cache.outputs.cache-hit != 'true'
         run: |
-          sudo apt-get install -y -qq --no-install-recommends cmake build-essential >/dev/null
+          timeout 600 sudo apt-get install -y -qq --no-install-recommends cmake build-essential >/dev/null
           git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git
           cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release \
             -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
