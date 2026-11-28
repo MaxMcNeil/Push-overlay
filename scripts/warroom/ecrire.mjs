@@ -1035,7 +1035,9 @@ async function arabiser(textes) {
     const j = await ia(ARABE_SYS, `Ces mots restés en lettres latines (ou mal traduits) sont au milieu d'un texte arabe lu au prompteur. Écris chacun
 EN LETTRES ARABES, tel qu'il se prononce (translittération usuelle : UAE News → يو إيه إي نيوز, thenationalnews.com → ذا ناشيونال نيوز,
 UA.NEWS → يو إيه نيوز, Gulf Think-Tank → غلف ثينك تانك, BBC → بي بي سي). Pour un site web : le nom du média, jamais l'adresse.
-Un mot à moitié arabe (« البallisticية ») ou avec un caractère étranger : le mot arabe correct (« الباليستية »). Aucune lettre latine.
+Un mot à moitié arabe (« البallisticية ») ou avec un caractère étranger : le mot arabe correct (« الباليستية »).
+Un mot ORDINAIRE resté en français ou en anglais (populations, cargo, drone…) se TRADUIT par le mot arabe juste (السكان, سفينة شحن,
+طائرة مسيّرة) ; seuls les NOMS (médias, sites, sigles, marques, personnes) se translittèrent. Aucune lettre latine.
 Réponds : {"ar": {"<mot>": "<en arabe>", …}}\n\n${runs.slice(0, 120).map((r) => `- ${r}`).join("\n")}`, { maxTokens: 3000, temperature: 0.1 });
     for (const [k, v] of Object.entries(j?.ar || {})) { const w = String(v || "").trim(); if (runs.includes(k) && /[\u0600-\u06FF]/.test(w) && !ETRANGER.test(w) && w.length <= 4 * k.length + 20) map[k] = w; }
   } catch (e) { log(`  lettres latines : réécriture en arabe impossible (${String(e.message).slice(0, 60)}) → repli`); }
